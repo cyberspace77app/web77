@@ -3,8 +3,8 @@
  */
 
 // filter low rep, honor mutes, api mod flags, cs77 blacklist
-let ENABLE_CONTENT_MODERATION = true;
-let FILTER_LOW_REP = 20;
+let CS77_ENABLE_CONTENT_MODERATION = true;
+let CS77_FILTER_LOW_REP = 20;
 (function () {
   "use strict";
 
@@ -2514,12 +2514,12 @@ let FILTER_LOW_REP = 20;
   }
 
   function isLowReputation(rep) {
-    return Math.floor(HiveMd.displayReputation(rep)) < FILTER_LOW_REP;
+    return Math.floor(HiveMd.displayReputation(rep)) < CS77_FILTER_LOW_REP;
   }
 
   function isModerated(node) {
     const stats = node && node.stats;
-    return ENABLE_CONTENT_MODERATION && Boolean(stats && (stats.gray || stats.hide));
+    return CS77_ENABLE_CONTENT_MODERATION && Boolean(stats && (stats.gray || stats.hide));
   }
 
   function isMutedRevealed(author, permlink) {
@@ -2531,7 +2531,7 @@ let FILTER_LOW_REP = 20;
   }
 
   function isMutedHidden(node) {
-    if (!ENABLE_CONTENT_MODERATION) return false;
+    if (!CS77_ENABLE_CONTENT_MODERATION) return false;
     if (!node || !node.author) return false;
     if (isOwnAuthor(node.author)) return false;
     if (isMutedRevealed(node.author, node.permlink)) return false;
@@ -2573,11 +2573,11 @@ let FILTER_LOW_REP = 20;
   }
 
   function isBlacklistedUser(name) {
-    return ENABLE_CONTENT_MODERATION && typeof Cs77Blacklist !== "undefined" && Cs77Blacklist.user(name);
+    return CS77_ENABLE_CONTENT_MODERATION && typeof Cs77Blacklist !== "undefined" && Cs77Blacklist.user(name);
   }
 
   function isBlacklistedPost(post, permlink) {
-    if (ENABLE_CONTENT_MODERATION)
+    if (CS77_ENABLE_CONTENT_MODERATION)
     {
       if (typeof Cs77Blacklist === "undefined") return false;
       if (post && typeof post === "object") {
