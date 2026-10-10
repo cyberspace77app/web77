@@ -2107,9 +2107,9 @@
     markedReady = true;
   }
 
-  // .post-body / .comment-body use overflow:hidden, which clips a table
-  // whose min-content is wider than the column. A scroll box keeps that
-  // width bounded so the table can move sideways instead of being cut off.
+  // .post-body clips with overflow:hidden. .comment-body does not, so a
+  // quote bar can sit on the thread line. Either way a table whose
+  // min-content is wider than the column has to scroll instead of stretching.
   function wrapWideTables(html) {
     const src = String(html || "");
     const re = /<\/?table\b[^>]*>/gi;
