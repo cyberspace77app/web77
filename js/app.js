@@ -72,6 +72,22 @@ let FILTER_LOW_REP = 20;
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
   let currentViewKey = "";
+  // History entry id for the feed currently mounted in #view. A profile opened
+  // from that feed parks the list under this id and Back mounts it again.
+  let liveFeedNav = 0;
+  let historyNavSeq = 0;
+  const feedParks = new Map();
+  const FEED_PARK_MAX = 8;
+  // Steps from the current history entry back to the feed parked under a profile.
+  let profileReturnNav = 0;
+  let profileReturnSteps = 0;
+  let profileReturnOpen = false;
+  let parkedForProfile = false;
+  // Post entries pushed over the live feed. A profile opened from one of them
+  // counts those entries so the logo lands on the feed.
+  let feedStackDepth = 0;
+  let routeFromPop = false;
+  let routePushed = false;
   let initialPageLoad = true;
   // Set for a click on the profile nav. route() clears it. Those switches
   // keep the scroll position; session and logo links still go to the top.
@@ -3308,8 +3324,10 @@ let FILTER_LOW_REP = 20;
       return;
     }
     const url = appHref(path) + hashFragment(href);
-    if (replace) history.replaceState(null, "", url);
-    else history.pushState(null, "", url);
+    const nav = replace ? historyNavId() || nextHistoryNav() : nextHistoryNav();
+    routePushed = !replace;
+    if (replace) history.replaceState({ nav }, "", url);
+    else history.pushState({ nav }, "", url);
     publishNavPushed = parseRoute(path).name === "publish" && !replace;
     route();
   }
@@ -3410,9 +3428,37 @@ let FILTER_LOW_REP = 20;
     if (!isInternalHref(href)) return;
     if (a.closest("#logoBrand")) {
       const here = parseRoute();
-      if (here.name === "feed") {
+      const returnSteps = Number(history.state && history.state.profileReturnSteps) || 0;
+      const returnNav = Number(history.state && history.state.profileReturnNav) || 0;
+      // A profile opened from a feed steps back to that feed, same as Back.
+      if (
+        here.name === "profile" &&
+        returnSteps > 0 &&
+        returnSteps < history.length &&
+        feedParks.has(returnNav)
+      ) {
         e.preventDefault();
-        scrollActiveToTop();
+        history.go(-returnSteps);
+        return;
+      }
+      // A post opened over a feed steps back onto that feed. Navigating to
+      // the feed URL would add another entry and leave the saved list behind.
+      if (here.name === "post" && liveFeedNav && isRestorableFeedKey(currentViewKey)) {
+        const depth = Math.max(
+          feedStackDepth,
+          Number(history.state && history.state.feedStackDepth) || 0,
+          1
+        );
+        if (depth < history.length) {
+          e.preventDefault();
+          history.go(-depth);
+          return;
+        }
+      }
+      if (logoUsesTopFeed(here)) {
+        e.preventDefault();
+        if (isOnTopLevelFeed(here)) scrollActiveToTop();
+        else navigate(appHref(pathForFeedSort(defaultFeedSort())));
         return;
       }
     }
@@ -3475,7 +3521,11 @@ let FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
-    if (!HASH_ROUTING) route();
+    if (!HASH_ROUTING) {
+      routeFromPop = true;
+      routePushed = false;
+      route();
+    }
   });
   window.addEventListener("hashchange", () => {
     if (HASH_ROUTING || /^#\//.test(location.hash || "")) {
@@ -4307,6 +4357,15 @@ let FILTER_LOW_REP = 20;
 
   function logoFeedHref() {
     return appHref(pathForFeedSort(observer() ? "feed" : "latest"));
+  }
+
+  function logoUsesTopFeed(route) {
+    if (!route) return false;
+    return route.name === "feed" || route.name === "community" || route.name === "welcome" || route.name === "profile";
+  }
+
+  function isOnTopLevelFeed(route) {
+    return Boolean(route && route.name === "feed" && !route.tag && route.sort === defaultFeedSort());
   }
 
   function paintLogoMenu() {
@@ -8696,13 +8755,18 @@ let FILTER_LOW_REP = 20;
     }
     const underKey =
       (state && state.cs77 === "post" && state.underKey) || currentViewKey || "";
+    const prevNav = state && Number(state.nav);
     history.replaceState(
-      {
-        cs77: "post",
-        underScroll: postLayer.scrollY || 0,
-        underKey,
-        underWelcome: !!postLayer.hadWelcome,
-      },
+      Object.assign(
+        {
+          cs77: "post",
+          underScroll: postLayer.scrollY || 0,
+          underKey,
+          underWelcome: !!postLayer.hadWelcome,
+          nav: Number.isFinite(prevNav) && prevNav > 0 ? prevNav : nextHistoryNav(),
+        },
+        carriedHistoryFields(state)
+      ),
       "",
       location.href
     );
@@ -11303,7 +11367,275 @@ let FILTER_LOW_REP = 20;
     }
   }
 
+  function historyNavId() {
+    const state = history.state;
+    const nav = state && Number(state.nav);
+    return Number.isFinite(nav) && nav > 0 ? nav : 0;
+  }
+
+  // A reloaded document keeps the entry's nav but starts the counter at 0.
+  // Seed from that id so the next entry does not reuse the parked feed's id.
+  function nextHistoryNav() {
+    const existing = historyNavId();
+    if (existing > historyNavSeq) historyNavSeq = existing;
+    historyNavSeq += 1;
+    return historyNavSeq;
+  }
+
+  function ensureHistoryNav() {
+    const existing = historyNavId();
+    if (existing) {
+      if (existing > historyNavSeq) historyNavSeq = existing;
+      return existing;
+    }
+    const nav = nextHistoryNav();
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    history.replaceState(Object.assign({}, prev, { nav }), "", location.href);
+    return nav;
+  }
+
+  function isRestorableFeedKey(key) {
+    return (
+      !!key &&
+      (key === "welcome" || key.indexOf("feed:") === 0 || key.indexOf("community:") === 0)
+    );
+  }
+
+  function canParkLiveFeed() {
+    return Boolean(
+      liveFeedNav &&
+      isRestorableFeedKey(currentViewKey) &&
+      view &&
+      view.firstElementChild &&
+      !feedParks.has(liveFeedNav)
+    );
+  }
+
+  function carriedHistoryFields(state) {
+    const src = state && typeof state === "object" ? state : {};
+    const out = {};
+    const steps = Number(src.profileReturnSteps) || 0;
+    const returnNav = Number(src.profileReturnNav) || 0;
+    if (steps > 0 && returnNav > 0) {
+      out.profileReturnSteps = steps;
+      out.profileReturnNav = returnNav;
+    }
+    const depth = Number(src.feedStackDepth) || 0;
+    if (depth > 0) out.feedStackDepth = depth;
+    return out;
+  }
+
+  function stampHistoryFields(fields) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    const nav = Number(prev.nav) || historyNavId() || nextHistoryNav();
+    const next = Object.assign({}, prev, fields, { nav });
+    const keys = Object.keys(next);
+    for (let i = 0; i < keys.length; i++) {
+      if (prev[keys[i]] !== next[keys[i]]) {
+        history.replaceState(next, "", location.href);
+        return;
+      }
+    }
+  }
+
+  function stampProfileReturn() {
+    if (!profileReturnSteps || !profileReturnNav) return;
+    stampHistoryFields({
+      profileReturnNav: profileReturnNav,
+      profileReturnSteps: profileReturnSteps,
+    });
+  }
+
+  function stampFeedStack() {
+    if (!feedStackDepth) return;
+    stampHistoryFields({ feedStackDepth: feedStackDepth });
+  }
+
+  function syncProfileReturnFromHistory() {
+    const state = history.state || {};
+    const steps = Number(state.profileReturnSteps) || 0;
+    const returnNav = Number(state.profileReturnNav) || 0;
+    if (steps > 0 && returnNav > 0) {
+      profileReturnNav = returnNav;
+      profileReturnSteps = steps;
+      return;
+    }
+    profileReturnNav = 0;
+    profileReturnSteps = 0;
+  }
+
+  // Profile tabs and posts opened on top of a parked feed share one return.
+  // Leaving that stack drops it, so a later profile does not jump past the feed.
+  function noteProfileReturnStep(fromPop, pushed, routeName) {
+    const onStack = routeName === "profile" || routeName === "post";
+    if (fromPop) {
+      profileReturnOpen = profileReturnSteps > 0 && onStack;
+      return;
+    }
+    if (!profileReturnNav || !feedParks.has(profileReturnNav)) {
+      profileReturnNav = 0;
+      profileReturnSteps = 0;
+      profileReturnOpen = false;
+      return;
+    }
+    if (!onStack) {
+      profileReturnNav = 0;
+      profileReturnSteps = 0;
+      profileReturnOpen = false;
+      return;
+    }
+    if (pushed && !parkedForProfile && profileReturnOpen) profileReturnSteps += 1;
+    profileReturnOpen = true;
+    stampProfileReturn();
+  }
+
+  function noteFeedStack(fromPop, pushed, routeName) {
+    if (routeName === "feed" || routeName === "community" || routeName === "welcome") {
+      feedStackDepth = 0;
+      return;
+    }
+    if (routeName !== "post") return;
+    if (fromPop) {
+      feedStackDepth = Number(history.state && history.state.feedStackDepth) || 0;
+      return;
+    }
+    if (pushed && liveFeedNav && !profileReturnNav) feedStackDepth += 1;
+    stampFeedStack();
+  }
+
+  function snapshotFeedState() {
+    return {
+      kind: feedState.kind,
+      sort: feedState.sort,
+      tag: feedState.tag,
+      scope: feedState.scope,
+      items: feedState.items.slice(),
+      seen: new Set(feedState.seen),
+      cursor: feedState.cursor
+        ? { author: feedState.cursor.author, permlink: feedState.cursor.permlink }
+        : null,
+      done: feedState.done,
+      loading: feedState.loading,
+    };
+  }
+
+  function applyFeedSnapshot(snap) {
+    feedState.kind = snap.kind;
+    feedState.sort = snap.sort;
+    feedState.tag = snap.tag;
+    feedState.scope = snap.scope;
+    feedState.items = snap.items;
+    feedState.seen = snap.seen;
+    feedState.cursor = snap.cursor;
+    feedState.loading = false;
+    feedState.done = snap.done;
+    // Stay ahead of a profile load that captured the previous generation.
+    feedState.gen += 1;
+  }
+
+  function discardFeedPark(park) {
+    if (park && park.holder) park.holder.replaceChildren();
+  }
+
+  function rememberFeedPark(park) {
+    feedParks.set(park.nav, park);
+    while (feedParks.size > FEED_PARK_MAX) {
+      const oldest = feedParks.keys().next().value;
+      if (oldest === park.nav) break;
+      discardFeedPark(feedParks.get(oldest));
+      feedParks.delete(oldest);
+    }
+  }
+
+  // The profile page uses #view and the shared feed list. Detach the feed
+  // instead of serializing it, so Load more and the painted cards survive.
+  function parkLiveFeed(fromPop) {
+    const nav = liveFeedNav;
+    const holder = document.createElement("div");
+    const feed = snapshotFeedState();
+    const expanded = new Set(expandedCardExcerpts);
+    // Read this before the list leaves the document. Detaching it shrinks the
+    // page and the browser clamps the window back to the top.
+    const scrollY = postLayer.open && postLayer.heldScroll ? Number(postLayer.scrollY) || 0 : scrollYNow();
+    armInstantScroll();
+    feedState.gen += 1;
+    feedState.loading = false;
+    while (view.firstChild) holder.appendChild(view.firstChild);
+    rememberFeedPark({
+      nav,
+      key: currentViewKey,
+      holder,
+      scrollY,
+      hadWelcome:
+        document.body.classList.contains("has-welcome") ||
+        Boolean(postLayer.open && postLayer.hadWelcome),
+      feed,
+      community: {
+        name: communityState.name,
+        info: communityState.info,
+        subscribed: communityState.subscribed,
+        pending: communityState.pending,
+      },
+      expanded,
+    });
+    liveFeedNav = 0;
+    const between = postLayer.open ? feedStackDepth : 0;
+    feedStackDepth = 0;
+    if (fromPop) return;
+    profileReturnNav = nav;
+    profileReturnSteps = 1 + between;
+    profileReturnOpen = true;
+    parkedForProfile = true;
+  }
+
+  function takeFeedPark(nav, key) {
+    const park = feedParks.get(nav);
+    if (!park || park.key !== key) return null;
+    feedParks.delete(nav);
+    if (!park.holder.firstElementChild) {
+      discardFeedPark(park);
+      return null;
+    }
+    return park;
+  }
+
+  function mountFeedPark(park) {
+    while (view.firstChild) view.removeChild(view.firstChild);
+    while (park.holder.firstChild) view.appendChild(park.holder.firstChild);
+    applyFeedSnapshot(park.feed);
+    communityState.name = park.community.name;
+    communityState.info = park.community.info;
+    communityState.subscribed = park.community.subscribed;
+    communityState.pending = park.community.pending;
+    expandedCardExcerpts.clear();
+    park.expanded.forEach((k) => expandedCardExcerpts.add(k));
+  }
+
+  function revealParkedWelcome() {
+    document.body.classList.add("has-welcome");
+    const flyer = document.getElementById("welcomeFlyer");
+    if (flyer) flyer.hidden = false;
+  }
+
+  function resumeParkedFeedLoad() {
+    const status = document.getElementById("feedStatus");
+    const moreBtn = document.getElementById("moreBtn");
+    if (!status || status.hidden || !moreBtn || feedState.done) return;
+    feedState.loading = false;
+    moreBtn.click();
+  }
+
+  function routeStill(key) {
+    return routeKey(parseRoute()) === key;
+  }
+
   async function route() {
+    const fromPop = routeFromPop;
+    const pushed = routePushed;
+    routeFromPop = false;
+    routePushed = false;
+    if (fromPop) syncProfileReturnFromHistory();
+    parkedForProfile = false;
     const fromProfileNav = profileNavSwitch;
     profileNavSwitch = false;
     closeLogoMenu();
@@ -11322,6 +11654,9 @@ let FILTER_LOW_REP = 20;
     if (!fromAccountProfile) accountMenuProfile = false;
     syncAccountMenuBanner(accountBannerMode(r, fromAccountMenu, fromAccountProfile, fromProfileNav));
     if (r.name === "post") {
+      ensureHistoryNav();
+      noteProfileReturnStep(fromPop, pushed, "post");
+      noteFeedStack(fromPop, pushed, "post");
       publishNavPushed = false;
       const jumpComments =
         pendingCommentsScroll || (!HASH_ROUTING && location.hash === "#comments");
@@ -11331,6 +11666,10 @@ let FILTER_LOW_REP = 20;
       await presentPost(r.author, r.permlink, { jumpComments, anchor });
       return;
     }
+    // Capture the feed before welcome teardown scrolls the window to the top.
+    if (r.name === "profile" && canParkLiveFeed()) parkLiveFeed(fromPop);
+    noteProfileReturnStep(fromPop, pushed, r.name);
+    noteFeedStack(fromPop, pushed, r.name);
     const showWelcome = resolveWelcome(r);
     applyWelcome(showWelcome);
     if (isHomePath() && observer() && !showWelcome) {
@@ -11350,15 +11689,11 @@ let FILTER_LOW_REP = 20;
         return;
       }
     }
-    const sameView = Boolean(key && key === currentViewKey && view.innerHTML.trim());
+    const nav = ensureHistoryNav();
+    const restored = takeFeedPark(nav, key);
     // A post opened from the feed stays up under the publish dialog. Closing
     // the dialog returns to that post instead of the feed underneath.
     const keepPost = r.name === "publish" && postLayer.open;
-    if (postLayer.open && !keepPost) {
-      if (sameView) syncFeedCardOnReturn();
-      suspendPostLayer({ restoreScroll: sameView });
-    }
-    if (!keepPost) currentPost = null;
     if (r.name !== "community") resetCommunityState();
     if (r.name !== "profile") resetProfileState();
     if (r.name !== "publish") {
@@ -11368,6 +11703,18 @@ let FILTER_LOW_REP = 20;
       );
       document.body.classList.toggle("is-community", r.name === "community");
     }
+    if (restored) {
+      mountFeedPark(restored);
+      currentViewKey = key;
+      liveFeedNav = nav;
+    }
+    const sameView = Boolean(key && key === currentViewKey && view.innerHTML.trim());
+    if (postLayer.open && !keepPost) {
+      if (sameView) syncFeedCardOnReturn();
+      // The parked feed applies its own offset after the post layer closes.
+      suspendPostLayer({ restoreScroll: sameView && !restored });
+    }
+    if (!keepPost) currentPost = null;
     pendingCommentsScroll = false;
 
     if (r.name !== "publish") publishNavPushed = false;
@@ -11402,6 +11749,15 @@ let FILTER_LOW_REP = 20;
         accountMenuSubNav = false;
       }
       if (fromAccountProfile) accountMenuProfile = false;
+      if (restored) {
+        if (restored.hadWelcome) revealParkedWelcome();
+        scrollWindowInstant(restored.scrollY);
+        if (restored.feed.loading) resumeParkedFeedLoad();
+      } else if (isRestorableFeedKey(key)) {
+        // This entry now shows the mounted feed. A profile opened next parks
+        // under this id, so Back and the logo find the same list.
+        liveFeedNav = nav;
+      }
       return;
     }
 
@@ -11411,8 +11767,12 @@ let FILTER_LOW_REP = 20;
     }
     if (r.name === "welcome") {
       document.title = "Crypto Space 77";
-      await renderFeed("latest", true, "");
       currentViewKey = key;
+      liveFeedNav = nav;
+      await renderFeed("latest", true, "");
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      liveFeedNav = nav;
       return;
     }
     if (r.name === "feed") {
@@ -11423,8 +11783,12 @@ let FILTER_LOW_REP = 20;
         document.title =
           r.sort === "feed" ? "Feed — Crypto Space 77" : "Crypto Space 77";
       }
-      await renderFeed(r.sort, true, r.tag || "");
       currentViewKey = key;
+      liveFeedNav = nav;
+      await renderFeed(r.sort, true, r.tag || "");
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      liveFeedNav = nav;
       return;
     }
     if (r.name === "profile") {
@@ -11436,38 +11800,54 @@ let FILTER_LOW_REP = 20;
         return;
       }
       currentViewKey = key;
+      liveFeedNav = 0;
       accountMenuSubNav = false;
       accountMenuProfile = false;
       await renderProfile(r.author, r.page);
-      if (routeKey(parseRoute()) === key) currentViewKey = key;
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      liveFeedNav = 0;
       return;
     }
     if (r.name === "community") {
-      await renderCommunity(r.community, r.page);
       currentViewKey = key;
+      liveFeedNav = nav;
+      await renderCommunity(r.community, r.page);
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      liveFeedNav = nav;
       return;
     }
     if (r.name === "tags") {
+      liveFeedNav = 0;
+      currentViewKey = key;
       await renderTagsPage();
+      if (!routeStill(key)) return;
       currentViewKey = key;
       return;
     }
     if (r.name === "communities") {
+      liveFeedNav = 0;
+      currentViewKey = key;
       await renderCommunitiesPage();
+      if (!routeStill(key)) return;
       currentViewKey = key;
       return;
     }
     if (r.name === "about") {
+      liveFeedNav = 0;
       renderAbout();
       currentViewKey = key;
       return;
     }
     if (r.name === "imprint") {
+      liveFeedNav = 0;
       renderImprint();
       currentViewKey = key;
       return;
     }
     document.title = "Not found — Crypto Space 77";
+    liveFeedNav = 0;
     view.innerHTML = notFoundHtml();
     currentViewKey = "notfound";
   }
