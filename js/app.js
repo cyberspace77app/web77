@@ -7950,7 +7950,7 @@ let FILTER_LOW_REP = 20;
     if (!has) {
       if (kind === "heading") return { snippet: "## heading", block: true, replace: true };
       if (kind === "bold") return { snippet: "**bold**", block: false, replace: true };
-      if (kind === "italics") return { snippet: "*italic*", block: false, replace: true };
+      if (kind === "italic") return { snippet: "*italic*", block: false, replace: true };
       if (kind === "strike") return { snippet: "~~strike~~", block: false, replace: true };
       if (kind === "quote") return { snippet: "> quote", block: true, replace: true };
       if (kind === "link") return { snippet: "[link text](url)", block: false, replace: true };
@@ -7961,7 +7961,7 @@ let FILTER_LOW_REP = 20;
     }
     if (kind === "heading") return { snippet: prefixMarkdownLines(selected, "## "), block: true, replace: true };
     if (kind === "bold") return { snippet: "**" + selected + "**", block: false, replace: true };
-    if (kind === "italics") return { snippet: "*" + selected + "*", block: false, replace: true };
+    if (kind === "italic") return { snippet: "*" + selected + "*", block: false, replace: true };
     if (kind === "strike") return { snippet: "~~" + selected + "~~", block: false, replace: true };
     if (kind === "quote") return { snippet: prefixMarkdownLines(selected, "> "), block: true, replace: true };
     if (kind === "link") return { snippet: "[" + selected + "](url)", block: false, replace: true };
