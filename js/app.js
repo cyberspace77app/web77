@@ -6154,7 +6154,7 @@ let CS77_FILTER_LOW_REP = 20;
       // Wait for the post to actually exist on the blockchain
       let postExists = false;
       let retries = 0;
-      const maxRetries = 60; // ~60 seconds with 1 second intervals
+      const maxRetries = 120; // ~120 seconds with 1 second intervals
 
       while (!postExists && retries < maxRetries) {
         try {
