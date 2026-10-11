@@ -3579,14 +3579,14 @@ a.tag:hover {
   margin: 0 0 0.85rem;
 }
 
-.wallet-awards {
+.wallet-rewards {
   border: 1px solid var(--border-hot);
   background: rgba(227, 19, 55, 0.08);
   border-radius: var(--radius);
   padding: 1.15rem 1.2rem 1.05rem;
 }
 
-.wallet-awards h2 {
+.wallet-rewards h2 {
   color: var(--yellow);
 }
 

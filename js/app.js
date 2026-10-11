@@ -9601,7 +9601,7 @@ let CS77_FILTER_LOW_REP = 20;
     return formatHiveLike(amount, String(m[2] || "").toLowerCase());
   }
 
-  function walletHasAwards(wallet) {
+  function walletHasRewards(wallet) {
     if (!wallet) return false;
     return wallet.rewardHive > 0 || wallet.rewardHbd > 0 || wallet.rewardVests > 0;
   }
@@ -9623,11 +9623,11 @@ let CS77_FILTER_LOW_REP = 20;
     transfer_to_savings: "staked",
     transfer_from_savings: "unstake requested",
     fill_transfer_from_savings: "unstake paid",
-    claim_reward_balance: "claimed awards",
+    claim_reward_balance: "claimed rewards",
     delegate_vesting_shares: "delegation",
-    //author_reward: "author award",
-    //curation_reward: "curation award",
-    //comment_benefactor_reward: "benefactor award",
+    //author_reward: "author reward",
+    //curation_reward: "curation reward",
+    //comment_benefactor_reward: "benefactor reward",
     interest: "hbd interest",
   };
 
@@ -9691,7 +9691,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (type === "curation_reward") {
       return payload.comment_author ? "@" + payload.comment_author : "";
     }
-    if (type === "claim_reward_balance") return "pending awards claimed";
+    if (type === "claim_reward_balance") return "pending rewards claimed";
     return "";
   }
 
@@ -9875,8 +9875,8 @@ let CS77_FILTER_LOW_REP = 20;
     </div>`;
   }
 
-  function walletAwardsHtml(wallet, own) {
-    if (!own || !walletHasAwards(wallet)) return "";
+  function walletRewardsHtml(wallet, own) {
+    if (!own || !walletHasRewards(wallet)) return "";
     const rows = [];
     if (wallet.rewardHive > 0) {
       rows.push(
@@ -9894,8 +9894,8 @@ let CS77_FILTER_LOW_REP = 20;
       );
     }
     return `
-      <section class="wallet-section wallet-awards">
-        <h2>Pending awards</h2>
+      <section class="wallet-section wallet-rewards">
+        <h2>Pending rewards</h2>
         ${rows.join("")}
         <div class="wallet-row-actions wallet-claim-actions">
           <button type="button" class="btn-primary btn-compact wallet-claim-btn">Claim</button>
@@ -10025,9 +10025,9 @@ let CS77_FILTER_LOW_REP = 20;
     requestAnimationFrame(frame);
   }
 
-  function animateClaimAwards(wallet) {
+  function animateClaimRewards(wallet) {
     const token = ++claimAnimToken;
-    const awards = view.querySelector(".wallet-awards");
+    const rewards = view.querySelector(".wallet-rewards");
     const rows = rewardBalanceRows(wallet);
     const from = {
       hive: Number(wallet.hive) || 0,
@@ -10035,7 +10035,7 @@ let CS77_FILTER_LOW_REP = 20;
       stakedHive: Number(wallet.stakedHive) || 0,
     };
     const targets = claimedBalanceTargets(wallet);
-    if (!awards) {
+    if (!rewards) {
       applyClaimedRewards(wallet);
       profileState.claimPending = false;
       paintWalletBalanceAmounts(wallet);
@@ -10043,7 +10043,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const countMs = reduced ? 0 : 1500;
-    awards.remove();
+    rewards.remove();
     for (let i = 0; i < rows.length; i++) {
       rows[i].classList.remove("is-reward-in");
       void rows[i].offsetWidth;
@@ -10100,7 +10100,7 @@ let CS77_FILTER_LOW_REP = 20;
     const hbdActions = own ? walletStakeButtons("hbd") : "";
     return `
       <div class="wallet-page">
-        ${walletAwardsHtml(w, own)}
+        ${walletRewardsHtml(w, own)}
         <section class="wallet-section">
           <h2>Balances</h2>
           <div class="wallet-table-wrap">
@@ -10356,7 +10356,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function claimProfileAwards() {
+  function claimProfileRewards() {
     const user = observer();
     const wallet = profileState.wallet;
     const name = profileState.author;
@@ -10369,10 +10369,10 @@ let CS77_FILTER_LOW_REP = 20;
       showError(signerNeededMessage());
       return;
     }
-    if (!walletHasAwards(wallet) || profileState.claimPending) return;
+    if (!walletHasRewards(wallet) || profileState.claimPending) return;
     profileState.claimPending = true;
-    const awards = view.querySelector(".wallet-awards");
-    showClaimPending(awards);
+    const rewards = view.querySelector(".wallet-rewards");
+    showClaimPending(rewards);
     const { promise } = ChainQueue.enqueue({
       username: user,
       key: "Posting",
@@ -10392,12 +10392,12 @@ let CS77_FILTER_LOW_REP = 20;
     promise
       .then(() => {
         if (profileState.wallet !== wallet) return;
-        animateClaimAwards(wallet);
+        animateClaimRewards(wallet);
       })
       .catch((err) => {
         if (profileState.author !== name) return;
         profileState.claimPending = false;
-        const box = view.querySelector(".wallet-awards");
+        const box = view.querySelector(".wallet-rewards");
         if (box) {
           box.hidden = false;
           restoreClaimButton(box);
@@ -10406,8 +10406,8 @@ let CS77_FILTER_LOW_REP = 20;
       });
   }
 
-  function showClaimPending(awards) {
-    const btn = awards && awards.querySelector(".wallet-claim-btn");
+  function showClaimPending(rewards) {
+    const btn = rewards && rewards.querySelector(".wallet-claim-btn");
     if (!btn) return;
     const height = btn.getBoundingClientRect().height;
     const status = document.createElement("span");
@@ -10418,8 +10418,8 @@ let CS77_FILTER_LOW_REP = 20;
     btn.replaceWith(status);
   }
 
-  function restoreClaimButton(awards) {
-    const status = awards && awards.querySelector(".wallet-claiming");
+  function restoreClaimButton(rewards) {
+    const status = rewards && rewards.querySelector(".wallet-claiming");
     if (!status) return;
     const btn = document.createElement("button");
     btn.type = "button";
@@ -12311,7 +12311,7 @@ let CS77_FILTER_LOW_REP = 20;
       const claimBtn = e.target.closest(".wallet-claim-btn");
       if (claimBtn && inInteractiveSurface(claimBtn)) {
         e.preventDefault();
-        claimProfileAwards();
+        claimProfileRewards();
         return;
       }
       const stakeBtn = e.target.closest(".wallet-stake-btn");
