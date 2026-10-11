@@ -65,7 +65,7 @@ let CS77_FILTER_LOW_REP = 20;
   const contentByKey = new Map();
   let pendingCommentsScroll = false;
   let pendingPublish = false;
-  let publishDest = { type: "blog", name: "", title: "My blog" };
+  let publishDest = { type: "blog", name: "", title: "My hyperspace" };
   let publishTags = [];
   let publishSubs = [];
   let publishSubsUser = "";
@@ -4802,7 +4802,7 @@ let CS77_FILTER_LOW_REP = 20;
         name: state.dest.type === "community" ? state.dest.name : "",
         title:
           state.dest.title ||
-          (state.dest.type === "community" ? state.dest.name : "My blog"),
+          (state.dest.type === "community" ? state.dest.name : "My hyperspace"),
       };
     }
     const title = $("#publishTitle");
@@ -4853,7 +4853,7 @@ let CS77_FILTER_LOW_REP = 20;
       nameEl.textContent = publishDest.title || publishDest.name;
     } else {
       img.src = user ? HiveMd.avatarUrl(user, "small") : "";
-      nameEl.textContent = "My blog";
+      nameEl.textContent = "My hyperspace";
     }
   }
 
@@ -4869,7 +4869,7 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     if (!menu) return;
     const blogSelected = publishDest.type !== "community";
-    const parts = [destOptionHtml("", "My blog", user, blogSelected)];
+    const parts = [destOptionHtml("", "My hyperspace", user, blogSelected)];
     publishSubs.forEach((c) => {
       const selected = publishDest.type === "community" && publishDest.name === c.name;
       parts.push(destOptionHtml(c.name, c.title || c.name, c.name, selected));
@@ -4937,7 +4937,7 @@ let CS77_FILTER_LOW_REP = 20;
     publishDest = {
       type: type === "community" && name ? "community" : "blog",
       name: type === "community" ? name : "",
-      title: title || (type === "community" ? name : "My blog"),
+      title: title || (type === "community" ? name : "My hyperspace"),
     };
     paintPublishDest();
     renderDestMenu();
@@ -5941,7 +5941,7 @@ let CS77_FILTER_LOW_REP = 20;
   function resetPublishForm() {
     publishEdit = null;
     publishStash = null;
-    publishDest = { type: "blog", name: "", title: "My blog" };
+    publishDest = { type: "blog", name: "", title: "My hyperspace" };
     publishTags = [];
     publishTitleDraft = "";
     publishBodyDraft = "";
@@ -8135,7 +8135,7 @@ let CS77_FILTER_LOW_REP = 20;
         };
       } else {
         if (typeof rawCommunity === "string" && rawCommunity.trim()) skippedCommunity = true;
-        publishDest = { type: "blog", name: "", title: "My blog" };
+        publishDest = { type: "blog", name: "", title: "My hyperspace" };
       }
       paintPublishDest();
       renderDestMenu();
