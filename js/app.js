@@ -2726,8 +2726,8 @@ let CS77_FILTER_LOW_REP = 20;
     space: true,
     trending: true,
     hot: true,
-    tags: true,
-    communities: true,
+    spaces: true,
+    subspaces: true,
     publish: true,
     welcome: true,
     about: true,
@@ -3004,10 +3004,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (parts.length === 1 && first === "publish") {
       return { name: "publish" };
     }
-    if (parts.length === 1 && first === "tags") {
+    if (parts.length === 1 && first === "spaces") {
       return { name: "tags" };
     }
-    if (parts.length === 1 && first === "communities") {
+    if (parts.length === 1 && first === "subspaces") {
       return { name: "communities" };
     }
     if (parts.length === 1 && first === "welcome") {
@@ -3109,8 +3109,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (key === "welcome") return "/welcome";
     if (key === "about") return "/about";
     if (key === "imprint") return "/imprint";
-    if (key === "tags") return "/tags";
-    if (key === "communities") return "/communities";
+    if (key === "tags") return "/spaces";
+    if (key === "communities") return "/subspaces";
     if (key.indexOf("feed:") === 0) {
       const rest = key.slice(5);
       const colon = rest.indexOf(":");
@@ -4378,14 +4378,14 @@ let CS77_FILTER_LOW_REP = 20;
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = "welcome, feed, tags, communities, and about";
+    const menuLabel = "welcome, feed, spaces, subspaces, and about";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
-    if (tags) tags.setAttribute("href", appHref("/tags"));
-    if (communities) communities.setAttribute("href", appHref("/communities"));
+    if (tags) tags.setAttribute("href", appHref("/spaces"));
+    if (communities) communities.setAttribute("href", appHref("/subspaces"));
     if (favs) {
       const list = readFavoriteTags().slice(0, LOGO_FAVORITES_SHOW);
       if (!list.length) {

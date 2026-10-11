@@ -5,7 +5,7 @@
 # /subspace/121566  /subspace/121566/trending|hot|rules|members
 # /c/hive-121566  /c/hive-121566/latest|trending|hot|rules|members
 # /121566 redirects to /subspace/121566
-# /trending  /hot  /created  /tags  /welcome  /imprint
+# /trending  /hot  /created  /spaces  /subspaces  /welcome  /imprint
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
 
 <IfModule mod_rewrite.c>

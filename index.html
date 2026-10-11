@@ -16,8 +16,8 @@
       latest: 1,
       trending: 1,
       hot: 1,
-      tags: 1,
-      communities: 1,
+      spaces: 1,
+      subspaces: 1,
       publish: 1,
       welcome: 1,
       about: 1,
@@ -49,7 +49,7 @@
       <header class="header" id="siteHeader">
         <div class="logo-wrap" id="logoWrap">
           <div class="logo-menu" id="logoMenu">
-            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open about, welcome, feed, tags, and communities">
+            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open about, welcome, feed, spaces, and subspaces">
               <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Crypto Space 77 hexagonal logo">
                 <polygon
                   points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
@@ -61,11 +61,11 @@
               </svg>
             </button>
             <div class="logo-dropdown" id="logoDropdown">
-              <nav class="logo-dropdown-panel" aria-label="welcome, feed, tags, communities, and about">
+              <nav class="logo-dropdown-panel" aria-label="welcome, feed, spaces, subspaces, and about">
                 <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
                 <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
-                <a class="logo-dropdown-link" id="logoTagsLink" href="/tags">Tags</a>
-                <a class="logo-dropdown-link" id="logoCommunitiesLink" href="/communities">Communities</a>
+                <a class="logo-dropdown-link" id="logoTagsLink" href="/spaces">Spaces</a>
+                <a class="logo-dropdown-link" id="logoCommunitiesLink" href="/subspaces">Subspaces</a>
                 <div class="logo-dropdown-favs" id="logoFavTags" hidden></div>
                 <div class="logo-dropdown-favs" id="logoFavCommunities" hidden></div>
                 <a class="logo-dropdown-link" id="logoAboutLink" href="/about">About</a>
@@ -341,6 +341,6 @@
   <script src="/js/hive-auth.js?v=0.16.0"></script>
   <script src="/js/chain-queue.js?v=0.16.0"></script>
   <script src="/js/blacklist.js?v=0.16.0"></script>
-  <script src="/js/app.js?v=0.16.143"></script>
+  <script src="/js/app.js?v=0.16.145"></script>
 </body>
 </html>
