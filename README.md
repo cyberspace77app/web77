@@ -1,6 +1,6 @@
-# CryptoSpace77 — web77
+# CyberSpace77 — web77
 
-Crypto Space 77 is a lightweight, open-source, decentralized, social media web frontend for the hive blockchain.
+CyberSpace77 is a lightweight, open-source, decentralized, social media web frontend for the hive blockchain.
 
 It is designed as a single-page application (SPA) that runs directly in your browser, with minimal requirements. You can also run it locally on your PC, making the frontend more resilient to censorship or availability issues at the web-hosting level.
 
@@ -18,7 +18,7 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 
 Visit the live version:
 
-https://cryptospace77.com/
+https://cyberspace77.com/
 
 ## Run locally
 
@@ -34,7 +34,7 @@ Then open 127.0.0.1:8777 in your web browser.
 
 ## Status
 
-**Alpha software:** CryptoSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
+**Alpha software:** CyberSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
 
 ## Dependencies
 
@@ -42,4 +42,4 @@ hive-tx, marked, DOMPurify, cdn.jsdelivr.net, maplibre-gl-js, openfreemap, opens
 
 ## Hive
 
-Crypto Space 77 is powered by the [hive blockchain](https://hive.io/), a web3 fast & scalable ecosystem with zero fees, optimized for social media and dapps.
+CyberSpace77 is powered by the [hive blockchain](https://hive.io/), a web3 fast & scalable ecosystem with zero fees, optimized for social media and dapps.
