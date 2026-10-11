@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local http server for Crypto Space 77 (mirrors .htaccess)."""
+"""Local http server for CyberSpace77 (mirrors .htaccess)."""
 
 import argparse
 import sys
@@ -61,7 +61,7 @@ class Server(ThreadingHTTPServer):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Crypto Space 77 local server")
+    parser = argparse.ArgumentParser(description="CyberSpace77 local server")
     parser.add_argument("--port", type=int, default=8777)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument(
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         print("Stop the old python process using that port, or pick another: python server.py --port 8778", file=sys.stderr)
         sys.exit(1)
     root_url = f"http://{args.host}:{args.port}{PREFIX}/"
-    print(f"Crypto Space 77  {root_url}", flush=True)
+    print(f"CyberSpace77  {root_url}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
