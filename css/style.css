@@ -1,4 +1,4 @@
-/* ─── Crypto Space 77 ─── */
+/* ─── Cyber Space 77 ─── */
 :root {
   --bg: #070707;
   --bg-panel: rgba(7, 7, 7, 0.75);
@@ -389,7 +389,7 @@ html.has-mouse .logo-wrap:hover .app-logo,
   font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(1.4rem, 4vw, 2rem);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
   line-height: 1.2;
@@ -5296,7 +5296,7 @@ min-height: 0;
   max-width: 9em;
   font-family: var(--font-serif);
   font-weight: 400;
-  font-size: clamp(2.75rem, 8vw, 6.75rem);
+  font-size: clamp(2.75rem, 6vw, 6.75rem);
   line-height: 0.94;
   letter-spacing: -0.03em;
   color: var(--yellow);

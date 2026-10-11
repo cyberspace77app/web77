@@ -1,5 +1,5 @@
 /**
- * Crypto Space 77 — main javascript for router, feed, post, comments, and page processing.
+ * CyberSpace77 — main javascript for router, feed, post, comments, and page processing.
  */
 
 // filter low rep, honor mutes, api mod flags, cs77 blacklist
@@ -8,8 +8,8 @@ let CS77_FILTER_LOW_REP = 20;
 (function () {
   "use strict";
 
-  const APP_ID = "cryptospace77.com";
-  const APP_VERSION = "0.16";
+  const APP_ID = "cyberspace77.com";
+  const APP_VERSION = "0.17";
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
@@ -4673,7 +4673,7 @@ let CS77_FILTER_LOW_REP = 20;
     status.textContent = "Waiting for Keychain…";
     window.hive_keychain.requestSignBuffer(
       username,
-      "Crypto Space 77 login",
+      "CyberSpace77 login",
       "Posting",
       (res) => {
         if (res && res.success) {
@@ -6016,7 +6016,7 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     const ov = $("#publishOverlay");
     if (!ov) return;
-    document.title = "Publish — Crypto Space 77";
+    document.title = "Publish — CyberSpace77";
     if (!user) {
       pendingPublish = true;
       ov.hidden = true;
@@ -6221,7 +6221,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (tagsEl && currentPost) {
       tagsEl.innerHTML = tagsOf(currentPost).map(tagChipHtml).join("");
     }
-    document.title = `${title || "Post"} — Crypto Space 77`;
+    document.title = `${title || "Post"} — CyberSpace77`;
   }
 
   function openPostEditor() {
@@ -7040,7 +7040,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderTagsPage() {
-    document.title = "Tags — Crypto Space 77";
+    document.title = "Tags — CyberSpace77";
     view.innerHTML = `
       <section class="tags-page">
         <h2 class="tags-page-title">Favorite tags</h2>
@@ -7335,7 +7335,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderCommunitiesPage() {
-    document.title = "Communities — Crypto Space 77";
+    document.title = "Communities — CyberSpace77";
     communityDirState.gen += 1;
     const gen = communityDirState.gen;
     communityDirState.subs = [];
@@ -8035,8 +8035,8 @@ let CS77_FILTER_LOW_REP = 20;
     const tags = (comment ? (publishEdit && publishEdit.tags) || [] : publishTags).slice();
     const community = publishFileCommunity();
     const payload = {
-      app: "Crypto Space 77",
-      url: "cryptospace77.com",
+      app: "CyberSpace77",
+      url: "cyberspace77.com",
       version: APP_VERSION,
       date: new Date().toISOString(),
       title: title,
@@ -8256,7 +8256,7 @@ let CS77_FILTER_LOW_REP = 20;
     const jsonMetadata = {
       app: APP_ID + "/" + APP_VERSION,
       format: "markdown",
-      tags: ["cryptospace77"],
+      tags: ["cyberspace77"],
     };
     if (images.length) jsonMetadata.image = images;
 
@@ -8344,7 +8344,7 @@ let CS77_FILTER_LOW_REP = 20;
     const prevMeta = HiveMd.parseJsonMetadata(src.json_metadata);
     let tags = prevMeta.tags;
     if (typeof tags === "string") tags = tags.split(/[\s,]+/);
-    if (!Array.isArray(tags) || !tags.length) tags = ["cryptospace77"];
+    if (!Array.isArray(tags) || !tags.length) tags = ["cyberspace77"];
     const jsonMetadata = mergeJsonMetadata(src.json_metadata, body, tags);
 
     composer.classList.add("is-pending");
@@ -8566,7 +8566,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function setPostTitle(root) {
-    document.title = `${(root && root.title) || "Post"} — Crypto Space 77`;
+    document.title = `${(root && root.title) || "Post"} — CyberSpace77`;
   }
 
   function setCommentCount(n) {
@@ -9125,7 +9125,7 @@ let CS77_FILTER_LOW_REP = 20;
       postLayer.author = a;
       postLayer.permlink = p;
       currentPost = null;
-      document.title = "Not found — Crypto Space 77";
+      document.title = "Not found — CyberSpace77";
       paintPostMessage(notFoundHtml("This post was blacklisted."));
       revealPostLayer();
       scrollWindowInstant(0);
@@ -9251,10 +9251,10 @@ let CS77_FILTER_LOW_REP = 20;
 
   function profilePageTitle(author, page) {
     const a = "@" + author;
-    if (page === "comments") return "Comments · " + a + " — Crypto Space 77";
-    if (page === "replies") return "Replies · " + a + " — Crypto Space 77";
-    if (page === "wallet") return "Wallet · " + a + " — Crypto Space 77";
-    return a + " — Crypto Space 77";
+    if (page === "comments") return "Comments · " + a + " — CyberSpace77";
+    if (page === "replies") return "Replies · " + a + " — CyberSpace77";
+    if (page === "wallet") return "Wallet · " + a + " — CyberSpace77";
+    return a + " — CyberSpace77";
   }
 
   function profileNavHtml(author, page) {
@@ -10675,7 +10675,7 @@ let CS77_FILTER_LOW_REP = 20;
     resetProfileState();
     clearError();
     document.body.classList.remove("is-profile");
-    document.title = "Not found — Crypto Space 77";
+    document.title = "Not found — CyberSpace77";
     view.innerHTML = notFoundHtml(msg || "Failed to load account.");
   }
 
@@ -10980,9 +10980,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   function communityPageTitle(info, name, page) {
     const title = communityTitleOf(info, name);
-    if (page === "rules") return "Rules · " + title + " — Crypto Space 77";
-    if (page === "members") return "Members · " + title + " — Crypto Space 77";
-    return title + " — Crypto Space 77";
+    if (page === "rules") return "Rules · " + title + " — CyberSpace77";
+    if (page === "members") return "Members · " + title + " — CyberSpace77";
+    return title + " — CyberSpace77";
   }
 
   function toggleCommunitySubscription() {
@@ -11215,11 +11215,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function renderAbout() {
-    document.title = "About — Crypto Space 77";
+    document.title = "About — CyberSpace77";
     view.innerHTML = `
       <section class="about">
         <h2 class="about-title">About</h2>
-        <p>Crypto Space 77 is a modern, fast and lightweight, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
+        <p>cyberspace77 is a modern, fast and lightweight, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
         <p>The <a href="https://hive.io/">hive blockchain</a> is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
         <h3>developed by</h3>
         <div class="social-links about-social">
@@ -11228,13 +11228,13 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <h3>social</h3>
         <div class="social-links about-social">
-          <a class="btn-social btn-social-gray" href="${HiveMd.escapeHtml(appHref("/@cryptospace77"))}">hive</a>
-          <a class="btn-social btn-social-gray" href="https://x.com/cryptospace77x">X</a>
+          <a class="btn-social btn-social-gray" href="${HiveMd.escapeHtml(appHref("/@cyberspace77"))}">hive</a>
+          <a class="btn-social btn-social-gray" href="https://x.com/cyberspace77x">X</a>
           <a class="btn-social btn-social-gray" href="https://instagram.com/cryptospace77com">instagram</a>
         </div>
         <h3>source code (MIT license)</h3>
          <div class="social-links about-social">
-           <a class="btn-social btn-social-gray" href="https://github.com/cryptospace77/web77">github</a>
+           <a class="btn-social btn-social-gray" href="https://github.com/cyberspace77app/web77">github</a>
         </div>
         <h3><a href="${HiveMd.escapeHtml(appHref("/imprint"))}">imprint</a></h3>
       </section>
@@ -11242,17 +11242,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function renderImprint() {
-    document.title = "Imprint — Crypto Space 77";
+    document.title = "Imprint — CyberSpace77";
     view.innerHTML = `
       <section class="imprint">
         <h2 class="imprint-title">Imprint</h2>
-        <p>This is a local open-source web app running entirely in the user's browser. No user data is stored or processed on or by cryptospace77.com. The site does not use cookies.</p>
+        <p>This is a local open-source web app running entirely in the user's browser. No user data is stored or processed on or by cyberspace77.com. The site does not use cookies.</p>
         <p>Developed by DI Viktor Krammer<br>
         Vienna, Austria<br>
         in the European Union
         </p>
         <h3>Disclaimer</h3>
-        <p>Crypto Space 77 is experimental alpha software.</p>
+        <p>CyberSpace77 is experimental alpha software.</p>
         <p>This software is provided "as is" without warranties or conditions of any kind, express or implied.</p>
         <p>This application acts as a client for the hive blockchain network, similar to an email client or web browser. It does not host, process or store any user content on its server.</p>
         <p>Users are solely responsible for any content they create, publish, or distribute using this software. The authors and contributors assume no responsibility for user-generated content or activities on the hive network.</p>
@@ -11346,24 +11346,24 @@ let CS77_FILTER_LOW_REP = 20;
     if (!r) return;
     if (r.name === "feed") {
       document.title = r.tag
-        ? "#" + r.tag + " — Crypto Space 77"
+        ? "#" + r.tag + " — CyberSpace77"
         : r.sort === "feed"
-          ? "Feed — Crypto Space 77"
-          : "Crypto Space 77";
+          ? "Feed — CyberSpace77"
+          : "CyberSpace77";
     } else if (r.name === "profile") {
       document.title = profilePageTitle(r.author, r.page);
     } else if (r.name === "community") {
       document.title = communityPageTitle(communityState.info, r.community, r.page);
     } else if (r.name === "tags") {
-      document.title = "Tags — Crypto Space 77";
+      document.title = "Tags — CyberSpace77";
     } else if (r.name === "communities") {
-      document.title = "Communities — Crypto Space 77";
+      document.title = "Communities — CyberSpace77";
     } else if (r.name === "welcome") {
-      document.title = "Crypto Space 77";
+      document.title = "CyberSpace77";
     } else if (r.name === "about") {
-      document.title = "About — Crypto Space 77";
+      document.title = "About — CyberSpace77";
     } else if (r.name === "imprint") {
-      document.title = "Imprint — Crypto Space 77";
+      document.title = "Imprint — CyberSpace77";
     }
   }
 
@@ -11732,7 +11732,7 @@ let CS77_FILTER_LOW_REP = 20;
         window.scrollTo(0, 0);
         const sort = defaultFeedSort();
         document.title =
-          sort === "feed" ? "Feed — Crypto Space 77" : "Crypto Space 77";
+          sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77";
         await renderFeed(sort, true);
         currentViewKey = "feed:" + sort;
         storeFeedView(sort);
@@ -11766,7 +11766,7 @@ let CS77_FILTER_LOW_REP = 20;
       else window.scrollTo(0, 0);
     }
     if (r.name === "welcome") {
-      document.title = "Crypto Space 77";
+      document.title = "CyberSpace77";
       currentViewKey = key;
       liveFeedNav = nav;
       await renderFeed("latest", true, "");
@@ -11778,10 +11778,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "feed") {
       if (!r.tag && !(showWelcome && isHomePath())) storeFeedView(r.sort);
       if (r.tag) {
-        document.title = "#" + r.tag + " — Crypto Space 77";
+        document.title = "#" + r.tag + " — CyberSpace77";
       } else {
         document.title =
-          r.sort === "feed" ? "Feed — Crypto Space 77" : "Crypto Space 77";
+          r.sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77";
       }
       currentViewKey = key;
       liveFeedNav = nav;
@@ -11846,7 +11846,7 @@ let CS77_FILTER_LOW_REP = 20;
       currentViewKey = key;
       return;
     }
-    document.title = "Not found — Crypto Space 77";
+    document.title = "Not found — CyberSpace77";
     liveFeedNav = 0;
     view.innerHTML = notFoundHtml();
     currentViewKey = "notfound";
