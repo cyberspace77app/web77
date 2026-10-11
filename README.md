@@ -42,4 +42,4 @@ hive-tx, marked, DOMPurify, cdn.jsdelivr.net, maplibre-gl-js, openfreemap, opens
 
 ## Hive
 
-Crypto Space 77 is powered by the [hive blockchain](https://hive.io/), a web3 fast & scalable ecosystem with zero fees, optimized for social media and dapps.
+CyberSpace77 is powered by the [hive blockchain](https://hive.io/), a web3 fast & scalable ecosystem with zero fees, optimized for social media and dapps.
