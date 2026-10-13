@@ -678,43 +678,6 @@
     return m ? m[1] : "";
   }
 
-  /** Turn a lone ---/*** /___ line into <hr> so HTML blocks cannot swallow it. */
-  function promoteThematicBreaks(s) {
-    const lines = s.split("\n");
-    let inFence = false;
-    let fenceMark = "";
-    const thematic = /^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/;
-    const setextUnderline = /^[ \t]{0,3}-{3,}[ \t]*$/;
-    for (let i = 0; i < lines.length; i++) {
-      const fence = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-      if (fence) {
-        const mark = fence[1][0];
-        if (!inFence) {
-          inFence = true;
-          fenceMark = mark;
-        } else if (mark === fenceMark) {
-          inFence = false;
-          fenceMark = "";
-        }
-        continue;
-      }
-      if (inFence) continue;
-      if (!thematic.test(lines[i])) continue;
-      // Setext underlines are hyphens only; *** and ___ are always <hr>.
-      if (setextUnderline.test(lines[i])) {
-        const prev = i > 0 ? lines[i - 1].trim() : "";
-        const looksLikeSetext =
-          !!prev &&
-          !/[<>]/.test(prev) &&
-          !/^(?:-{3,}|\*{3,}|_{3,})$/.test(prev) &&
-          !/^(?:#{1,6}(?:\s|$)|[-*+]\s|\d+\.\s|>)/.test(prev);
-        if (looksLikeSetext) continue;
-      }
-      lines[i] = "<hr>";
-    }
-    return lines.join("\n");
-  }
-
   function parseAtxHeadingLine(line) {
     const m = String(line).match(/^[ \t]{0,3}(#{1,6})(?:[ \t]+|$)(.*)$/);
     if (!m) return null;
@@ -931,7 +894,9 @@
     let s = String(src || "").replace(/\r\n/g, "\n");
     s = replaceWorldmappinSnippets(s);
     s = rewriteKnownMediaPlayers(s);
-    s = promoteThematicBreaks(s);
+    // Thematic breaks stay as --- / *** / ___. marked turns them into <hr>.
+    // Rewriting them to <hr> first opens a CommonMark HTML block, which keeps
+    // every following line raw until a blank line, so "*italic*" stays asterisks.
     s = promoteAtxHeadings(s);
     // Bare image URLs on their own line → markdown image
     s = s.replace(
@@ -1278,48 +1243,6 @@
     if (title) html += ' title="' + escapeHtml(title) + '"';
     html += ">" + label + "</a>";
     return html;
-  }
-
-  function leftoverMarkdownLinkHtml(text, href, title) {
-    // A markdown link stays a link, including when the href is an image or a
-    // media URL. Own-line plain image URLs are already markdown images.
-    return linkHtml(href, text, title);
-  }
-
-  function replaceMarkdownLinks(src) {
-    const s = String(src || "");
-    let out = "";
-    let i = 0;
-    while (i < s.length) {
-      if (s[i] === "<") {
-        const skipTag = s.slice(i).match(/^<(pre|code|script|style|a)\b/i);
-        if (skipTag) {
-          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
-          const rest = s.slice(i);
-          const m = rest.search(close);
-          if (m < 0) {
-            out += rest;
-            break;
-          }
-          const end = m + rest.slice(m).match(close)[0].length;
-          out += rest.slice(0, end);
-          i += end;
-          continue;
-        }
-      }
-      const link = parseMarkdownLinkAt(s, i);
-      if (link) {
-        const html = leftoverMarkdownLinkHtml(link.text, link.url, link.title);
-        if (html) {
-          out += html;
-          i = link.end;
-          continue;
-        }
-      }
-      out += s[i];
-      i++;
-    }
-    return out;
   }
 
   function replaceMarkdownImages(src) {
@@ -1945,16 +1868,68 @@
     return m[1];
   }
 
-  function renderTextSegment(src) {
+  function renderTextSegment(src, unwrap) {
     if (!src || !looksLikeMarkdown(src)) return src;
     const html = parseWithMarked(src);
     if (html == null) return src;
+    // A same-line sibling stays inline. A following line keeps its <p> so the
+    // paragraph margin survives the final parse.
+    if (unwrap === false) return html;
     return unwrapSingleParagraph(html);
+  }
+
+  // --- inside a raw HTML block never reaches marked. Turn that line into <hr>.
+  // Fences, pre, and code stay literal. A setext underline stays too.
+  function thematicBreaksInRawHtml(html) {
+    const lines = String(html).split("\n");
+    let inFence = false;
+    let fenceMark = "";
+    let skip = "";
+    const thematic = /^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/;
+    const setextUnderline = /^[ \t]{0,3}-{3,}[ \t]*$/;
+    for (let i = 0; i < lines.length; i++) {
+      const fence = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})/);
+      if (!skip && fence) {
+        const mark = fence[1][0];
+        if (!inFence) {
+          inFence = true;
+          fenceMark = mark;
+        } else if (mark === fenceMark) {
+          inFence = false;
+          fenceMark = "";
+        }
+        continue;
+      }
+      if (inFence) continue;
+      if (skip) {
+        if (new RegExp("</" + skip + "\\s*>", "i").test(lines[i])) skip = "";
+        continue;
+      }
+      const open = /<(pre|script|style|textarea|code)\b/i.exec(lines[i]);
+      if (open && !new RegExp("</" + open[1] + "\\s*>", "i").test(lines[i])) {
+        skip = open[1];
+        continue;
+      }
+      if (!thematic.test(lines[i])) continue;
+      if (setextUnderline.test(lines[i])) {
+        const prev = i > 0 ? lines[i - 1].trim() : "";
+        const looksLikeSetext =
+          !!prev &&
+          !/[<>]/.test(prev) &&
+          !/^(?:-{3,}|\*{3,}|_{3,})$/.test(prev) &&
+          !/^(?:#{1,6}(?:\s|$)|[-*+]\s|\d+\.\s|>)/.test(prev);
+        if (looksLikeSetext) continue;
+      }
+      lines[i] = "<hr>";
+    }
+    return lines.join("\n");
   }
 
   // Parse markdown that sits beside HTML blocks. A block element on a line would
   // otherwise swallow the rest of that line, including a sibling *italic*.
-  function parseMarkdownAroundHtmlBlocks(src) {
+  // parseBare false leaves a string with no HTML block for the caller to parse
+  // once. Interiors of styling tags pass true so marked still runs there.
+  function parseMarkdownAroundHtmlBlocks(src, parseBare) {
     const s = String(src || "");
     if (!looksLikeMarkdown(s)) return s;
     const parts = [];
@@ -2006,12 +1981,16 @@
       i = end;
       textStart = end;
     }
-    if (!parts.length) return renderTextSegment(s);
+    if (!parts.length) return parseBare === false ? s : renderTextSegment(s);
     if (textStart < s.length) parts.push(s.slice(textStart));
     let out = "";
     for (let n = 0; n < parts.length; n++) {
       const part = parts[n];
-      out += typeof part === "string" ? renderTextSegment(part) : part.html;
+      if (typeof part === "string") {
+        out += renderTextSegment(part, part.indexOf("\n") === -1);
+      } else {
+        out += thematicBreaksInRawHtml(part.html);
+      }
     }
     return out;
   }
@@ -2539,8 +2518,17 @@
 
   function renderMarkdown(src) {
     ensureMarked();
-    const prepared = renderMarkdownInStylingTags(
-      preprocessHiveMarkdown(String(src || "").replace(/\r\n/g, "\n"))
+    // 1. Markdown to HTML. Hive prep rewrites players and bare image URLs,
+    //    and turns markdown images into <img> so a caption under the photo
+    //    is parsed before CommonMark's HTML-block rule. Styling tags and
+    //    HTML-block siblings are parsed with marked, because a raw HTML block
+    //    would hide them. marked.parse then translates what is left, including
+    //    thematic breaks, links, and emphasis.
+    const prepared = parseMarkdownAroundHtmlBlocks(
+      renderMarkdownInStylingTags(
+        preprocessHiveMarkdown(String(src || "").replace(/\r\n/g, "\n"))
+      ),
+      false
     );
     let html;
     try {
@@ -2554,11 +2542,8 @@
       html = `<p>${escapeHtml(prepared).replace(/\n/g, "<br>")}</p>`;
     }
 
-    // Leftover markdown inside HTML blocks becomes tags, then the whitelist
-    // sees the whole post. Plain-text media is embedded next. Remaining
-    // http(s) text is linked after that, then Hive hosts, mentions, and tags.
-    html = replaceMarkdownImages(html);
-    html = replaceMarkdownLinks(html);
+    // 2. Whitelist. 3. Plain-text media. 4. Leftover http(s) text.
+    // 5. Hive hosts, then @user, @user/permlink, and #tags.
     html = sanitizePostHtml(html);
     html = embedMedia(html);
     html = linkifyPlainUrls(html);
