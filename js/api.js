@@ -665,6 +665,15 @@
     return pct;
   }
 
+  // Downvote mana fills its own pool: voting max times downvote_pool_percent / 10000.
+  function downvoteManaPercent(account, props, nowSec) {
+    const pool = Math.round(Number(props && props.downvote_pool_percent));
+    if (!Number.isFinite(pool) || pool <= 0) return null;
+    const maxVote = effectiveVestMicros(account);
+    const maxDown = (maxVote * BigInt(Math.min(10000, pool))) / 10000n;
+    return manabarPercent(account && account.downvote_manabar, maxDown, nowSec);
+  }
+
   function accountName(username) {
     return String(username || "")
       .trim()
@@ -714,6 +723,7 @@
       account,
       props,
       votingMana: manabarPercent(account.voting_manabar, effectiveVestMicros(account), now),
+      downvoteMana: downvoteManaPercent(account, props, now),
       voteValue: rsharesToHbd(rshares, fund, price),
       rc: rcAccount ? manabarPercent(rcAccount.rc_manabar, rcMax, now) : null,
     };

@@ -3572,6 +3572,7 @@ let CS77_FILTER_LOW_REP = 20;
     profileImage: "",
     props: null,
     votingMana: null,
+    downvoteMana: null,
     voteValue: null,
     rc: null,
     social: null,
@@ -3588,6 +3589,7 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.profileImage = "";
     accountState.props = null;
     accountState.votingMana = null;
+    accountState.downvoteMana = null;
     accountState.voteValue = null;
     accountState.rc = null;
     accountState.social = null;
@@ -3731,6 +3733,22 @@ let CS77_FILTER_LOW_REP = 20;
     if (img.getAttribute("src") !== src) img.setAttribute("src", src);
   }
 
+  function paintDownvoteManaStat(el, ready) {
+    const value = el.querySelector("[data-stat='downmana']");
+    const stat = value && value.closest(".session-stat");
+    if (!stat) return;
+    const raw = accountState.downvoteMana;
+    const pct = raw == null ? null : roundedResourcePercent(raw);
+    const show = Boolean(ready && pct != null && pct < 100);
+    stat.hidden = !show;
+    if (!show) {
+      stat.classList.remove("is-low");
+      return;
+    }
+    value.textContent = pct + "%";
+    stat.classList.toggle("is-low", pct <= 20);
+  }
+
   function paintAccountResources() {
     paintSessionAvatar();
     const el = $("#sessionAccountStats");
@@ -3742,6 +3760,7 @@ let CS77_FILTER_LOW_REP = 20;
     const manaStat = mana.closest(".session-stat");
     const rcStat = rc.closest(".session-stat");
     const ready = accountState.loaded && accountState.user === observer() && accountState.account;
+    paintDownvoteManaStat(el, ready);
     if (!ready) {
       mana.textContent = "…";
       vote.textContent = "…";
@@ -3776,6 +3795,7 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.profileImage = profileImage;
     accountState.props = info.props || null;
     accountState.votingMana = info.votingMana;
+    accountState.downvoteMana = info.downvoteMana == null ? null : info.downvoteMana;
     accountState.voteValue = info.voteValue;
     accountState.rc = info.rc;
     if (!sameUser) accountState.social = null;
@@ -3794,6 +3814,7 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.profileImage = "";
     accountState.props = null;
     accountState.votingMana = null;
+    accountState.downvoteMana = null;
     accountState.voteValue = null;
     accountState.rc = null;
     accountState.social = null;
@@ -4457,9 +4478,10 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
           <div class="session-dropdown" id="sessionDropdown">
             <div class="session-dropdown-panel">
-              <div class="session-account-stats is-loading" id="sessionAccountStats" aria-label="Voting mana, vote value, and resource credits">
+              <div class="session-account-stats is-loading" id="sessionAccountStats" aria-label="Voting mana, downvote mana, vote value, and resource credits">
                 <span class="session-account-stats-main">
                   <span class="session-stat" tabindex="0"><span class="session-stat-label">▲</span><span class="session-stat-value" data-stat="mana">…</span><span class="session-stat-tip" role="tooltip">Voting Mana</span></span>
+                  <span class="session-stat" data-stat-wrap="downmana" tabindex="0" hidden><span class="session-stat-label">▼</span><span class="session-stat-value" data-stat="downmana"></span><span class="session-stat-tip" role="tooltip">Downvote Mana</span></span>
                   <span class="session-stat" tabindex="0"><span class="session-stat-label">H</span><span class="session-stat-value" data-stat="vote">…</span><span class="session-stat-tip" role="tooltip">Estimated Vote Value</span></span>
                 </span>
                 <span class="session-stat session-stat-rc" tabindex="0"><span class="session-stat-label">RC</span><span class="session-stat-value" data-stat="rc">…</span><span class="session-stat-tip" role="tooltip">Resource Credits</span></span>

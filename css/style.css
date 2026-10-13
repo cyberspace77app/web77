@@ -857,6 +857,10 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   gap: 0.32rem;
 }
 
+.session-account-stats .session-stat[hidden] {
+  display: none;
+}
+
 .session-stat:focus {
   outline: none;
 }
