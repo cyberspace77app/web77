@@ -8532,11 +8532,24 @@ let CS77_FILTER_LOW_REP = 20;
     h1.textContent = title;
   }
 
+  // The community link above the title already names the subspace, so the
+  // matching hive-id tag is not repeated in the tag row.
+  function articleTagsOf(post) {
+    const tags = tagsOf(post);
+    const community = communityNameOf(post);
+    if (!community) return tags;
+    const skip = tags.findIndex((tag) => normalizeCommunityName(tag) === community);
+    if (skip < 0) return tags;
+    return tags.filter((_, i) => i !== skip);
+  }
+
   function articleTagsHtml(root) {
     if (!isRootPost(root)) return "";
+    const chips = articleTagsOf(root).map(tagChipHtml).join("");
+    if (!chips) return "";
     return `
         <div class="tags">
-          ${tagsOf(root).map(tagChipHtml).join("")}
+          ${chips}
         </div>`;
   }
 
@@ -8547,7 +8560,11 @@ let CS77_FILTER_LOW_REP = 20;
       if (tagsEl) tagsEl.remove();
       return;
     }
-    const html = tagsOf(root).map(tagChipHtml).join("");
+    const html = articleTagsOf(root).map(tagChipHtml).join("");
+    if (!html) {
+      if (tagsEl) tagsEl.remove();
+      return;
+    }
     if (!tagsEl) {
       const bodyEl = article.querySelector(":scope > .post-body");
       if (!bodyEl) return;
@@ -8690,7 +8707,11 @@ let CS77_FILTER_LOW_REP = 20;
       const bodyEl = article.querySelector(":scope > .post-body");
       if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
     }
-    if (!isRootPost(root) || !prev || tagsOf(prev).join("\n") !== tagsOf(root).join("\n")) {
+    if (
+      !isRootPost(root) ||
+      !prev ||
+      articleTagsOf(prev).join("\n") !== articleTagsOf(root).join("\n")
+    ) {
       syncArticleTags(article, root);
     }
     refreshArticleCommunity(root);
