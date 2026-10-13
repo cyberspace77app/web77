@@ -6248,10 +6248,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintArticleTitle(article, Object.assign({}, currentPost || {}, { title: title || "" }));
     const bodyEl = article.querySelector(":scope > .post-body");
     if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
-    const tagsEl = article.querySelector(":scope > .tags");
-    if (tagsEl && currentPost) {
-      tagsEl.innerHTML = tagsOf(currentPost).map(tagChipHtml).join("");
-    }
+    syncArticleTags(article, currentPost);
     document.title = `${title || "Post"} — CyberSpace77`;
   }
 
@@ -8535,6 +8532,34 @@ let CS77_FILTER_LOW_REP = 20;
     h1.textContent = title;
   }
 
+  function articleTagsHtml(root) {
+    if (!isRootPost(root)) return "";
+    return `
+        <div class="tags">
+          ${tagsOf(root).map(tagChipHtml).join("")}
+        </div>`;
+  }
+
+  function syncArticleTags(article, root) {
+    if (!article || !root) return;
+    const tagsEl = article.querySelector(":scope > .tags");
+    if (!isRootPost(root)) {
+      if (tagsEl) tagsEl.remove();
+      return;
+    }
+    const html = tagsOf(root).map(tagChipHtml).join("");
+    if (!tagsEl) {
+      const bodyEl = article.querySelector(":scope > .post-body");
+      if (!bodyEl) return;
+      const wrap = document.createElement("div");
+      wrap.className = "tags";
+      wrap.innerHTML = html;
+      bodyEl.insertAdjacentElement("beforebegin", wrap);
+      return;
+    }
+    tagsEl.innerHTML = html;
+  }
+
   function articleHtml(root, opts) {
     const options = opts || {};
     const community = communityLabelHtml(root, "article-community");
@@ -8564,9 +8589,7 @@ let CS77_FILTER_LOW_REP = 20;
             ${payoutHtml(root, false)}
           </div>
         </div>
-        <div class="tags">
-          ${tagsOf(root).map(tagChipHtml).join("")}
-        </div>
+        ${articleTagsHtml(root)}
         <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
@@ -8667,9 +8690,8 @@ let CS77_FILTER_LOW_REP = 20;
       const bodyEl = article.querySelector(":scope > .post-body");
       if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
     }
-    if (!prev || tagsOf(prev).join("\n") !== tagsOf(root).join("\n")) {
-      const tagsEl = article.querySelector(":scope > .tags");
-      if (tagsEl) tagsEl.innerHTML = tagsOf(root).map(tagChipHtml).join("");
+    if (!isRootPost(root) || !prev || tagsOf(prev).join("\n") !== tagsOf(root).join("\n")) {
+      syncArticleTags(article, root);
     }
     refreshArticleCommunity(root);
     refreshArticleVotes(root);
