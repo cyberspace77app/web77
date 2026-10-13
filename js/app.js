@@ -6484,10 +6484,14 @@ let CS77_FILTER_LOW_REP = 20;
     return appHref("/@" + name);
   }
 
-  function authorLinkHtml(name, size) {
+  function authorLinkHtml(name, size, opts) {
     const href = HiveMd.escapeHtml(profilePath(name));
     const safe = HiveMd.escapeHtml(name);
-    return `<a class="author-link" href="${href}"><img class="avatar" src="${HiveMd.avatarUrl(name, size)}" alt=""><span class="author-name">@${safe}</span></a>`;
+    const avatar =
+      opts && opts.avatar === false
+        ? ""
+        : `<img class="avatar" src="${HiveMd.avatarUrl(name, size)}" alt="">`;
+    return `<a class="author-link" href="${href}">${avatar}<span class="author-name">@${safe}</span></a>`;
   }
 
   function communityNameOf(post) {
@@ -6802,16 +6806,17 @@ let CS77_FILTER_LOW_REP = 20;
     const permlinkAttr = HiveMd.escapeHtml(shown.permlink);
     const community = communityLabelHtml(shown);
     const rep = Math.floor(HiveMd.displayReputation(shown.author_reputation));
+    const muted = isMutedHidden(shown);
     const meta = `
         <div class="card-meta">
-          ${authorLinkHtml(shown.author, "small")}
+          ${authorLinkHtml(shown.author, "small", muted ? { avatar: false } : null)}
           <span class="meta-sep">·</span>
           <span>${rep}</span>
           ${community}
           ${metaTimeHtml(shown.created, postPath(shown))}
         </div>`;
     let card;
-    if (isMutedHidden(shown)) {
+    if (muted) {
       card = `
       <article class="post-card is-muted" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
         ${meta}
