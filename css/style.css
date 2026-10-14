@@ -1130,6 +1130,10 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   color: var(--gray);
 }
 
+.vote-slider-slot {
+  display: contents;
+}
+
 .vote-weight-value {
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -5189,8 +5193,34 @@ body:has(#publishOverlay:not([hidden])) {
     display: block;
   }
 
+  /* Caption stays in the grid to hold its old width. The range covers that space, so the panel width does not change. */
+  .vote-weight-caption {
+    visibility: hidden;
+    grid-area: 1 / 1;
+    justify-self: start;
+    align-self: center;
+    box-sizing: content-box;
+    width: max-content;
+    max-width: none;
+    white-space: nowrap;
+    padding-right: calc(5.5rem + 0.65rem);
+    pointer-events: none;
+  }
+
+  .vote-slider-slot {
+    display: inline-grid;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
   .vote-slider-line {
-    width: 5.5rem;
+    grid-area: 1 / 1;
+    width: 0;
+    min-width: 100%;
+  }
+
+  .vote-slider {
+    touch-action: none;
   }
 
   .vote-weight {

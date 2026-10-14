@@ -845,7 +845,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function voteSliderHtml(kind, author, permlink, pct, downPct) {
-    return `<span class="vote-slider-panel" hidden data-vote-kind="${kind}"><label class="vote-weight"><span class="vote-weight-caption">weight</span><span class="vote-slider-line" style="--vote-pct: ${pct}%; --p: ${Number(pct) / 100}"><input class="vote-slider" type="range" min="0" max="100" step="1" value="${pct}" aria-label="Vote weight"></span><span class="vote-weight-value">${pct}%</span></label></span><span class="downvote-slider-panel" hidden data-vote-kind="${kind}"><div class="vote-weight downvote-weight"><span class="vote-weight-caption">weight</span><span class="vote-slider-line" style="--vote-pct: ${downPct}%; --p: ${Number(downPct) / 100}"><input class="vote-slider downvote-slider" type="range" min="0" max="100" step="1" value="${downPct}" aria-label="Downvote weight"></span><span class="vote-weight-value">${downPct}%</span><button type="button" class="downvote-confirm" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-kind="${kind}">Downvote</button></div></span>`;
+    return `<span class="vote-slider-panel" hidden data-vote-kind="${kind}"><label class="vote-weight"><span class="vote-slider-slot"><span class="vote-weight-caption">weight</span><span class="vote-slider-line" style="--vote-pct: ${pct}%; --p: ${Number(pct) / 100}"><input class="vote-slider" type="range" min="0" max="100" step="1" value="${pct}" aria-label="Vote weight"></span></span><span class="vote-weight-value">${pct}%</span></label></span><span class="downvote-slider-panel" hidden data-vote-kind="${kind}"><div class="vote-weight downvote-weight"><span class="vote-slider-slot"><span class="vote-weight-caption">weight</span><span class="vote-slider-line" style="--vote-pct: ${downPct}%; --p: ${Number(downPct) / 100}"><input class="vote-slider downvote-slider" type="range" min="0" max="100" step="1" value="${downPct}" aria-label="Downvote weight"></span></span><span class="vote-weight-value">${downPct}%</span><button type="button" class="downvote-confirm" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-kind="${kind}">Downvote</button></div></span>`;
   }
 
   function voteControlHtml(post, variant) {
@@ -1024,6 +1024,53 @@ let CS77_FILTER_LOW_REP = 20;
     if (valueEl) valueEl.textContent = pct + "%";
   }
 
+  const VOTE_TOUCH_STEP = 5;
+  let touchVoteSlider = null;
+  let touchVotePointerId = null;
+
+  function snapVotePercent(value) {
+    const n = Math.round((Number(value) || 0) / VOTE_TOUCH_STEP) * VOTE_TOUCH_STEP;
+    return Math.max(0, Math.min(100, n));
+  }
+
+  function applyTouchVoteSnap(slider) {
+    if (!slider || slider.dataset.touchStep !== "1") return;
+    const snapped = snapVotePercent(slider.value);
+    if (String(snapped) !== slider.value) slider.value = String(snapped);
+  }
+
+  function beginTouchVoteSnap(slider, pointerId) {
+    slider.step = String(VOTE_TOUCH_STEP);
+    slider.dataset.touchStep = "1";
+    touchVoteSlider = slider;
+    touchVotePointerId = pointerId;
+    const snapped = snapVotePercent(slider.value);
+    if (String(snapped) !== slider.value) {
+      slider.value = String(snapped);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function endTouchVoteSnap(slider) {
+    if (!slider) return;
+    const snapped = snapVotePercent(slider.value);
+    const wasTouch = slider.dataset.touchStep === "1";
+    slider.step = "1";
+    delete slider.dataset.touchStep;
+    if (touchVoteSlider === slider) touchVoteSlider = null;
+    touchVotePointerId = null;
+    if (wasTouch && String(snapped) !== slider.value) {
+      slider.value = String(snapped);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function endTouchVotePointer(e) {
+    if (!touchVoteSlider) return;
+    if (touchVotePointerId != null && e.pointerId !== touchVotePointerId) return;
+    endTouchVoteSnap(touchVoteSlider);
+  }
+
   function clearVoteSliderPos(panel) {
     panel.style.position = "";
     panel.style.top = "";
@@ -1082,6 +1129,8 @@ let CS77_FILTER_LOW_REP = 20;
       const { wrap, panel } = openSlider;
       const active = document.activeElement;
       if (active && panel.contains(active) && active.blur) active.blur();
+      const liveSlider = panel.querySelector(".vote-slider");
+      if (liveSlider) endTouchVoteSnap(liveSlider);
       panel.hidden = true;
       clearVoteSliderPos(panel);
       if (wrap && panel.parentNode !== wrap) wrap.appendChild(panel);
@@ -12239,12 +12288,25 @@ let CS77_FILTER_LOW_REP = 20;
     const versionEl = document.getElementById("appVersion");
     if (versionEl) versionEl.textContent = "version " + APP_VERSION;
 
+    document.addEventListener(
+      "pointerdown",
+      (e) => {
+        const slider = e.target && e.target.closest && e.target.closest(".vote-slider");
+        if (!slider || e.pointerType !== "touch" || !isMobileViewport()) return;
+        beginTouchVoteSnap(slider, e.pointerId);
+      },
+      true
+    );
+    document.addEventListener("pointerup", endTouchVotePointer, true);
+    document.addEventListener("pointercancel", endTouchVotePointer, true);
+
     document.addEventListener("input", (e) => {
       const slider = e.target.closest(".vote-slider");
       if (slider) {
         const panel =
           slider.closest(".downvote-slider-panel") || slider.closest(".vote-slider-panel");
         if (!panel) return;
+        applyTouchVoteSnap(slider);
         const valueEl = panel.querySelector(".vote-weight-value");
         const isDown = Boolean(slider.closest(".downvote-slider-panel"));
         paintVoteSlider(slider, valueEl);
