@@ -858,9 +858,11 @@ let CS77_FILTER_LOW_REP = 20;
     const figures = payoutFigures(post);
     const cls = pill ? "payout stat-pill" : "payout";
     const mode = figures.burned ? " is-burned" : figures.declined ? " is-declined" : "";
-    const tab = pill ? ' tabindex="0"' : "";
     const label = figures.burned ? "Burned payout" : figures.declined ? "Declined payout" : "Payout";
-    return `<span class="${cls}${mode}" data-payout-author="${author}" data-payout-permlink="${permlink}"${tab} aria-label="${label} ${figures.total.toFixed(2)}"><span class="payout-value">${payoutTotalHtml(figures)}</span></span>`;
+    const attrs = `class="${cls}${mode}" data-payout-author="${author}" data-payout-permlink="${permlink}" aria-label="${label} ${figures.total.toFixed(2)}"`;
+    const inner = `<span class="payout-value">${payoutTotalHtml(figures)}</span>`;
+    if (pill) return `<button type="button" ${attrs}>${inner}</button>`;
+    return `<span ${attrs}>${inner}</span>`;
   }
 
   function applyPayoutEl(el, post) {
@@ -941,7 +943,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const notes = [];
     if (figures.declined) notes.push("Declined payout leaves it in the reward pool.");
-    else if (figures.burned) notes.push("The author reward is burned.");
+    else if (figures.burned) notes.push(figures.paid ? "The author reward was burned." : "The author reward is burned.");
     if (figures.reward) notes.push(figures.reward);
     if (figures.belowMin) notes.push("Below the 0.02 minimum payout.");
     if (figures.maxLabel) notes.push("Max payout " + formatHiveAmount(figures.maxLabel));
@@ -1025,7 +1027,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function scheduleHidePayout(e) {
     if (e && e.pointerType && e.pointerType !== "mouse") return;
-    if (e && !hoverFine()) return;
+    if (!hoverFine()) return;
     window.clearTimeout(payoutShowTimer);
     window.clearTimeout(payoutHideTimer);
     payoutShowTimer = 0;
@@ -13169,16 +13171,13 @@ let CS77_FILTER_LOW_REP = 20;
       "click",
       (e) => {
         const payoutPill = e.target.closest(".payout.stat-pill");
-        const inPayoutPanel = e.target.closest(".payout-panel");
-        if (!(payoutPill && inInteractiveSurface(payoutPill)) && !inPayoutPanel) hidePayoutPanel();
         if (payoutPill && inInteractiveSurface(payoutPill)) {
-          if (!hoverFine()) {
-            e.preventDefault();
-            e.stopPropagation();
-            togglePayoutPanel(payoutPill);
-          }
+          e.preventDefault();
+          e.stopPropagation();
+          togglePayoutPanel(payoutPill);
           return;
         }
+        if (!e.target.closest(".payout-panel")) hidePayoutPanel();
         const reblogConfirm = e.target.closest(".reblog-confirm");
         if (reblogConfirm) {
           e.preventDefault();
@@ -13458,19 +13457,6 @@ let CS77_FILTER_LOW_REP = 20;
       if (!files.length) return;
       e.preventDefault();
       uploadImagesToComposer(composer, files);
-    });
-
-    document.addEventListener("focusin", (e) => {
-      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
-      if (!payoutPill || !inInteractiveSurface(payoutPill)) return;
-      showPayoutPanel(payoutPill);
-    });
-    document.addEventListener("focusout", (e) => {
-      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
-      if (!payoutPill) return;
-      const next = e.relatedTarget;
-      if (next && (payoutPill.contains(next) || (payoutPanelNode && payoutPanelNode.contains(next)))) return;
-      scheduleHidePayout();
     });
 
     document.addEventListener("pointerover", (e) => {

@@ -1412,11 +1412,19 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 }
 
 .payout.stat-pill {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   min-height: 2.45rem;
   padding: 0.45rem 0.95rem;
-  cursor: default;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+  touch-action: manipulation;
+  user-select: none;
 }
 
 .payout-value {
