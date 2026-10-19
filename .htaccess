@@ -7,10 +7,25 @@
 # /121566 redirects to /subspace/121566
 # /trending  /hot  /created  /spaces  /subspaces  /welcome  /imprint
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
+#
+# Link-preview crawlers do not run the app, so they only see index.html.
+# Those user agents get crawler.php, which fills the title and Open Graph tags.
+# The tokens are the documented preview fetchers (Facebook, Instagram, Messenger,
+# X, Telegram, WhatsApp, Discord, Slack, LinkedIn, Pinterest, Reddit, and the
+# other unfurlers that send the same strings). iMessage includes
+# facebookexternalhit and Twitterbot. Search crawlers are left on index.html.
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Twitterbot|TelegramBot|WhatsApp|Discordbot|Slackbot|Slack-ImgProxy|LinkedInBot|Pinterest|redditbot|Embedly|Iframely|vkShare|MicrosoftPreview|BingPreview|Viber|Tumblr|Snapchat|Mastodon|Akkoma|Pleroma|Misskey|Bluesky|bitlybot|kakaotalk-scrap|FlipboardProxy|GoogleMessages|Quora Link Preview|Yahoo Link Preview|outbrain|rogerbot)" [NC]
+  RewriteRule ^$ /crawler.php [QSA,L]
+
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Twitterbot|TelegramBot|WhatsApp|Discordbot|Slackbot|Slack-ImgProxy|LinkedInBot|Pinterest|redditbot|Embedly|Iframely|vkShare|MicrosoftPreview|BingPreview|Viber|Tumblr|Snapchat|Mastodon|Akkoma|Pleroma|Misskey|Bluesky|bitlybot|kakaotalk-scrap|FlipboardProxy|GoogleMessages|Quora Link Preview|Yahoo Link Preview|outbrain|rogerbot)" [NC]
+  RewriteRule ^ /crawler.php [QSA,L]
 
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
@@ -19,4 +34,8 @@
 
 <IfModule mod_dir.c>
   DirectoryIndex index.html
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header merge Vary User-Agent
 </IfModule>
