@@ -30,6 +30,8 @@ let CS77_FILTER_LOW_REP = 20;
   const IMAGE_HOST = "https://images.hive.blog";
   const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   const MAX_TAGS = 10;
+  const PUBLISH_DESC_MAX = 160;
+  const MAX_BENEFICIARIES = 8;
   const FAVORITE_TAGS_KEY = "cs77_favorite_tags";
   const MAX_FAVORITE_TAGS = 40;
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
@@ -2767,6 +2769,12 @@ let CS77_FILTER_LOW_REP = 20;
     return next;
   }
 
+  function applyDescriptionMetadata(jsonMetadata, description) {
+    if (!jsonMetadata) return;
+    if (description) jsonMetadata.description = description;
+    else delete jsonMetadata.description;
+  }
+
   /* ─── Router ─── */
   const HASH_ROUTING = Boolean(window.__CS77_HASH__);
   const APP_ROUTE_HEADS = {
@@ -4882,6 +4890,7 @@ let CS77_FILTER_LOW_REP = 20;
   function snapshotPublishForm() {
     savePublishDraft();
     const tagInput = $("#publishTagInput");
+    const advanced = publishAdvancedState();
     return {
       title: publishTitleDraft,
       body: publishBodyDraft,
@@ -4892,6 +4901,9 @@ let CS77_FILTER_LOW_REP = 20;
         title: publishDest.title,
       },
       tagInput: tagInput ? tagInput.value : "",
+      description: advanced.description,
+      reward: advanced.reward,
+      beneficiaries: advanced.beneficiaries,
     };
   }
 
@@ -4914,6 +4926,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (title) title.value = publishTitleDraft;
     if (body) body.value = publishBodyDraft;
     if (tagInput) tagInput.value = (state && state.tagInput) || "";
+    applyPublishAdvanced(state);
     paintPublishDest();
     paintPublishTags();
     setPublishStatus("");
@@ -5095,6 +5108,237 @@ let CS77_FILTER_LOW_REP = 20;
     parts.forEach((p) => addPublishTag(p));
   }
 
+  function collapsePublishAdvanced() {
+    const el = $("#publishAdvanced");
+    if (el) el.open = false;
+  }
+
+  function openPublishAdvanced() {
+    const el = $("#publishAdvanced");
+    if (el) el.open = true;
+  }
+
+  function readPublishDescription() {
+    const el = $("#publishDescription");
+    return el ? String(el.value || "") : "";
+  }
+
+  function normalizedPublishDescription() {
+    return readPublishDescription().replace(/\s+/g, " ").trim().slice(0, PUBLISH_DESC_MAX);
+  }
+
+  function descriptionFromPost(post) {
+    const meta = HiveMd.parseJsonMetadata(post && post.json_metadata);
+    const text = meta && typeof meta.description === "string" ? meta.description : "";
+    return text.replace(/\s+/g, " ").trim().slice(0, PUBLISH_DESC_MAX);
+  }
+
+  function normalizePublishReward(value) {
+    if (value === "hp" || value === "burned" || value === "decline") return value;
+    return "default";
+  }
+
+  function readPublishReward() {
+    const el = $("#publishReward");
+    return normalizePublishReward(el ? el.value : "default");
+  }
+
+  function readPublishBeneficiaryRows() {
+    const root = $("#publishBeneficiaryRows");
+    if (!root) return [];
+    return Array.from(root.querySelectorAll(".publish-beneficiary-row")).map((row) => {
+      const user = row.querySelector(".publish-beneficiary-user");
+      const pct = row.querySelector(".publish-beneficiary-pct");
+      return {
+        account: user ? String(user.value || "") : "",
+        percent: pct ? String(pct.value || "") : "",
+      };
+    });
+  }
+
+  function beneficiariesFromStored(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    raw.forEach((item) => {
+      if (!item || typeof item !== "object" || out.length >= MAX_BENEFICIARIES) return;
+      const account = typeof item.account === "string" ? item.account : "";
+      let percent = "";
+      if (typeof item.percent === "string") percent = item.percent;
+      else if (typeof item.percent === "number" && Number.isFinite(item.percent)) percent = String(item.percent);
+      out.push({ account: account.slice(0, 16), percent: percent.slice(0, 8) });
+    });
+    return out;
+  }
+
+  function paintPublishBeneficiaries(rows) {
+    const root = $("#publishBeneficiaryRows");
+    const add = $("#publishBeneficiaryAdd");
+    if (!root) return;
+    const list = beneficiariesFromStored(rows);
+    root.innerHTML = list
+      .map((row, i) => {
+        const n = i + 1;
+        return `<div class="publish-beneficiary-row">
+          <input class="publish-beneficiary-user" type="text" maxlength="16" placeholder="Username" autocomplete="off" spellcheck="false" autocapitalize="off" value="${HiveMd.escapeHtml(row.account)}" aria-label="Beneficiary username ${n}">
+          <input class="publish-beneficiary-pct" type="text" inputmode="decimal" maxlength="8" placeholder="Reward (%)" autocomplete="off" spellcheck="false" value="${HiveMd.escapeHtml(row.percent)}" aria-label="Reward percent ${n}">
+          <button type="button" class="publish-beneficiary-remove" aria-label="Remove beneficiary">×</button>
+        </div>`;
+      })
+      .join("");
+    if (add) add.disabled = list.length >= MAX_BENEFICIARIES;
+  }
+
+  function publishAdvancedState() {
+    return {
+      description: readPublishDescription(),
+      reward: readPublishReward(),
+      beneficiaries: readPublishBeneficiaryRows(),
+    };
+  }
+
+  function applyPublishAdvanced(state) {
+    const desc = $("#publishDescription");
+    if (desc) {
+      const text = state && typeof state.description === "string" ? state.description : "";
+      desc.value = text.slice(0, PUBLISH_DESC_MAX);
+    }
+    const reward = $("#publishReward");
+    if (reward) {
+      const value = normalizePublishReward(state && state.reward);
+      reward.value = value;
+    }
+    paintPublishBeneficiaries(state && state.beneficiaries);
+  }
+
+  function publishAdvancedDirty() {
+    if (normalizedPublishDescription()) return true;
+    if (readPublishReward() !== "default") return true;
+    return readPublishBeneficiaryRows().some((row) => {
+      return String(row.account || "").trim() || String(row.percent || "").trim();
+    });
+  }
+
+  function addPublishBeneficiaryRow() {
+    const rows = readPublishBeneficiaryRows();
+    if (rows.length >= MAX_BENEFICIARIES) {
+      openPublishAdvanced();
+      setPublishStatus("You can add up to 8 beneficiaries.", true);
+      return;
+    }
+    rows.push({ account: "", percent: "" });
+    paintPublishBeneficiaries(rows);
+    const inputs = document.querySelectorAll("#publishBeneficiaryRows .publish-beneficiary-user");
+    const last = inputs[inputs.length - 1];
+    if (last) last.focus();
+    setPublishStatus("");
+    schedulePublishDraftSave();
+  }
+
+  function removePublishBeneficiaryRow(btn) {
+    const row = btn && btn.closest ? btn.closest(".publish-beneficiary-row") : null;
+    if (row) row.remove();
+    const add = $("#publishBeneficiaryAdd");
+    const rows = readPublishBeneficiaryRows();
+    if (add) {
+      add.disabled = rows.length >= MAX_BENEFICIARIES;
+      if (!rows.length) add.focus();
+    }
+    setPublishStatus("");
+    schedulePublishDraftSave();
+  }
+
+  function parseBeneficiaryPercent(raw) {
+    let text = String(raw || "")
+      .trim()
+      .replace(/%/g, "");
+    if (text.indexOf(",") !== -1 && text.indexOf(".") === -1) text = text.replace(",", ".");
+    text = text.trim();
+    if (!/^(?:\d{1,3}(?:\.\d{1,2})?|\.\d{1,2})$/.test(text)) return null;
+    const n = Number(text);
+    if (!Number.isFinite(n) || n <= 0 || n > 100) return null;
+    const weight = Math.round(n * 100);
+    if (weight < 1 || weight > 10000) return null;
+    return weight;
+  }
+
+  function collectPublishBeneficiaries(author) {
+    const rows = readPublishBeneficiaryRows();
+    const out = [];
+    const seen = new Set();
+    let sum = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const accountRaw = String(rows[i].account || "").trim();
+      const percentRaw = String(rows[i].percent || "").trim();
+      if (!accountRaw && !percentRaw) continue;
+      if (!accountRaw || !percentRaw) {
+        return { error: "Enter a username and a reward percent for each beneficiary." };
+      }
+      const account = normalizeLoginUser(accountRaw);
+      if (!validLoginUser(account)) {
+        return { error: "Enter a valid Hive username for each beneficiary." };
+      }
+      if (author && account === author) {
+        return { error: "You cannot be a beneficiary of your own post." };
+      }
+      if (seen.has(account)) {
+        return { error: "Each beneficiary can only be listed once." };
+      }
+      const weight = parseBeneficiaryPercent(percentRaw);
+      if (weight == null) {
+        return {
+          error: "Reward percent must be greater than 0 and at most 100, with up to two decimals.",
+        };
+      }
+      seen.add(account);
+      sum += weight;
+      if (sum > 10000) {
+        return { error: "Beneficiary rewards cannot add up to more than 100%." };
+      }
+      out.push({ account, weight });
+    }
+    if (out.length > MAX_BENEFICIARIES) {
+      return { error: "You can add up to 8 beneficiaries." };
+    }
+    return { beneficiaries: out };
+  }
+
+  function buildCommentOptions(author, permlink, reward, beneficiaries) {
+    const burned = reward === "burned";
+    const decline = reward === "decline";
+    const hp = reward === "hp";
+    const routes = Array.isArray(beneficiaries) ? beneficiaries.slice() : [];
+    // PeakD burn pays the author reward to @null. Decline is the chain option
+    // that sets the accepted payout to zero and leaves it in the reward pool.
+    if (burned) routes.push({ account: "null", weight: 10000 });
+    if (!burned && !decline && !hp && !routes.length) return null;
+    const options = {
+      author,
+      permlink,
+      max_accepted_payout: decline ? "0.000 HBD" : "1000000.000 HBD",
+      percent_hbd: hp ? 0 : 10000,
+      allow_votes: true,
+      allow_curation_rewards: true,
+      extensions: [],
+    };
+    if (routes.length) {
+      const sorted = routes
+        .slice()
+        .sort((a, b) => (a.account < b.account ? -1 : a.account > b.account ? 1 : 0));
+      options.extensions = [
+        [
+          0,
+          {
+            beneficiaries: sorted.map((row) => ({
+              account: row.account,
+              weight: row.weight,
+            })),
+          },
+        ],
+      ];
+    }
+    return options;
+  }
+
   let publishTitleDraft = "";
   let publishBodyDraft = "";
   let locSession = 0;
@@ -5140,7 +5384,8 @@ let CS77_FILTER_LOW_REP = 20;
       String(publishTitleDraft || "").trim() ||
         String(publishBodyDraft || "").trim() ||
         publishTags.length ||
-        tagDraft
+        tagDraft ||
+        publishAdvancedDirty()
     );
   }
 
@@ -5166,8 +5411,22 @@ let CS77_FILTER_LOW_REP = 20;
               title: parsed.dest.title,
             }
           : null;
-      if (!title && !body && !tagInput && !tags.length && !dest) return null;
-      return { title, body, tags, dest, tagInput };
+      const description = typeof parsed.description === "string" ? parsed.description : "";
+      const reward = normalizePublishReward(parsed.reward);
+      const beneficiaries = beneficiariesFromStored(parsed.beneficiaries);
+      if (
+        !title &&
+        !body &&
+        !tagInput &&
+        !tags.length &&
+        !dest &&
+        !description.trim() &&
+        reward === "default" &&
+        !beneficiaries.length
+      ) {
+        return null;
+      }
+      return { title, body, tags, dest, tagInput, description, reward, beneficiaries };
     } catch {
       return null;
     }
@@ -5185,6 +5444,9 @@ let CS77_FILTER_LOW_REP = 20;
           tags: Array.isArray(state.tags) ? state.tags : [],
           dest: state.dest || null,
           tagInput: state.tagInput || "",
+          description: state.description || "",
+          reward: normalizePublishReward(state.reward),
+          beneficiaries: Array.isArray(state.beneficiaries) ? state.beneficiaries : [],
         })
       );
     } catch {
@@ -6054,6 +6316,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (title) title.value = "";
     if (body) body.value = "";
     if (tagInput) tagInput.value = "";
+    applyPublishAdvanced(null);
+    collapsePublishAdvanced();
     paintPublishDest();
     paintPublishTags();
     setPublishStatus("");
@@ -6136,7 +6400,10 @@ let CS77_FILTER_LOW_REP = 20;
       publishStash = null;
       if (stash) applyPublishForm(stash);
     }
-    if (!alreadyOpen) hydratePublishDraftFromStorage();
+    if (!alreadyOpen) {
+      hydratePublishDraftFromStorage();
+      collapsePublishAdvanced();
+    }
     ov.hidden = false;
     paintPublishChrome();
     paintPublishDest();
@@ -6234,9 +6501,33 @@ let CS77_FILTER_LOW_REP = 20;
         jsonMetadata.community = publishDest.name;
       }
     }
-    if (!commentEdit) applyLocationMetadata(jsonMetadata, body);
+    if (!commentEdit) {
+      applyLocationMetadata(jsonMetadata, body);
+      applyDescriptionMetadata(jsonMetadata, normalizedPublishDescription());
+    }
 
     if (!editing) permlink = postPermlink(title);
+    let commentOptions = null;
+    if (!editing) {
+      const collected = collectPublishBeneficiaries(user);
+      if (collected.error) {
+        openPublishAdvanced();
+        setPublishStatus(collected.error, true);
+        return;
+      }
+      const reward = readPublishReward();
+      if (reward === "burned" && collected.beneficiaries.length) {
+        openPublishAdvanced();
+        setPublishStatus("Burn sends the whole payout to null. Remove the other beneficiaries.", true);
+        return;
+      }
+      commentOptions = buildCommentOptions(
+        user,
+        permlink,
+        reward,
+        collected.beneficiaries
+      );
+    }
     if (pageEl) pageEl.classList.add("is-pending");
     if (submitBtn) submitBtn.disabled = true;
     setPublishStatus(signingLabel());
@@ -6249,6 +6540,7 @@ let CS77_FILTER_LOW_REP = 20;
       title,
       body,
       jsonMetadata,
+      commentOptions,
     });
 
     try {
@@ -6358,7 +6650,11 @@ let CS77_FILTER_LOW_REP = 20;
       tags: comment ? publishEdit.tags.slice() : tagsForEdit(post),
       dest: publishDest,
       tagInput: "",
+      description: comment ? "" : descriptionFromPost(post),
+      reward: "default",
+      beneficiaries: [],
     });
+    collapsePublishAdvanced();
     paintPublishChrome();
     setPublishFabHidden(true);
     pendingPublish = false;
@@ -8150,6 +8446,24 @@ let CS77_FILTER_LOW_REP = 20;
     if (community) payload.community = community;
     payload.post = publishBodyDraft;
     payload.tags = tags;
+    if (!comment) {
+      const advanced = publishAdvancedState();
+      const description = String(advanced.description || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, PUBLISH_DESC_MAX);
+      const beneficiaries = advanced.beneficiaries.filter((row) => {
+        return String(row.account || "").trim() || String(row.percent || "").trim();
+      });
+      if (description) payload.description = description;
+      if (advanced.reward !== "default") payload.reward = advanced.reward;
+      if (beneficiaries.length) {
+        payload.beneficiaries = beneficiaries.map((row) => ({
+          account: String(row.account || ""),
+          percent: String(row.percent || ""),
+        }));
+      }
+    }
     return payload;
   }
 
@@ -8223,6 +8537,20 @@ let CS77_FILTER_LOW_REP = 20;
       const tagInput = $("#publishTagInput");
       if (tagInput) tagInput.value = "";
       paintPublishTags();
+      const description = typeof data.description === "string" ? data.description : "";
+      const reward = normalizePublishReward(data.reward);
+      const beneficiaries = publishEdit ? [] : beneficiariesFromStored(data.beneficiaries);
+      applyPublishAdvanced({
+        description,
+        reward: publishEdit ? "default" : reward,
+        beneficiaries,
+      });
+      if (
+        description.trim() ||
+        (!publishEdit && (reward !== "default" || beneficiaries.length))
+      ) {
+        openPublishAdvanced();
+      }
     }
     const body = $("#publishBody");
     if (body) body.value = post;
@@ -12445,14 +12773,21 @@ let CS77_FILTER_LOW_REP = 20;
       if (
         e.target.id === "publishTitle" ||
         e.target.id === "publishBody" ||
-        e.target.id === "publishTagInput"
+        e.target.id === "publishTagInput" ||
+        e.target.id === "publishDescription" ||
+        e.target.id === "publishReward" ||
+        (e.target.closest && e.target.closest(".publish-beneficiary-row"))
       ) {
-        if (e.target.id !== "publishTagInput") {
+        if (e.target.id === "publishTitle" || e.target.id === "publishBody") {
           savePublishDraft();
           updatePublishPreview();
         }
         schedulePublishDraftSave();
       }
+    });
+
+    document.addEventListener("change", (e) => {
+      if (e.target && e.target.id === "publishReward") schedulePublishDraftSave();
     });
 
     document.addEventListener(
@@ -12916,6 +13251,17 @@ let CS77_FILTER_LOW_REP = 20;
             destOpt.getAttribute("data-dest-name") || "",
             destOpt.getAttribute("data-dest-title") || ""
           );
+          return;
+        }
+        if (e.target.closest("#publishBeneficiaryAdd")) {
+          e.preventDefault();
+          addPublishBeneficiaryRow();
+          return;
+        }
+        const removeBen = e.target.closest(".publish-beneficiary-remove");
+        if (removeBen) {
+          e.preventDefault();
+          removePublishBeneficiaryRow(removeBen);
           return;
         }
         const chip = e.target.closest(".publish-tag-chip");

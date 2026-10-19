@@ -270,28 +270,33 @@
     title,
     body,
     jsonMetadata,
+    commentOptions,
   }) {
     const meta =
       typeof jsonMetadata === "string"
         ? jsonMetadata
         : JSON.stringify(jsonMetadata || {});
+    const operations = [
+      [
+        "comment",
+        {
+          parent_author: parentAuthor || "",
+          parent_permlink: parentPermlink,
+          author,
+          permlink,
+          title: title || "",
+          body,
+          json_metadata: meta,
+        },
+      ],
+    ];
+    if (commentOptions && typeof commentOptions === "object") {
+      operations.push(["comment_options", commentOptions]);
+    }
     return enqueue({
       username: author,
       key: "Posting",
-      operations: [
-        [
-          "comment",
-          {
-            parent_author: parentAuthor || "",
-            parent_permlink: parentPermlink,
-            author,
-            permlink,
-            title: title || "",
-            body,
-            json_metadata: meta,
-          },
-        ],
-      ],
+      operations,
       meta: {
         type: "comment",
         author,

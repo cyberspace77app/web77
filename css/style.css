@@ -4066,7 +4066,8 @@ body:has(#publishOverlay:not([hidden])) {
 
 .publish-card.is-editing-comment .publish-title-input,
 .publish-card.is-editing-comment .publish-tags-head,
-.publish-card.is-editing-comment .publish-tags {
+.publish-card.is-editing-comment .publish-tags,
+.publish-card.is-editing-comment .publish-advanced {
   display: none !important;
 }
 
@@ -4275,6 +4276,180 @@ body:has(#publishOverlay:not([hidden])) {
 .publish-card .publish-tags input:focus {
   border: none;
   box-shadow: none;
+}
+
+.publish-advanced {
+  margin: 0 0 1.25rem;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.publish-advanced summary {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+.publish-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.publish-advanced summary::marker {
+  content: "";
+}
+
+.publish-advanced summary::after {
+  content: "...";
+  margin-left: 0.4rem;
+  letter-spacing: 0;
+}
+
+.publish-advanced summary:hover,
+.publish-advanced[open] summary {
+  color: var(--yellow);
+}
+
+.publish-advanced summary:focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: 3px;
+}
+
+.publish-advanced-body {
+  padding: 0.85rem 0 0;
+}
+
+.publish-field-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0.95rem 0 0.4rem;
+}
+
+.publish-advanced-body > .publish-field-label:first-child {
+  margin-top: 0;
+}
+
+.publish-card .publish-advanced select {
+  width: 100%;
+  margin: 0 0 0.45rem;
+  padding: 0.8rem 2.2rem 0.8rem 0.95rem;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg-input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 L6 6.5 L11 1.5' fill='none' stroke='%23d7d7d7' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+  background-size: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.publish-card .publish-advanced select:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+.publish-advanced .publish-reward-note,
+.publish-advanced .publish-advanced-lock {
+  margin: 0 0 0.15rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.publish-advanced .publish-advanced-lock {
+  display: none;
+  margin-top: 0.85rem;
+}
+
+.publish-card.is-editing:not(.is-editing-comment) .publish-reward,
+.publish-card.is-editing:not(.is-editing-comment) .publish-beneficiaries {
+  display: none;
+}
+
+.publish-card.is-editing:not(.is-editing-comment) .publish-advanced-lock {
+  display: block;
+  margin-top: 0.85rem;
+  margin-bottom: 0;
+}
+
+.publish-beneficiary-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.publish-card .publish-beneficiary-row input {
+  width: auto;
+  margin-bottom: 0;
+}
+
+.publish-card .publish-beneficiary-user {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.publish-card .publish-beneficiary-pct {
+  flex: 0 0 8.75rem;
+  width: 8.75rem;
+}
+
+.publish-beneficiary-remove,
+.publish-beneficiary-add {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--gray);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.publish-beneficiary-remove {
+  flex: 0 0 2.55rem;
+  width: 2.55rem;
+  height: 2.55rem;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.publish-beneficiary-add {
+  margin-top: 0.15rem;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.publish-beneficiary-remove:hover,
+.publish-beneficiary-add:hover {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+}
+
+.publish-beneficiary-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+  color: var(--gray);
+  border-color: var(--border);
 }
 
 .publish-actions {
@@ -5028,6 +5203,19 @@ body:has(#publishOverlay:not([hidden])) {
 
   .publish-card .composer-input {
     min-height: 16rem;
+  }
+
+  .publish-beneficiary-row {
+    flex-wrap: wrap;
+  }
+
+  .publish-card .publish-beneficiary-user {
+    flex: 1 1 100%;
+  }
+
+  .publish-card .publish-beneficiary-pct {
+    flex: 1 1 auto;
+    width: auto;
   }
 
   .composer-bar .composer-actions {
