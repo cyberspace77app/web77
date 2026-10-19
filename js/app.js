@@ -8794,6 +8794,13 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function postMetaDescription(post) {
+    if (post && window.HiveMd && typeof HiveMd.parseJsonMetadata === "function") {
+      const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+      if (meta && typeof meta.description === "string") {
+        const authored = meta.description.trim();
+        if (authored) return authored;
+      }
+    }
     if (!post || !window.HiveMd || typeof HiveMd.excerpt !== "function") return "";
     const result = HiveMd.excerpt(post, 280, {
       firstSentence: true,

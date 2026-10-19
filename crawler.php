@@ -435,19 +435,34 @@ function cs77_profile_about($profile): string
     return trim($about);
 }
 
+function cs77_json_meta($raw): array
+{
+    if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+        $raw = is_array($decoded) ? $decoded : [];
+    }
+    return is_array($raw) ? $raw : [];
+}
+
+function cs77_post_authored_description($post): string
+{
+    if (!is_array($post)) {
+        return "";
+    }
+    $meta = cs77_json_meta($post["json_metadata"] ?? []);
+    $description = $meta["description"] ?? "";
+    if (!is_string($description)) {
+        return "";
+    }
+    return trim($description);
+}
+
 function cs77_post_image($post): string
 {
     if (!is_array($post)) {
         return "";
     }
-    $meta = $post["json_metadata"] ?? [];
-    if (is_string($meta)) {
-        $decoded = json_decode($meta, true);
-        $meta = is_array($decoded) ? $decoded : [];
-    }
-    if (!is_array($meta)) {
-        return "";
-    }
+    $meta = cs77_json_meta($post["json_metadata"] ?? []);
     $list = $meta["image"] ?? [];
     if (!is_array($list)) {
         return "";
@@ -813,7 +828,10 @@ function cs77_page(array $route): array
             } else {
                 $postTitle = trim((string)($post["title"] ?? ""));
                 $title = ($postTitle !== "" ? $postTitle : "Post") . " — CyberSpace77";
-                $description = cs77_post_description((string)($post["body"] ?? ""));
+                $authored = cs77_post_authored_description($post);
+                $description = $authored !== ""
+                    ? $authored
+                    : cs77_post_description((string)($post["body"] ?? ""));
                 $image = cs77_post_image($post);
             }
         }
