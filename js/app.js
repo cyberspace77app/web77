@@ -702,11 +702,189 @@ let CS77_FILTER_LOW_REP = 20;
     return formatHiveAmount(payoutAmount(post));
   }
 
+  function roundHbd(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.round(n * 100) / 100;
+  }
+
+  function payoutBeneficiaryList(post) {
+    const list = post && post.beneficiaries;
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      const account = String((row && row.account) || "")
+        .replace(/^@/, "")
+        .trim()
+        .toLowerCase();
+      const weight = Number(row && row.weight);
+      if (!account || !Number.isFinite(weight) || weight <= 0) continue;
+      out.push({ account, weight });
+    }
+    return out;
+  }
+
+  function payoutDeclined(post) {
+    if (!post || post.max_accepted_payout == null || post.max_accepted_payout === "") return false;
+    const max = parsePayoutAmount(post.max_accepted_payout);
+    return Number.isFinite(max) && max <= 0;
+  }
+
+  function payoutBurned(post) {
+    const list = payoutBeneficiaryList(post);
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].account === "null" && list[i].weight >= 10000) return true;
+    }
+    return false;
+  }
+
+  function payoutIsPaid(post) {
+    if (!post) return false;
+    if (post.is_paidout) return true;
+    return String(post.cashout_time || "").indexOf("1969") === 0;
+  }
+
+  function payoutAuthorValue(post) {
+    const author = parsePayoutAmount(post && post.author_payout_value);
+    if (Number.isFinite(author)) return author;
+    const total = parsePayoutAmount(post && post.total_payout_value);
+    return Number.isFinite(total) ? total : 0;
+  }
+
+  function formatWeightPercent(weight) {
+    const text = ((Number(weight) || 0) / 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    return text + "%";
+  }
+
+  function payoutRewardNote(post) {
+    const pct = Number(post && post.percent_hbd);
+    if (!Number.isFinite(pct)) return "";
+    if (pct <= 0) return "100% HP";
+    if (pct >= 10000) return "50% HP and 50% liquid";
+    const liquid = (pct / 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    return liquid + "% liquid, the rest HP";
+  }
+
+  function payoutWhenParts(post) {
+    const paid = payoutIsPaid(post);
+    let raw = paid ? post.last_payout || post.payout_at || "" : post.payout_at || post.cashout_time || "";
+    if (String(raw).indexOf("1969") === 0) raw = post.payout_at || "";
+    if (!raw || String(raw).indexOf("1969") === 0) {
+      return { rel: paid ? "Paid out" : "", abs: "" };
+    }
+    const relTime = timeAgo(raw);
+    const abs = formatCreated(raw);
+    const rel = paid
+      ? relTime
+        ? "Paid " + relTime
+        : "Paid out"
+      : relTime
+        ? "Payout " + relTime
+        : "";
+    return { rel, abs };
+  }
+
+  function payoutFigures(post) {
+    const source = post || {};
+    const declined = payoutDeclined(source);
+    const burned = !declined && payoutBurned(source);
+    const paid = payoutIsPaid(source);
+    const total = roundHbd(payoutAmount(source));
+    const beneficiaries = payoutBeneficiaryList(source);
+    let author = 0;
+    let curators = 0;
+    const benefRows = [];
+    if (!declined && paid) {
+      author = roundHbd(payoutAuthorValue(source));
+      curators = roundHbd(parsePayoutAmount(source.curator_payout_value));
+      for (let i = 0; i < beneficiaries.length; i++) {
+        const row = beneficiaries[i];
+        benefRows.push({
+          account: row.account,
+          weight: row.weight,
+          amount: roundHbd(curators * (row.weight / 10000)),
+        });
+      }
+    } else if (!declined) {
+      curators = roundHbd(total / 2);
+      const authorPool = roundHbd(total - curators);
+      let benefSum = 0;
+      for (let i = 0; i < beneficiaries.length; i++) {
+        const row = beneficiaries[i];
+        const amount = roundHbd(authorPool * (row.weight / 10000));
+        benefSum += amount;
+        benefRows.push({ account: row.account, weight: row.weight, amount });
+      }
+      author = roundHbd(authorPool - benefSum);
+    } else {
+      for (let i = 0; i < beneficiaries.length; i++) {
+        benefRows.push({
+          account: beneficiaries[i].account,
+          weight: beneficiaries[i].weight,
+          amount: 0,
+        });
+      }
+    }
+    const max = parsePayoutAmount(source.max_accepted_payout);
+    const promoted = roundHbd(parsePayoutAmount(source.promoted));
+    return {
+      declined,
+      burned,
+      paid,
+      total,
+      author,
+      curators,
+      beneficiaries: benefRows,
+      reward: declined ? "" : payoutRewardNote(source),
+      when: payoutWhenParts(source),
+      belowMin: !paid && !declined && total > 0 && total < 0.02,
+      maxLabel: Number.isFinite(max) && max > 0 && max < 1000000 ? roundHbd(max) : 0,
+      promoted,
+    };
+  }
+
+  function payoutTotalHtml(figures) {
+    const n = figures.total.toFixed(2);
+    if (figures.burned) {
+      return `<span class="payout-mark" aria-hidden="true">🔥</span><span class="payout-amount">${n}</span>`;
+    }
+    return `<span class="payout-amount">H ${n}</span>`;
+  }
+
   function payoutHtml(post, pill) {
     const author = HiveMd.escapeHtml(post.author || "");
     const permlink = HiveMd.escapeHtml(post.permlink || "");
+    const figures = payoutFigures(post);
     const cls = pill ? "payout stat-pill" : "payout";
-    return `<span class="${cls}" data-payout-author="${author}" data-payout-permlink="${permlink}">${HiveMd.escapeHtml(formatPayout(post))}</span>`;
+    const mode = figures.burned ? " is-burned" : figures.declined ? " is-declined" : "";
+    const tab = pill ? ' tabindex="0"' : "";
+    const label = figures.burned ? "Burned payout" : figures.declined ? "Declined payout" : "Payout";
+    return `<span class="${cls}${mode}" data-payout-author="${author}" data-payout-permlink="${permlink}"${tab} aria-label="${label} ${figures.total.toFixed(2)}"><span class="payout-value">${payoutTotalHtml(figures)}</span></span>`;
+  }
+
+  function applyPayoutEl(el, post) {
+    if (!el) return;
+    const source = post || {};
+    const known = Array.isArray(source.beneficiaries) || source.max_accepted_payout != null;
+    const figures = payoutFigures(source);
+    if (!known) {
+      figures.burned = el.classList.contains("is-burned");
+      figures.declined = !figures.burned && el.classList.contains("is-declined");
+    } else {
+      el.classList.toggle("is-burned", figures.burned);
+      el.classList.toggle("is-declined", figures.declined);
+    }
+    const label = figures.burned ? "Burned payout" : figures.declined ? "Declined payout" : "Payout";
+    el.setAttribute("aria-label", label + " " + figures.total.toFixed(2));
+    let value = el.querySelector(".payout-value");
+    if (!value) {
+      value = document.createElement("span");
+      value.className = "payout-value";
+      el.textContent = "";
+      el.appendChild(value);
+    }
+    value.innerHTML = payoutTotalHtml(figures);
   }
 
   function rememberPayout(post) {
@@ -716,6 +894,182 @@ let CS77_FILTER_LOW_REP = 20;
       payout: payoutAmount(post),
       netRshares: Number.isFinite(net) ? net : 0,
     });
+  }
+
+  let openPayout = null;
+  let payoutShowTimer = 0;
+  let payoutHideTimer = 0;
+  let payoutPanelNode = null;
+
+  function payoutPostFor(author, permlink) {
+    const item = findLoadedPost(author, permlink);
+    if (item) {
+      const shown = cardDisplayPost(item);
+      if (shown && samePostId(shown, author, permlink)) return shown;
+      if (samePostId(item, author, permlink)) return item;
+    }
+    if (currentPost && samePostId(currentPost, author, permlink)) return currentPost;
+    return findContentNode(author, permlink);
+  }
+
+  function payoutPanelRow(label, amount) {
+    return `<div class="payout-panel-row"><span>${HiveMd.escapeHtml(label)}</span><span class="payout-panel-amt">${HiveMd.escapeHtml(formatHiveAmount(amount))}</span></div>`;
+  }
+
+  function payoutPanelHtml(author, permlink) {
+    const post = payoutPostFor(author, permlink) || { author, permlink };
+    const figures = payoutFigures(post);
+    const caption = figures.declined ? "Payout declined" : figures.paid ? "Past payout" : "Pending payout";
+    let rows = "";
+    if (!figures.declined) {
+      rows += payoutPanelRow("Author", figures.author);
+      rows += payoutPanelRow("Curators", figures.curators);
+    }
+    if (figures.promoted > 0) rows += payoutPanelRow("Promoted", figures.promoted);
+    let benef = "";
+    if (figures.beneficiaries.length) {
+      const lines = figures.beneficiaries
+        .map((row) => {
+          const href = HiveMd.escapeHtml(profilePath(row.account));
+          const name = HiveMd.escapeHtml("@" + row.account);
+          const pct = HiveMd.escapeHtml(formatWeightPercent(row.weight));
+          const amt = HiveMd.escapeHtml(formatHiveAmount(row.amount));
+          return `<div class="payout-panel-row"><a href="${href}">${name} <span class="payout-panel-pct">${pct}</span></a><span class="payout-panel-amt">${amt}</span></div>`;
+        })
+        .join("");
+      benef = `<p class="payout-panel-caption payout-panel-sub">Beneficiaries</p>${lines}`;
+    }
+    const notes = [];
+    if (figures.declined) notes.push("Declined payout leaves it in the reward pool.");
+    else if (figures.burned) notes.push("The author reward is burned.");
+    if (figures.reward) notes.push(figures.reward);
+    if (figures.belowMin) notes.push("Below the 0.02 minimum payout.");
+    if (figures.maxLabel) notes.push("Max payout " + formatHiveAmount(figures.maxLabel));
+    const noteHtml = notes
+      .map((line) => `<p class="payout-panel-note">${HiveMd.escapeHtml(line)}</p>`)
+      .join("");
+    const when = figures.when || { rel: "", abs: "" };
+    const whenHtml = when.rel
+      ? `<p class="payout-panel-when">${HiveMd.escapeHtml(when.rel)}${
+          when.abs ? `<span class="payout-panel-abs">${HiveMd.escapeHtml(when.abs)}</span>` : ""
+        }</p>`
+      : "";
+    return `<p class="payout-panel-caption">${caption}</p>${rows}${benef}${noteHtml}${whenHtml}`;
+  }
+
+  function payoutPanelEl() {
+    if (payoutPanelNode && payoutPanelNode.isConnected) return payoutPanelNode;
+    let el = document.getElementById("payoutPanel");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "payoutPanel";
+      el.className = "payout-panel";
+      el.hidden = true;
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "Payout details");
+      document.body.appendChild(el);
+      el.addEventListener("pointerenter", () => {
+        window.clearTimeout(payoutHideTimer);
+        payoutHideTimer = 0;
+      });
+      el.addEventListener("pointerleave", scheduleHidePayout);
+    }
+    payoutPanelNode = el;
+    return el;
+  }
+
+  function placePayoutPanel(anchor, panel) {
+    if (!anchor || !panel || panel.hidden) return;
+    const rect = anchor.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      hidePayoutPanel();
+      return;
+    }
+    panel.style.position = "fixed";
+    panel.style.zIndex = "70";
+    panel.style.right = "auto";
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const contentH = panel.scrollHeight;
+    const placeAbove = contentH > spaceBelow && spaceAbove > spaceBelow;
+    const maxH = Math.max(80, Math.round(placeAbove ? spaceAbove : spaceBelow));
+    panel.style.maxHeight = maxH + "px";
+    panel.style.left = Math.round(rect.left) + "px";
+    if (placeAbove) {
+      panel.style.top = Math.max(8, Math.round(rect.top - Math.min(contentH, maxH) - 8)) + "px";
+    } else {
+      panel.style.top = Math.round(rect.bottom + 8) + "px";
+    }
+    const box = panel.getBoundingClientRect();
+    const maxRight = window.innerWidth - 8;
+    if (box.right > maxRight) {
+      panel.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
+    }
+    if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
+  }
+
+  function hidePayoutPanel() {
+    window.clearTimeout(payoutShowTimer);
+    window.clearTimeout(payoutHideTimer);
+    payoutShowTimer = 0;
+    payoutHideTimer = 0;
+    openPayout = null;
+    const panel = payoutPanelNode || document.getElementById("payoutPanel");
+    if (!panel) return;
+    panel.hidden = true;
+    panel.innerHTML = "";
+    panel.style.top = "";
+    panel.style.left = "";
+    panel.style.maxHeight = "";
+  }
+
+  function scheduleHidePayout(e) {
+    if (e && e.pointerType && e.pointerType !== "mouse") return;
+    if (e && !hoverFine()) return;
+    window.clearTimeout(payoutShowTimer);
+    window.clearTimeout(payoutHideTimer);
+    payoutShowTimer = 0;
+    payoutHideTimer = window.setTimeout(hidePayoutPanel, 180);
+  }
+
+  function showPayoutPanel(el) {
+    if (!el || !el.isConnected || !el.classList.contains("stat-pill")) return;
+    const author = el.getAttribute("data-payout-author");
+    const permlink = el.getAttribute("data-payout-permlink");
+    if (!author || !permlink) return;
+    window.clearTimeout(payoutHideTimer);
+    payoutHideTimer = 0;
+    hideVoteVoters();
+    hideReblogConfirm();
+    const panel = payoutPanelEl();
+    openPayout = { el, author, permlink };
+    panel.innerHTML = payoutPanelHtml(author, permlink);
+    panel.hidden = false;
+    document.body.appendChild(panel);
+    placePayoutPanel(el, panel);
+  }
+
+  function onPayoutEnter(el) {
+    if (!hoverFine() || !el) return;
+    window.clearTimeout(payoutHideTimer);
+    window.clearTimeout(payoutShowTimer);
+    payoutHideTimer = 0;
+    if (openPayout && openPayout.el === el && payoutPanelNode && !payoutPanelNode.hidden) {
+      showPayoutPanel(el);
+      return;
+    }
+    payoutShowTimer = window.setTimeout(() => {
+      payoutShowTimer = 0;
+      showPayoutPanel(el);
+    }, 80);
+  }
+
+  function togglePayoutPanel(el) {
+    if (openPayout && openPayout.el === el && payoutPanelNode && !payoutPanelNode.hidden) {
+      hidePayoutPanel();
+      return;
+    }
+    showPayoutPanel(el);
   }
 
   function voteCount(post) {
@@ -1098,9 +1452,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function repositionOpenSlider(e) {
-    if (e && e.type === "scroll" && votersPanelNode) {
+    if (e && e.type === "scroll") {
       const t = e.target;
-      if (t === votersPanelNode || (t && t.nodeType === 1 && votersPanelNode.contains(t))) {
+      if (votersPanelNode && (t === votersPanelNode || (t && t.nodeType === 1 && votersPanelNode.contains(t)))) {
+        return;
+      }
+      if (payoutPanelNode && (t === payoutPanelNode || (t && t.nodeType === 1 && payoutPanelNode.contains(t)))) {
         return;
       }
     }
@@ -1116,6 +1473,11 @@ let CS77_FILTER_LOW_REP = 20;
       placeReblogConfirm(openReblog.btn, openReblog.panel);
     } else if (openReblog) {
       hideReblogConfirm();
+    }
+    if (openPayout && openPayout.el && openPayout.el.isConnected) {
+      placePayoutPanel(openPayout.el, payoutPanelEl());
+    } else if (openPayout) {
+      hidePayoutPanel();
     }
   }
 
@@ -1471,6 +1833,7 @@ let CS77_FILTER_LOW_REP = 20;
   function showVoteVoters(el, force) {
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider) return;
+    hidePayoutPanel();
     if (openReblog) hideReblogConfirm();
     const author = el.getAttribute("data-vote-author");
     const permlink = el.getAttribute("data-vote-permlink");
@@ -1650,6 +2013,7 @@ let CS77_FILTER_LOW_REP = 20;
   function showReblogUsers(el, force) {
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider || openReblog) return;
+    hidePayoutPanel();
     const author = el.getAttribute("data-reblog-author");
     const permlink = el.getAttribute("data-reblog-permlink");
     if (!author || !permlink) return;
@@ -1790,6 +2154,7 @@ let CS77_FILTER_LOW_REP = 20;
   function showReblogConfirm(btn) {
     hideVoteVoters();
     hideVoteSlider();
+    hidePayoutPanel();
     const wrap = btn.closest(".reblog-wrap");
     const panel = wrap && wrap.querySelector(".reblog-confirm-panel");
     if (!wrap || !panel) return;
@@ -2153,20 +2518,28 @@ let CS77_FILTER_LOW_REP = 20;
   function setDisplayedPayout(author, permlink, amount, netRshares) {
     const n = Number(amount);
     if (!Number.isFinite(n)) return;
-    const text = formatHiveAmount(n);
-    payoutNodesFor(author, permlink).forEach((el) => {
-      el.textContent = text;
-    });
     const net = Number(netRshares);
+    const write = (node) => {
+      if (!node) return;
+      node.payout = n;
+      if (!node.is_paidout) node.pending_payout_value = n.toFixed(3) + " HBD";
+      if (Number.isFinite(net)) node.net_rshares = net;
+    };
+    eachContentNode(author, permlink, write);
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i] && items[i].original_entry;
+      if (entry && entry.author === author && entry.permlink === permlink) write(entry);
+    }
     payoutByKey.set(postKey(author, permlink), {
       payout: n,
       netRshares: Number.isFinite(net) ? net : 0,
     });
-    eachContentNode(author, permlink, (node) => {
-      node.payout = n;
-      if (!node.is_paidout) node.pending_payout_value = n.toFixed(3) + " HBD";
-      if (Number.isFinite(net)) node.net_rshares = net;
-    });
+    const post = payoutPostFor(author, permlink) || { author, permlink, payout: n };
+    payoutNodesFor(author, permlink).forEach((el) => applyPayoutEl(el, post));
+    if (openPayout && openPayout.author === author && openPayout.permlink === permlink && openPayout.el) {
+      showPayoutPanel(openPayout.el);
+    }
     repaintOpenVoters(author, permlink);
   }
 
@@ -3365,6 +3738,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function navigate(href, replace) {
     const path = hrefToPath(href);
+    hidePayoutPanel();
     if (parseRoute(path).name === "publish") rememberNonPublishPath();
     if (HASH_ROUTING) {
       const next = "#" + (path.startsWith("/") ? path : "/" + path);
@@ -9209,9 +9583,8 @@ let CS77_FILTER_LOW_REP = 20;
     article.querySelectorAll(".downvote-n").forEach((el) => {
       el.textContent = String(viewState.downCount);
     });
-    const payout = formatPayout(root);
     article.querySelectorAll(".payout").forEach((el) => {
-      el.textContent = payout;
+      applyPayoutEl(el, root);
     });
     rememberPayout(root);
   }
@@ -9530,6 +9903,9 @@ let CS77_FILTER_LOW_REP = 20;
       "cashout_time",
       "payout_at",
       "max_accepted_payout",
+      "percent_hbd",
+      "beneficiaries",
+      "promoted",
       "reblogs",
       "reblogged_by",
     ]);
@@ -9550,9 +9926,8 @@ let CS77_FILTER_LOW_REP = 20;
   function patchFeedCardStats(card, post, commentCount) {
     syncVoteButtons(post.author, post.permlink, voteView(post));
     syncReblogButtons(post.author, post.permlink, reblogView(post));
-    const payout = formatPayout(post);
     card.querySelectorAll(".payout").forEach((el) => {
-      el.textContent = payout;
+      applyPayoutEl(el, post);
     });
     const label = "C " + commentCount;
     card.querySelectorAll(".comment-n").forEach((el) => {
@@ -12793,6 +13168,17 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener(
       "click",
       (e) => {
+        const payoutPill = e.target.closest(".payout.stat-pill");
+        const inPayoutPanel = e.target.closest(".payout-panel");
+        if (!(payoutPill && inInteractiveSurface(payoutPill)) && !inPayoutPanel) hidePayoutPanel();
+        if (payoutPill && inInteractiveSurface(payoutPill)) {
+          if (!hoverFine()) {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePayoutPanel(payoutPill);
+          }
+          return;
+        }
         const reblogConfirm = e.target.closest(".reblog-confirm");
         if (reblogConfirm) {
           e.preventDefault();
@@ -12879,6 +13265,10 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if (e.key !== "Escape") return;
+      if (openPayout) {
+        hidePayoutPanel();
+        return;
+      }
       if (openReblog) {
         hideReblogConfirm();
         return;
@@ -13070,6 +13460,19 @@ let CS77_FILTER_LOW_REP = 20;
       uploadImagesToComposer(composer, files);
     });
 
+    document.addEventListener("focusin", (e) => {
+      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
+      if (!payoutPill || !inInteractiveSurface(payoutPill)) return;
+      showPayoutPanel(payoutPill);
+    });
+    document.addEventListener("focusout", (e) => {
+      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
+      if (!payoutPill) return;
+      const next = e.relatedTarget;
+      if (next && (payoutPill.contains(next) || (payoutPanelNode && payoutPanelNode.contains(next)))) return;
+      scheduleHidePayout();
+    });
+
     document.addEventListener("pointerover", (e) => {
       const arrow = e.target.closest && e.target.closest(".vote-btn, .downvote-btn");
       if (arrow && arrow.getAttribute("data-vote-left") === "1") {
@@ -13077,6 +13480,13 @@ let CS77_FILTER_LOW_REP = 20;
         if (!fromArrow || !arrow.contains(fromArrow)) releaseVoteColor(arrow);
       }
       if (!hoverFine()) return;
+      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
+      if (payoutPill && inInteractiveSurface(payoutPill)) {
+        const fromPayout = e.relatedTarget;
+        if (fromPayout && payoutPill.contains(fromPayout)) return;
+        onPayoutEnter(payoutPill);
+        return;
+      }
       const reblogHit = e.target.closest && e.target.closest(".reblog-hit");
       if (reblogHit && inInteractiveSurface(reblogHit)) {
         const fromReblog = e.relatedTarget;
@@ -13097,6 +13507,14 @@ let CS77_FILTER_LOW_REP = 20;
         if (!toArrow || !arrow.contains(toArrow)) arrow.setAttribute("data-vote-left", "1");
       }
       const panel = votersPanelNode;
+      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
+      if (payoutPill) {
+        const toPayout = e.relatedTarget;
+        if (toPayout && payoutPill.contains(toPayout)) return;
+        if (toPayout && payoutPanelNode && payoutPanelNode.contains(toPayout)) return;
+        scheduleHidePayout(e);
+        return;
+      }
       const reblogHit = e.target.closest && e.target.closest(".reblog-hit");
       if (reblogHit) {
         const toReblog = e.relatedTarget;
