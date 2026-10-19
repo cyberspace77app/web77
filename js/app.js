@@ -100,6 +100,7 @@ let CS77_FILTER_LOW_REP = 20;
   let accountMenuProfile = false;
   let welcomeHold = false;
   let currentPost = null;
+  let metaDefaults = null;
   const postLayer = {
     open: false,
     author: "",
@@ -6118,7 +6119,7 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     const ov = $("#publishOverlay");
     if (!ov) return;
-    document.title = "Publish — CyberSpace77";
+    setPageMeta("Publish — CyberSpace77");
     if (!user) {
       pendingPublish = true;
       ov.hidden = true;
@@ -6320,7 +6321,8 @@ let CS77_FILTER_LOW_REP = 20;
     const bodyEl = article.querySelector(":scope > .post-body");
     if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
     syncArticleTags(article, currentPost);
-    document.title = `${title || "Post"} — CyberSpace77`;
+    if (currentPost) setPostTitle(currentPost);
+    else setPageMeta(`${title || "Post"} — CyberSpace77`);
   }
 
   function openPostEditor() {
@@ -7144,7 +7146,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderTagsPage() {
-    document.title = "Tags — CyberSpace77";
+    setPageMeta("Tags — CyberSpace77");
     view.innerHTML = `
       <section class="tags-page">
         <h2 class="tags-page-title">Favorite tags</h2>
@@ -7439,7 +7441,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderCommunitiesPage() {
-    document.title = "Communities — CyberSpace77";
+    setPageMeta("Communities — CyberSpace77");
     communityDirState.gen += 1;
     const gen = communityDirState.gen;
     communityDirState.subs = [];
@@ -8712,8 +8714,112 @@ let CS77_FILTER_LOW_REP = 20;
     pv.innerHTML = html;
   }
 
+  function pageMetaDefaults() {
+    if (metaDefaults) return metaDefaults;
+    const desc = document.querySelector('meta[name="description"]');
+    const image = document.querySelector('meta[property="og:image"]');
+    metaDefaults = {
+      description:
+        (desc && String(desc.getAttribute("content") || "").trim()) ||
+        "Own your voice. Create, earn, and connect without censorship, gatekeepers, and algos.",
+      image:
+        (image && String(image.getAttribute("content") || "").trim()) ||
+        "/assets/cyberspace77.png",
+    };
+    return metaDefaults;
+  }
+
+  function setMetaContent(selector, value) {
+    const el = document.querySelector(selector);
+    if (el) el.setAttribute("content", value);
+  }
+
+  function absoluteMetaUrl(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    try {
+      return new URL(raw, location.href).href;
+    } catch (err) {
+      return raw;
+    }
+  }
+
+  // Title, description, and image all move together. An empty description or
+  // image falls back to the tags from index.html.
+  function setPageMeta(title, description, image) {
+    const defaults = pageMetaDefaults();
+    const nextTitle = String(title || "").trim() || "CyberSpace77";
+    const nextDescription =
+      String(description || "").replace(/\s+/g, " ").trim() || defaults.description;
+    const nextImage = absoluteMetaUrl(image || defaults.image);
+    document.title = nextTitle;
+    setMetaContent('meta[name="description"]', nextDescription);
+    setMetaContent('meta[property="og:title"]', nextTitle);
+    setMetaContent('meta[property="og:description"]', nextDescription);
+    if (nextImage) setMetaContent('meta[property="og:image"]', nextImage);
+  }
+
+  function profileAboutText(profile) {
+    const meta = (profile && (profile.metadata || profile.posting_json_metadata)) || {};
+    const info = meta && typeof meta.profile === "object" && meta.profile ? meta.profile : {};
+    return String((info && info.about) || (profile && profile.about) || "").trim();
+  }
+
+  function profileAboutFor(author) {
+    const name = String(author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!name || profileState.author !== name) return "";
+    return profileAboutText(profileState.profile);
+  }
+
+  function communityAboutText(info) {
+    return String((info && info.about) || "").trim();
+  }
+
+  function communityAboutFor(name) {
+    const id = String(name || "").toLowerCase();
+    if (!id || communityState.name !== id) return "";
+    return communityAboutText(communityState.info);
+  }
+
+  function textFromExcerptHtml(html) {
+    const raw = String(html || "");
+    if (!raw) return "";
+    const el = document.createElement("div");
+    el.innerHTML = raw;
+    return String(el.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function postMetaDescription(post) {
+    if (!post || !window.HiveMd || typeof HiveMd.excerpt !== "function") return "";
+    const result = HiveMd.excerpt(post, 280, {
+      firstSentence: true,
+      preserveLineBreaks: false,
+    });
+    return textFromExcerptHtml(result && result.html);
+  }
+
+  function postMetaImage(post) {
+    if (!post || !window.HiveMd) return "";
+    const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+    const list = meta && meta.image;
+    if (!Array.isArray(list)) return "";
+    for (let i = 0; i < list.length; i++) {
+      const url = typeof list[i] === "string" ? list[i].trim() : "";
+      if (url) return url;
+    }
+    return "";
+  }
+
   function setPostTitle(root) {
-    document.title = `${(root && root.title) || "Post"} — CyberSpace77`;
+    setPageMeta(
+      `${(root && root.title) || "Post"} — CyberSpace77`,
+      postMetaDescription(root),
+      postMetaImage(root)
+    );
   }
 
   function setCommentCount(n) {
@@ -8840,8 +8946,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (snap.root) {
       currentPost = snap.root;
       rememberContent(snap.root);
+      setPostTitle(snap.root);
+    } else if (snap.title) {
+      setPageMeta(snap.title);
     }
-    if (snap.title) document.title = snap.title;
     return true;
   }
 
@@ -9275,7 +9383,7 @@ let CS77_FILTER_LOW_REP = 20;
       postLayer.author = a;
       postLayer.permlink = p;
       currentPost = null;
-      document.title = "Not found — CyberSpace77";
+      setPageMeta("Not found — CyberSpace77");
       paintPostMessage(notFoundHtml("This post was blacklisted."));
       revealPostLayer();
       scrollWindowInstant(0);
@@ -9311,6 +9419,7 @@ let CS77_FILTER_LOW_REP = 20;
           `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Opening post…</div>`
         );
         currentPost = null;
+        setPageMeta("Post — CyberSpace77");
       }
     }
 
@@ -9340,6 +9449,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!root) {
         if (!activeArticle()) {
           currentPost = null;
+          setPageMeta("Not found — CyberSpace77");
           paintPostMessage(notFoundHtml("This post could not be found on Hive."));
         } else {
           fillCommentList(commentsErrorHtml("Couldn't load comments."));
@@ -9366,6 +9476,7 @@ let CS77_FILTER_LOW_REP = 20;
       const msg = err.message || String(err);
       if (!activeArticle()) {
         currentPost = null;
+        setPageMeta("Not found — CyberSpace77");
         paintPostMessage(notFoundHtml(msg || "Could not load this post."));
       } else {
         fillCommentList(commentsErrorHtml(msg));
@@ -9490,9 +9601,7 @@ let CS77_FILTER_LOW_REP = 20;
       (info && info.profile_image) || (profile && profile.profile_image) || ""
     ).trim();
     const avatarSrc = avatarSrcFromImage(author, profileImage, "large");
-    const about = String(
-      (info && info.about) || (profile && profile.about) || ""
-    ).trim();
+    const about = profileAboutText(profile);
     const display =
       (info && info.name) || (profile && profile.name) || author;
     const stats = (profile && profile.stats) || {};
@@ -9605,6 +9714,9 @@ let CS77_FILTER_LOW_REP = 20;
     const about = String((info && info.about) || "").trim();
     const aboutEl = banner.querySelector(".profile-about");
     if (aboutEl) aboutEl.textContent = about;
+    if (!postLayer.open && parseRoute().name === "profile" && profileState.author) {
+      setPageMeta(profilePageTitle(profileState.author, profileState.page), about);
+    }
     const postsEl = banner.querySelector(".profile-post-count");
     if (postsEl) postsEl.textContent = (Number(account.post_count) || 0) + " posts";
     const hpText = formatProfileHp(hivePowerFromAccount(account, accountState.props));
@@ -10825,7 +10937,7 @@ let CS77_FILTER_LOW_REP = 20;
     resetProfileState();
     clearError();
     document.body.classList.remove("is-profile");
-    document.title = "Not found — CyberSpace77";
+    setPageMeta("Not found — CyberSpace77");
     view.innerHTML = notFoundHtml(msg || "Failed to load account.");
   }
 
@@ -10862,6 +10974,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const tab = normalizeProfilePage(page) || "posts";
+    setPageMeta(profilePageTitle(name, tab), profileAboutFor(name));
     const own = isOwnAuthor(name);
     if (profileBannerReady(name)) {
       profileState.page = tab;
@@ -10869,7 +10982,7 @@ let CS77_FILTER_LOW_REP = 20;
       claimAnimToken += 1;
       profileState.wallet = null;
       profileState.walletTx = null;
-      document.title = profilePageTitle(name, tab);
+      setPageMeta(profilePageTitle(name, tab), profileAboutText(profileState.profile));
       paintProfileNavActive(tab);
       showProfileSectionLoading();
       try {
@@ -10920,9 +11033,9 @@ let CS77_FILTER_LOW_REP = 20;
       claimAnimToken += 1;
       profileState.wallet = null;
       profileState.walletTx = null;
-      document.title = profilePageTitle(name, tab);
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
+      setPageMeta(profilePageTitle(name, tab), profileAboutText(profile));
       view.innerHTML = chrome + `<div id="profileSection">${profileSectionLoadingHtml()}</div>`;
 
       if (own && accountState.user === name && accountState.account) {
@@ -10944,6 +11057,7 @@ let CS77_FILTER_LOW_REP = 20;
       resetProfileState();
       showError(err.message || String(err));
       document.body.classList.remove("is-account-sub");
+      setPageMeta("Not found — CyberSpace77");
       view.innerHTML = notFoundHtml("Could not load this account.");
     }
   }
@@ -10993,7 +11107,7 @@ let CS77_FILTER_LOW_REP = 20;
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
-    const about = (info && info.about) || "";
+    const about = communityAboutText(info);
     const subscribers = Number((info && info.subscribers) || 0);
     const authors = Number((info && info.num_authors) || 0);
     const nsfw = Boolean(info && info.is_nsfw);
@@ -11285,12 +11399,15 @@ let CS77_FILTER_LOW_REP = 20;
   async function renderCommunity(name, page) {
     const id = normalizeCommunityName(name);
     const tab = normalizeCommunityPage(page) || "latest";
+    const known = communityState.name === id ? communityState.info : null;
+    setPageMeta(communityPageTitle(known, id, tab), communityAboutFor(id));
     view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading community…</div>`;
     try {
       const info = await HiveApi.getCommunity(id, observer());
       setNodeLabel();
       if (!info || !info.name) {
         resetCommunityState();
+        setPageMeta("Not found — CyberSpace77");
         view.innerHTML = notFoundHtml("This community could not be found on Hive.");
         return;
       }
@@ -11299,7 +11416,7 @@ let CS77_FILTER_LOW_REP = 20;
       communityState.info = info;
       communityState.subscribed = communitySubscribed(info);
       communityState.pending = false;
-      document.title = communityPageTitle(info, communityState.name, tab);
+      setPageMeta(communityPageTitle(info, communityState.name, tab), communityAboutText(info));
       const chrome = communityBannerHtml(info) + communityNavHtml(communityState.name, tab);
 
       if (tab === "rules") {
@@ -11360,12 +11477,13 @@ let CS77_FILTER_LOW_REP = 20;
     } catch (err) {
       resetCommunityState();
       showError(err.message || String(err));
+      setPageMeta("Not found — CyberSpace77");
       view.innerHTML = notFoundHtml("Could not load this community.");
     }
   }
 
   function renderAbout() {
-    document.title = "About — CyberSpace77";
+    setPageMeta("About — CyberSpace77");
     view.innerHTML = `
       <section class="about">
         <h2 class="about-title">About</h2>
@@ -11392,7 +11510,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function renderImprint() {
-    document.title = "Imprint — CyberSpace77";
+    setPageMeta("Imprint — CyberSpace77");
     view.innerHTML = `
       <section class="imprint">
         <h2 class="imprint-title">Imprint</h2>
@@ -11495,25 +11613,30 @@ let CS77_FILTER_LOW_REP = 20;
   function applyRouteTitle(r) {
     if (!r) return;
     if (r.name === "feed") {
-      document.title = r.tag
-        ? "#" + r.tag + " — CyberSpace77"
-        : r.sort === "feed"
-          ? "Feed — CyberSpace77"
-          : "CyberSpace77";
+      setPageMeta(
+        r.tag
+          ? "#" + r.tag + " — CyberSpace77"
+          : r.sort === "feed"
+            ? "Feed — CyberSpace77"
+            : "CyberSpace77"
+      );
     } else if (r.name === "profile") {
-      document.title = profilePageTitle(r.author, r.page);
+      setPageMeta(profilePageTitle(r.author, r.page), profileAboutFor(r.author));
     } else if (r.name === "community") {
-      document.title = communityPageTitle(communityState.info, r.community, r.page);
+      setPageMeta(
+        communityPageTitle(communityState.info, r.community, r.page),
+        communityAboutFor(r.community)
+      );
     } else if (r.name === "tags") {
-      document.title = "Tags — CyberSpace77";
+      setPageMeta("Tags — CyberSpace77");
     } else if (r.name === "communities") {
-      document.title = "Communities — CyberSpace77";
+      setPageMeta("Communities — CyberSpace77");
     } else if (r.name === "welcome") {
-      document.title = "CyberSpace77";
+      setPageMeta("CyberSpace77");
     } else if (r.name === "about") {
-      document.title = "About — CyberSpace77";
+      setPageMeta("About — CyberSpace77");
     } else if (r.name === "imprint") {
-      document.title = "Imprint — CyberSpace77";
+      setPageMeta("Imprint — CyberSpace77");
     }
   }
 
@@ -11881,8 +12004,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!currentViewKey) {
         window.scrollTo(0, 0);
         const sort = defaultFeedSort();
-        document.title =
-          sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77";
+        setPageMeta(sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77");
         await renderFeed(sort, true);
         currentViewKey = "feed:" + sort;
         storeFeedView(sort);
@@ -11916,7 +12038,7 @@ let CS77_FILTER_LOW_REP = 20;
       else window.scrollTo(0, 0);
     }
     if (r.name === "welcome") {
-      document.title = "CyberSpace77";
+      setPageMeta("CyberSpace77");
       currentViewKey = key;
       liveFeedNav = nav;
       await renderFeed("latest", true, "");
@@ -11928,10 +12050,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "feed") {
       if (!r.tag && !(showWelcome && isHomePath())) storeFeedView(r.sort);
       if (r.tag) {
-        document.title = "#" + r.tag + " — CyberSpace77";
+        setPageMeta("#" + r.tag + " — CyberSpace77");
       } else {
-        document.title =
-          r.sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77";
+        setPageMeta(r.sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77");
       }
       currentViewKey = key;
       liveFeedNav = nav;
@@ -11996,7 +12117,7 @@ let CS77_FILTER_LOW_REP = 20;
       currentViewKey = key;
       return;
     }
-    document.title = "Not found — CyberSpace77";
+    setPageMeta("Not found — CyberSpace77");
     liveFeedNav = 0;
     view.innerHTML = notFoundHtml();
     currentViewKey = "notfound";
