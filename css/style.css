@@ -4737,6 +4737,29 @@ body:has(#publishOverlay:not([hidden])) {
   color: var(--red-bright);
 }
 
+.publish-status.is-publishing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.publish-status.is-publishing::after {
+  content: "";
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background-color: var(--gray);
+  -webkit-mask: url("../assets/logo.svg") center / contain no-repeat;
+  mask: url("../assets/logo.svg") center / contain no-repeat;
+  animation: spin 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publish-status.is-publishing::after {
+    animation: none;
+  }
+}
+
 .publish-card.is-editing-comment #publishLocationBtn {
   display: none !important;
 }

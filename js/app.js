@@ -5321,18 +5321,19 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   /* ─── Publish ─── */
-  function setPublishStatus(msg, isError) {
+  function setPublishStatus(msg, isError, busy) {
     const el = $("#publishStatus");
     if (!el) return;
     if (!msg) {
       el.hidden = true;
       el.textContent = "";
-      el.classList.remove("is-error");
+      el.classList.remove("is-error", "is-publishing");
       return;
     }
     el.hidden = false;
     el.textContent = msg;
     el.classList.toggle("is-error", Boolean(isError));
+    el.classList.toggle("is-publishing", Boolean(busy) && !isError);
   }
 
   function editingComment() {
@@ -7016,7 +7017,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (pageEl) pageEl.classList.add("is-pending");
     if (submitBtn) submitBtn.disabled = true;
-    setPublishStatus(signingLabel());
+    setPublishStatus("Publishing", false, true);
 
     const { promise } = ChainQueue.comment({
       author: user,
@@ -7069,6 +7070,10 @@ let CS77_FILTER_LOW_REP = 20;
         }
         applyPostEditToView(title, body);
         hidePublishOverlay();
+        // The dialog locks the page where the reader left it. Bring the
+        // edited post back to the top once that lock is gone.
+        scrollWindowInstant(0);
+        requestAnimationFrame(() => scrollWindowInstant(0));
       } else {
         clearStoredPublishDraft();
         resetPublishForm();
