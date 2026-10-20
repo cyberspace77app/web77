@@ -213,7 +213,7 @@ function cs77_route(string $pathname): array
         }
         if (count($parts) === 2) {
             $page = strtolower($parts[1]);
-            if ($page === "general" || $page === "profile") {
+            if ($page === "general" || $page === "profile" || $page === "nodes") {
                 $route["name"] = "settings";
                 $route["page"] = $page;
                 return $route;

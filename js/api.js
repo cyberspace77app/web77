@@ -128,6 +128,33 @@
     return setActiveNode(parsed.url);
   }
 
+  function getCustomNodes() {
+    return readCustomNodes();
+  }
+
+  function addCustomNode(url) {
+    const parsed = parseNodeInput(url);
+    if (!parsed.url || FALLBACK_NODES.includes(parsed.url)) return false;
+    const customs = readCustomNodes();
+    if (customs.includes(parsed.url) || customs.length >= CUSTOM_NODE_LIMIT) return false;
+    customs.push(parsed.url);
+    writeCustomNodes(customs);
+    return true;
+  }
+
+  function removeCustomNode(url) {
+    const parsed = parseNodeInput(url);
+    if (!parsed.url) return false;
+    const customs = readCustomNodes();
+    if (!customs.includes(parsed.url)) return false;
+    writeCustomNodes(customs.filter((item) => item !== parsed.url));
+    if (activeNode === parsed.url) {
+      activeNode = FALLBACK_NODES[0];
+      writeStoredNode(activeNode);
+    }
+    return true;
+  }
+
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
   }
@@ -995,9 +1022,13 @@
     hiveRpc,
     getNodes: nodeList,
     getKnownNodes,
+    getCustomNodes,
+    CUSTOM_NODE_LIMIT,
     setActiveNode,
     testNode,
     saveCustomNode,
+    addCustomNode,
+    removeCustomNode,
     getRankedPosts,
     getDiscussion,
     getPost,

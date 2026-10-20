@@ -82,6 +82,8 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsProfileDraft = null;
   let settingsProfileBaseline = null;
   let settingsBusy = false;
+  let settingsNodeToken = 0;
+  let settingsNodeBusy = false;
   let currentViewKey = "";
   // History entry id for the feed currently mounted in #view. A profile opened
   // from that feed parks the list under this id and Back mounts it again.
@@ -429,6 +431,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       paintNodeMenus();
       setNodeLabel();
+      paintSettingsNodeRows();
       input.value = "";
       hideNodeOverlay();
       setNodeStatus("");
@@ -3455,12 +3458,14 @@ let CS77_FILTER_LOW_REP = 20;
       .toLowerCase();
     if (!page || page === "general") return "general";
     if (page === "profile") return "profile";
+    if (page === "nodes") return "nodes";
     return "";
   }
 
   function pathForSettings(page) {
     const p = normalizeSettingsPage(page) || "general";
     if (p === "profile") return "/settings/profile";
+    if (p === "nodes") return "/settings/nodes";
     return "/settings";
   }
 
@@ -3671,7 +3676,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "post") return "post:" + r.author + "/" + r.permlink;
     if (r.name === "profile") return "profile:" + r.author + ":" + (r.page || "posts");
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
-    if (r.name === "settings") return "settings:" + (r.page === "profile" ? "profile" : "general");
+    if (r.name === "settings") return "settings:" + (r.page || "general");
     return r.name || "";
   }
 
@@ -13084,15 +13089,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function settingsShellHtml(tab) {
+    const page = tab === "profile" || tab === "nodes" ? tab : "general";
     const generalHref = HiveMd.escapeHtml(appHref(pathForSettings("general")));
     const profileHref = HiveMd.escapeHtml(appHref(pathForSettings("profile")));
-    const page = tab === "profile" ? "profile" : "general";
+    const nodesHref = HiveMd.escapeHtml(appHref(pathForSettings("nodes")));
     return `
       <section class="settings-page">
         <h2 class="settings-title">Settings</h2>
         <nav class="feed-nav settings-nav" aria-label="Settings">
           <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
           <a href="${profileHref}" class="${page === "profile" ? "is-active" : ""}">Profile</a>
+          <a href="${nodesHref}" class="${page === "nodes" ? "is-active" : ""}">Nodes</a>
         </nav>
         <div id="settingsPanel"></div>
       </section>
@@ -13638,14 +13645,154 @@ let CS77_FILTER_LOW_REP = 20;
     bindSettingsProfileForm();
   }
 
+  function settingsNodesHtml() {
+    return `
+      <form class="settings-form" id="settingsNodesForm" autocomplete="off">
+        <div class="settings-field">
+          <div class="settings-label" id="settingsNodesLabel">Custom nodes</div>
+          <div id="settingsNodeRows"></div>
+          <div class="settings-node-row" id="settingsNodeDraft">
+            <input id="settingsNodeInput" type="text" inputmode="url" autocomplete="off" placeholder="api.hive.blog" spellcheck="false" autocapitalize="off" aria-label="Hive API server" aria-describedby="settingsNodesNote">
+          </div>
+          <button type="submit" class="settings-node-add" id="settingsNodeAdd">Add</button>
+        </div>
+        <p class="settings-note" id="settingsNodesNote">Saved in this browser.</p>
+        <p class="settings-status" id="settingsNodeStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function setSettingsNodeStatus(message, isError) {
+    const el = $("#settingsNodeStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function settingsNodeLimit() {
+    const limit = HiveApi.CUSTOM_NODE_LIMIT;
+    return Number.isFinite(limit) && limit > 0 ? limit : 8;
+  }
+
+  function paintSettingsNodeRows() {
+    const root = $("#settingsNodeRows");
+    if (!root) return;
+    const list = HiveApi.getCustomNodes ? HiveApi.getCustomNodes() : [];
+    const full = list.length >= settingsNodeLimit();
+    root.innerHTML = list
+      .map((url, i) => {
+        const esc = HiveMd.escapeHtml(url);
+        return `<div class="settings-node-row">
+          <input class="settings-node-url" type="text" readonly value="${esc}" aria-label="Custom node ${i + 1}" spellcheck="false">
+          <button type="button" class="settings-node-remove" data-node="${esc}" aria-label="Remove custom node"${settingsNodeBusy ? " disabled" : ""}>×</button>
+        </div>`;
+      })
+      .join("");
+    const add = $("#settingsNodeAdd");
+    const input = $("#settingsNodeInput");
+    if (add) add.disabled = settingsNodeBusy || full;
+    if (input) input.disabled = settingsNodeBusy;
+  }
+
+  function setSettingsNodeBusy(busy) {
+    settingsNodeBusy = busy;
+    const input = $("#settingsNodeInput");
+    if (input) input.disabled = busy;
+    paintSettingsNodeRows();
+  }
+
+  async function addSettingsNode() {
+    if (settingsNodeBusy) return;
+    const input = $("#settingsNodeInput");
+    const button = $("#settingsNodeAdd");
+    if (!input) return;
+    if (button && button.disabled) {
+      setSettingsNodeStatus("You can add up to " + settingsNodeLimit() + " custom nodes.", true);
+      return;
+    }
+    const raw = input.value;
+    const token = settingsNodeToken;
+    setSettingsNodeBusy(true);
+    setSettingsNodeStatus("Testing…");
+    try {
+      const node = await HiveApi.testNode(raw);
+      if (token !== settingsNodeToken || !input.isConnected) return;
+      const customs = HiveApi.getCustomNodes();
+      if (customs.indexOf(node) !== -1) {
+        throw new Error("That server is already in the list.");
+      }
+      const known = HiveApi.getKnownNodes();
+      if (known.indexOf(node) !== -1) {
+        throw new Error("That server is already a public node.");
+      }
+      if (customs.length >= settingsNodeLimit()) {
+        throw new Error("You can add up to " + settingsNodeLimit() + " custom nodes.");
+      }
+      if (!HiveApi.addCustomNode(node)) {
+        throw new Error("Could not save that server.");
+      }
+      input.value = "";
+      paintNodeMenus();
+      setNodeLabel();
+      setSettingsNodeStatus("");
+    } catch (err) {
+      if (token !== settingsNodeToken || !input.isConnected) return;
+      setSettingsNodeStatus((err && err.message) || "Could not use that server.", true);
+    } finally {
+      if (token === settingsNodeToken && input.isConnected) {
+        setSettingsNodeBusy(false);
+        if (!input.disabled) input.focus();
+      }
+    }
+  }
+
+  function removeSettingsNode(btn) {
+    if (settingsNodeBusy || !btn) return;
+    const url = btn.getAttribute("data-node") || "";
+    if (!url || !HiveApi.removeCustomNode(url)) {
+      setSettingsNodeStatus("Could not remove that server.", true);
+      return;
+    }
+    paintSettingsNodeRows();
+    paintNodeMenus();
+    setNodeLabel();
+    setSettingsNodeStatus("");
+    const input = $("#settingsNodeInput");
+    if (input) input.focus();
+  }
+
+  function bindSettingsNodes() {
+    settingsNodeBusy = false;
+    const form = $("#settingsNodesForm");
+    if (!form) return;
+    paintSettingsNodeRows();
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      addSettingsNode();
+    });
+    form.addEventListener("click", (e) => {
+      const remove = e.target.closest(".settings-node-remove");
+      if (!remove) return;
+      e.preventDefault();
+      removeSettingsNode(remove);
+    });
+  }
+
   async function renderSettings(page) {
-    const tab = page === "profile" ? "profile" : "general";
+    settingsNodeToken += 1;
+    const tab = page === "profile" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
     if (tab === "general") {
       const panel = $("#settingsPanel");
       if (panel) panel.innerHTML = settingsGeneralHtml();
       bindSettingsGeneral();
+      return;
+    }
+    if (tab === "nodes") {
+      const panel = $("#settingsPanel");
+      if (panel) panel.innerHTML = settingsNodesHtml();
+      bindSettingsNodes();
       return;
     }
     await fillSettingsProfile();
