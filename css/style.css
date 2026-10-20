@@ -3499,6 +3499,13 @@ a.tag:hover {
   color: var(--yellow);
 }
 
+.profile-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
 .profile-handle {
   font-family: var(--font-mono);
   color: var(--red-bright);
@@ -3578,6 +3585,86 @@ a.tag:hover {
   align-items: center;
   gap: 0.75rem;
   margin-top: 1.15rem;
+}
+
+.profile-more {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.profile-more-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-height: 2.15rem;
+  padding: 0.45rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.profile-more-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.profile-more-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 12.5rem;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-red), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.profile-banner:has(.profile-more.is-open) {
+  overflow: visible;
+  z-index: 3;
+}
+
+.profile-more-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 1.05rem;
+  border: none;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: left;
+  text-decoration: none;
+  color: var(--gray);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.profile-more-item:hover,
+.profile-more-item:focus-visible {
+  color: var(--yellow);
+  background: rgba(227, 19, 55, 0.12);
+  text-shadow: var(--glow-yellow);
+}
+
+.profile-more-item:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .community-nsfw {

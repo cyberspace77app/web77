@@ -147,7 +147,9 @@ let CS77_FILTER_LOW_REP = 20;
     page: "posts",
     profile: null,
     followed: false,
+    muted: false,
     pending: false,
+    mutePending: false,
     claimPending: false,
     wallet: null,
     walletTx: null,
@@ -5179,6 +5181,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     setSessionMenuOpen(false);
+    closeProfileMore();
     const account = $("#sessionAccount");
     if (account && document.activeElement && account.contains(document.activeElement)) {
       document.activeElement.blur();
@@ -10311,7 +10314,9 @@ let CS77_FILTER_LOW_REP = 20;
     profileState.page = "posts";
     profileState.profile = null;
     profileState.followed = false;
+    profileState.muted = false;
     profileState.pending = false;
+    profileState.mutePending = false;
     profileState.claimPending = false;
     claimAnimToken += 1;
     profileState.wallet = null;
@@ -10329,6 +10334,75 @@ let CS77_FILTER_LOW_REP = 20;
       return profileState.followed ? "Unfollowing…" : "Following…";
     }
     return profileState.followed ? "Unfollow" : "Follow";
+  }
+
+  function profileMuted(profile) {
+    const ctx = profile && profile.context;
+    if (!ctx || typeof ctx !== "object") return false;
+    return Boolean(ctx.muted);
+  }
+
+  function profileMuteLabel() {
+    if (profileState.mutePending) return profileState.muted ? "Unmuting…" : "Muting…";
+    return profileState.muted ? "Unmute" : "Mute";
+  }
+
+  function blockExplorerAccountUrl(name) {
+    const account = String(name || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    return BLOCK_EXPLORER + "@" + account;
+  }
+
+  function profileMoreMenuHtml(author) {
+    const items = [];
+    if (isOwnAuthor(author)) {
+      items.push(
+        `<a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(appHref("/settings/profile"))}">Edit</a>`
+      );
+    } else {
+      const disabled = profileState.mutePending || profileState.pending ? " disabled" : "";
+      items.push(
+        `<button type="button" class="profile-more-item profile-mute-btn" role="menuitem" data-author="${HiveMd.escapeHtml(author)}"${disabled}>${profileMuteLabel()}</button>`
+      );
+    }
+    items.push(
+      `<a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(author))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
+    );
+    return items.join("");
+  }
+
+  function profileMoreHtml(author) {
+    return `
+      <div class="profile-more">
+        <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
+        <div class="profile-more-menu" role="menu" hidden>
+          ${profileMoreMenuHtml(author)}
+        </div>
+      </div>`;
+  }
+
+  function closeProfileMore() {
+    const root = view.querySelector(".profile-more.is-open");
+    if (!root) return;
+    root.classList.remove("is-open");
+    const btn = root.querySelector(".profile-more-btn");
+    const menu = root.querySelector(".profile-more-menu");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (menu) menu.hidden = true;
+  }
+
+  function toggleProfileMore(btn) {
+    const root = btn && btn.closest(".profile-more");
+    if (!root) return;
+    const willOpen = !root.classList.contains("is-open");
+    closeProfileMore();
+    if (!willOpen) return;
+    const menu = root.querySelector(".profile-more-menu");
+    root.classList.add("is-open");
+    btn.setAttribute("aria-expanded", "true");
+    if (menu) menu.hidden = false;
   }
 
   function profilePageTitle(author, page) {
@@ -10436,18 +10510,24 @@ let CS77_FILTER_LOW_REP = 20;
     );
     const href = HiveMd.escapeHtml(profileHref(author, "posts"));
     const own = isOwnAuthor(author);
+    const followBusy = profileState.pending || profileState.mutePending;
     const followBtn = own
       ? ""
-      : `<div class="profile-head-actions">
-          <button type="button" class="btn-primary btn-compact profile-follow-btn" data-author="${HiveMd.escapeHtml(author)}" data-followed="${profileState.followed ? "1" : "0"}"${profileState.pending ? " disabled" : ""}>${profileFollowLabel()}</button>
-        </div>`;
+      : `<button type="button" class="btn-primary btn-compact profile-follow-btn" data-author="${HiveMd.escapeHtml(author)}" data-followed="${profileState.followed ? "1" : "0"}"${followBusy ? " disabled" : ""}>${profileFollowLabel()}</button>`;
+    const handle = `<p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>`;
+    const title = own
+      ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}</div>`
+      : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
+    const actions = own
+      ? ""
+      : `<div class="profile-head-actions">${followBtn}${profileMoreHtml(author)}</div>`;
     return `
       <div class="profile-banner">
         <div class="profile-head">
           <img class="avatar" src="${avatarSrc}" alt="">
           <div>
-            <h1>${HiveMd.escapeHtml(display)}</h1>
-            <p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>
+            ${title}
+            ${handle}
             ${about ? `<p class="profile-about">${HiveMd.escapeHtml(about)}</p>` : ""}
             ${profileDetailsHtml(profile)}
             <div class="profile-stats">
@@ -10457,7 +10537,7 @@ let CS77_FILTER_LOW_REP = 20;
               ${hp ? `<span class="profile-hp">${HiveMd.escapeHtml(hp)}</span>` : ""}
               ${profileJoinedHtml(profile && profile.created)}
             </div>
-            ${followBtn}
+            ${actions}
           </div>
         </div>
       </div>
@@ -10467,10 +10547,15 @@ let CS77_FILTER_LOW_REP = 20;
   function paintProfileChrome() {
     const btn = view.querySelector(".profile-follow-btn");
     if (btn) {
-      btn.disabled = profileState.pending;
+      btn.disabled = profileState.pending || profileState.mutePending;
       btn.textContent = profileFollowLabel();
       btn.setAttribute("data-followed", profileState.followed ? "1" : "0");
       btn.classList.toggle("is-joined", profileState.followed);
+    }
+    const muteBtn = view.querySelector(".profile-mute-btn");
+    if (muteBtn) {
+      muteBtn.disabled = profileState.mutePending || profileState.pending;
+      muteBtn.textContent = profileMuteLabel();
     }
     const profile = profileState.profile;
     const stats = profile && profile.stats;
@@ -10606,12 +10691,14 @@ let CS77_FILTER_LOW_REP = 20;
       .then(() => {
         if (profileState.author !== name) return;
         profileState.followed = follow;
+        if (follow) profileState.muted = false;
         if (profileState.profile) {
           if (!profileState.profile.stats) profileState.profile.stats = {};
           const n = Number(profileState.profile.stats.followers || 0);
           profileState.profile.stats.followers = Math.max(0, n + (follow ? 1 : -1));
           if (!profileState.profile.context) profileState.profile.context = {};
           profileState.profile.context.followed = follow;
+          if (follow) profileState.profile.context.muted = false;
         }
         paintProfileChrome();
       })
@@ -10622,6 +10709,74 @@ let CS77_FILTER_LOW_REP = 20;
       .finally(() => {
         if (profileState.author !== name) return;
         profileState.pending = false;
+        paintProfileChrome();
+      });
+  }
+
+  function toggleProfileMute() {
+    const user = observer();
+    const name = profileState.author;
+    if (!name || isOwnAuthor(name)) return;
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
+    if (profileState.pending || profileState.mutePending) return;
+    const mute = !profileState.muted;
+    const wasFollowed = profileState.followed;
+    profileState.mutePending = true;
+    paintProfileChrome();
+    const { promise } = ChainQueue.enqueue({
+      username: user,
+      key: "Posting",
+      operations: [
+        [
+          "custom_json",
+          {
+            required_auths: [],
+            required_posting_auths: [user],
+            id: "follow",
+            json: JSON.stringify([
+              "follow",
+              {
+                follower: user,
+                following: name,
+                what: mute ? ["ignore"] : [],
+              },
+            ]),
+          },
+        ],
+      ],
+      meta: { type: "follow", action: mute ? "mute" : "unmute", following: name },
+    });
+    promise
+      .then(() => {
+        if (profileState.author !== name) return;
+        profileState.muted = mute;
+        if (mute && wasFollowed) profileState.followed = false;
+        if (profileState.profile) {
+          if (!profileState.profile.context) profileState.profile.context = {};
+          profileState.profile.context.muted = mute;
+          if (mute && wasFollowed) {
+            profileState.profile.context.followed = false;
+            if (!profileState.profile.stats) profileState.profile.stats = {};
+            const n = Number(profileState.profile.stats.followers || 0);
+            profileState.profile.stats.followers = Math.max(0, n - 1);
+          }
+        }
+        paintProfileChrome();
+      })
+      .catch((err) => {
+        if (profileState.author !== name) return;
+        showError(err.message || String(err));
+      })
+      .finally(() => {
+        if (profileState.author !== name) return;
+        profileState.mutePending = false;
         paintProfileChrome();
       });
   }
@@ -11849,7 +12004,9 @@ let CS77_FILTER_LOW_REP = 20;
       profileState.page = tab;
       profileState.profile = profile;
       profileState.followed = profileFollowed(profile);
+      profileState.muted = profileMuted(profile);
       profileState.pending = false;
+      profileState.mutePending = false;
       profileState.claimPending = false;
       claimAnimToken += 1;
       profileState.wallet = null;
@@ -13985,7 +14142,23 @@ let CS77_FILTER_LOW_REP = 20;
     });
 
     document.addEventListener("click", (e) => {
+      const profileMoreEl = eventElement(e.target);
+      if (!profileMoreEl || !profileMoreEl.closest(".profile-more")) closeProfileMore();
       if (!inInteractiveSurface(e.target)) return;
+      const profileMoreBtn = e.target.closest(".profile-more-btn");
+      if (profileMoreBtn && inInteractiveSurface(profileMoreBtn)) {
+        e.preventDefault();
+        toggleProfileMore(profileMoreBtn);
+        return;
+      }
+      const profileMuteBtn = e.target.closest(".profile-mute-btn");
+      if (profileMuteBtn && inInteractiveSurface(profileMuteBtn)) {
+        e.preventDefault();
+        closeProfileMore();
+        toggleProfileMute();
+        return;
+      }
+      if (e.target.closest(".profile-more-item")) closeProfileMore();
       const removeTag = e.target.closest("[data-remove-tag]");
       if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
