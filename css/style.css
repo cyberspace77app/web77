@@ -3600,6 +3600,7 @@ a.tag:hover {
   background: transparent;
   color: #fff;
   font-family: var(--font-mono);
+  font-size: 0.77rem;
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
@@ -3629,6 +3630,7 @@ a.tag:hover {
   background: transparent;
   color: #fff;
   font-family: inherit;
+  font-size: 0.77rem;
   line-height: 1;
   letter-spacing: 0;
   cursor: pointer;
