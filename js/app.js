@@ -13302,7 +13302,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsCustom">Custom</label>
-          <p class="settings-note">Other settings stored in your profile. Expert mode (keep as is).</p>
+          <p class="settings-note">Other settings stored in your profile. Expert mode (keep as is recommended).</p>
           <textarea id="settingsCustom" class="settings-custom" name="custom" rows="12" spellcheck="false">${esc(fields.custom || "{}")}</textarea>
         </div>
         <div class="settings-actions">
