@@ -3299,8 +3299,6 @@ a.tag:hover {
 
 
 .comment-reply-btn,
-.comment-edit-btn,
-.post-edit-btn,
 .composer-cancel {
   appearance: none;
   background: transparent;
@@ -3318,9 +3316,6 @@ a.tag:hover {
 
 .comment-reply-btn:hover,
 .comment-reply-btn.is-open,
-.comment-edit-btn:hover,
-.comment-edit-btn.is-open,
-.post-edit-btn:hover,
 .composer-cancel:hover {
   color: var(--yellow);
   opacity: 1;
@@ -3615,7 +3610,45 @@ a.tag:hover {
   outline-offset: 2px;
 }
 
-.profile-more-menu {
+.content-more {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  z-index: 2;
+}
+
+.content-more-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-height: 2.45rem;
+  padding: 0.45rem 0.15rem;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-family: inherit;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.content-more-btn:hover,
+.content-more.is-open .content-more-btn {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.content-more-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.profile-more-menu,
+.content-more-menu {
   position: absolute;
   top: calc(100% + 0.35rem);
   left: 0;
@@ -3636,7 +3669,8 @@ a.tag:hover {
   z-index: 3;
 }
 
-.profile-more-item {
+.profile-more-item,
+.content-more-item {
   appearance: none;
   display: block;
   width: 100%;
@@ -3657,13 +3691,16 @@ a.tag:hover {
 }
 
 .profile-more-item:hover,
-.profile-more-item:focus-visible {
+.profile-more-item:focus-visible,
+.content-more-item:hover,
+.content-more-item:focus-visible {
   color: var(--yellow);
   background: rgba(227, 19, 55, 0.12);
   text-shadow: var(--glow-yellow);
 }
 
-.profile-more-item:disabled {
+.profile-more-item:disabled,
+.content-more-item:disabled {
   opacity: 0.65;
   cursor: wait;
 }
@@ -5394,10 +5431,13 @@ body:has(#publishOverlay:not([hidden])) {
   .card-stats > .comment-count-link,
   .card-stats > .reblog-wrap,
   .card-stats > .payout,
+  .card-stats > .content-more,
   .post-stats-bar > .vote-wrap,
   .post-stats-bar > .comment-count-link,
   .post-stats-bar > .reblog-wrap,
-  .post-stats-bar > .payout {
+  .post-stats-bar > .payout,
+  .post-stats-bar > .content-more,
+  .comment-actions > .content-more {
     flex-shrink: 0;
   }
 

@@ -1149,10 +1149,28 @@ let CS77_FILTER_LOW_REP = 20;
     return contentByKey.get(postKey(author, permlink)) || null;
   }
 
-  function editButtonHtml(kind, author, permlink) {
-    if (!isOwnAuthor(author)) return "";
-    const cls = kind === "post" ? "post-edit-btn" : "comment-edit-btn";
-    return `<button type="button" class="${cls}" data-edit-author="${HiveMd.escapeHtml(author)}" data-edit-permlink="${HiveMd.escapeHtml(permlink)}">Edit</button>`;
+  function contentMoreHtml(author, permlink, kind) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    if (!name || !link) return "";
+    const safeKind = kind === "comment" || kind === "post" ? kind : "card";
+    const items = [];
+    if (isOwnAuthor(name)) {
+      items.push(
+        `<button type="button" class="content-more-item content-more-edit" role="menuitem">Edit</button>`
+      );
+    }
+    items.push(
+      `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
+      `<a class="content-more-item content-more-explorer" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerContentUrl(name, link))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
+    );
+    return `
+      <div class="content-more" data-author="${HiveMd.escapeHtml(name)}" data-permlink="${HiveMd.escapeHtml(link)}" data-content-kind="${safeKind}">
+        <button type="button" class="content-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
+        <div class="content-more-menu" role="menu" hidden>
+          ${items.join("")}
+        </div>
+      </div>`;
   }
 
   function findUserVote(votes, user) {
@@ -1521,6 +1539,13 @@ let CS77_FILTER_LOW_REP = 20;
       ) {
         return;
       }
+      const contentMoreMenu = document.querySelector("body > .content-more-menu");
+      if (
+        contentMoreMenu &&
+        (t === contentMoreMenu || (t && t.nodeType === 1 && contentMoreMenu.contains(t)))
+      ) {
+        return;
+      }
     }
     if (openSlider && !openSlider.panel.hidden) {
       placeVoteSlider(openSlider.btn, openSlider.panel);
@@ -1546,6 +1571,17 @@ let CS77_FILTER_LOW_REP = 20;
       placeProfileMore(profileMoreRoot.querySelector(".profile-more-btn"), profileMoreMenu);
     } else if (profileMoreMenu) {
       closeProfileMore();
+    }
+    const contentMoreRoot = document.querySelector(".content-more.is-open");
+    const contentMoreMenu = document.querySelector("body > .content-more-menu");
+    if (contentMoreRoot && contentMoreMenu && !contentMoreMenu.hidden) {
+      placeAnchoredMenu(
+        contentMoreRoot.querySelector(".content-more-btn"),
+        contentMoreMenu,
+        closeContentMore
+      );
+    } else if (contentMoreMenu) {
+      closeContentMore();
     }
   }
 
@@ -5196,6 +5232,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     setSessionMenuOpen(false);
     closeProfileMore();
+    closeContentMore();
     const account = $("#sessionAccount");
     if (account && document.activeElement && account.contains(document.activeElement)) {
       document.activeElement.blur();
@@ -7122,9 +7159,10 @@ let CS77_FILTER_LOW_REP = 20;
     else setPageMeta(`${title || "Post"} — CyberSpace77`);
   }
 
-  function openPostEditor() {
-    const post = currentPost;
-    if (!post) return;
+  let contentEditToken = 0;
+
+  function openEditorForPost(post) {
+    if (!post || !post.author || !post.permlink) return;
     const user = observer();
     if (!user) {
       openLogin();
@@ -7165,6 +7203,119 @@ let CS77_FILTER_LOW_REP = 20;
     pendingPublish = false;
     ov.hidden = false;
     focusPublishField();
+  }
+
+  function openPostEditor() {
+    openEditorForPost(currentPost);
+  }
+
+  function postRecordForEdit(author, permlink) {
+    if (currentPost && samePostId(currentPost, author, permlink) && currentPost.body != null) {
+      return currentPost;
+    }
+    const loaded = findLoadedPost(author, permlink);
+    if (loaded) {
+      const shown = cardDisplayPost(loaded);
+      if (shown && samePostId(shown, author, permlink) && shown.body != null) return shown;
+      if (samePostId(loaded, author, permlink) && loaded.body != null) return loaded;
+    }
+    const remembered = contentOf(author, permlink);
+    if (remembered && remembered.body != null) return remembered;
+    return null;
+  }
+
+  function editContentFromMore(root) {
+    const author = (root && root.getAttribute("data-author")) || "";
+    const permlink = (root && root.getAttribute("data-permlink")) || "";
+    const kind = (root && root.getAttribute("data-content-kind")) || "";
+    if (!author || !permlink || !isOwnAuthor(author)) return;
+    if (kind === "comment") {
+      const comment = findCommentEl(author, permlink);
+      if (comment) toggleCommentEditor(comment);
+      return;
+    }
+    const ready = postRecordForEdit(author, permlink);
+    if (ready) {
+      contentEditToken += 1;
+      openEditorForPost(ready);
+      return;
+    }
+    const token = ++contentEditToken;
+    HiveApi.getPost(author, permlink)
+      .then((post) => {
+        if (token !== contentEditToken) return;
+        if (!post) {
+          showError("Couldn't open this post for editing.");
+          return;
+        }
+        openEditorForPost(post);
+      })
+      .catch((err) => {
+        if (token !== contentEditToken) return;
+        showError(err.message || String(err));
+      });
+  }
+
+  function contentPageUrl(author, permlink) {
+    try {
+      return new URL(postPath({ author: author, permlink: permlink }), location.href).href;
+    } catch {
+      return postPath({ author: author, permlink: permlink });
+    }
+  }
+
+  function contentShareUrl(author, permlink, kind) {
+    if (kind === "comment") {
+      const id = commentAnchorId(author, permlink);
+      if (HASH_ROUTING) {
+        try {
+          return new URL("#" + id, location.href).href;
+        } catch {
+          return "#" + id;
+        }
+      }
+      if (currentPost && currentPost.author && currentPost.permlink) {
+        return contentPageUrl(currentPost.author, currentPost.permlink) + "#" + id;
+      }
+    }
+    return contentPageUrl(author, permlink);
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (err) {
+        area.remove();
+        reject(err);
+        return;
+      }
+      area.remove();
+      if (ok) resolve();
+      else reject(new Error("Couldn't copy the link."));
+    });
+  }
+
+  function copyContentLink(root) {
+    const author = (root && root.getAttribute("data-author")) || "";
+    const permlink = (root && root.getAttribute("data-permlink")) || "";
+    const kind = (root && root.getAttribute("data-content-kind")) || "";
+    if (!author || !permlink) return;
+    const url = contentShareUrl(author, permlink, kind);
+    copyToClipboard(url).catch((err) => {
+      showError((err && err.message) || "Couldn't copy the link.");
+    });
   }
 
   /* ─── Feed ─── */
@@ -7695,6 +7846,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(shown.children, postPath(shown))}
           ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
+          ${contentMoreHtml(shown.author, shown.permlink, "card")}
         </div>
       </article>
     `;
@@ -8517,7 +8669,6 @@ let CS77_FILTER_LOW_REP = 20;
     const replyBtn = user
       ? `<button type="button" class="comment-reply-btn" data-reply-author="${author}" data-reply-permlink="${permlink}">Reply</button>`
       : "";
-    const editBtn = editButtonHtml("comment", node.author, node.permlink);
     return `
       <article class="comment" data-author="${author}" data-permlink="${permlink}" data-parent-author="${parentAuthor}" data-parent-permlink="${parentPermlink}" id="@${author}/${permlink}">
         ${head}
@@ -8525,8 +8676,8 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="comment-actions">
           ${voteControlHtml(node, "pills")}
           ${payoutHtml(node, true)}
-          ${editBtn}
           ${replyBtn}
+          ${contentMoreHtml(node.author, node.permlink, "comment")}
         </div>
         ${user ? `<div class="comment-reply-slot" hidden></div>` : ""}
         ${replies ? `<div class="comment-replies">${replies}</div>` : ""}
@@ -8664,12 +8815,9 @@ let CS77_FILTER_LOW_REP = 20;
     const bodyEl = comment.querySelector(":scope > .comment-body");
     if (bodyEl) bodyEl.hidden = false;
     comment.classList.remove("is-editing");
-    const btn = comment.querySelector(":scope > .comment-actions .comment-edit-btn");
-    if (btn) btn.classList.remove("is-open");
   }
 
-  function toggleCommentEditor(btn) {
-    const comment = btn.closest(".comment");
+  function toggleCommentEditor(comment) {
     if (!comment) return;
     const author = comment.getAttribute("data-author");
     const permlink = comment.getAttribute("data-permlink");
@@ -8710,7 +8858,6 @@ let CS77_FILTER_LOW_REP = 20;
     });
     slot.hidden = false;
     comment.classList.add("is-editing");
-    btn.classList.add("is-open");
     const ta = slot.querySelector("textarea");
     if (ta) ta.focus();
   }
@@ -9502,7 +9649,6 @@ let CS77_FILTER_LOW_REP = 20;
           submitLabel: "Comment",
         })
       : "";
-    const postEdit = editButtonHtml("post", root.author, root.permlink);
     const commentsBody =
       options.commentsHtml != null ? options.commentsHtml : commentsPendingHtml();
     return `
@@ -9526,7 +9672,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(commentCount, "#comments")}
           ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
-          ${postEdit}
+          ${contentMoreHtml(root.author, root.permlink, "post")}
         </div>
         <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
           ${composer}
@@ -9678,6 +9824,8 @@ let CS77_FILTER_LOW_REP = 20;
   function fillCommentList(html) {
     const section = document.getElementById("comments");
     if (!section || !postLayer.open) return;
+    const openMore = document.querySelector(".content-more.is-open");
+    if (openMore && section.contains(openMore)) closeContentMore();
     const list = section.querySelector(".comment-list");
     if (list) list.innerHTML = html;
   }
@@ -10374,6 +10522,15 @@ let CS77_FILTER_LOW_REP = 20;
     return BLOCK_EXPLORER + "@" + account;
   }
 
+  function blockExplorerContentUrl(author, permlink) {
+    const name = String(author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    const link = String(permlink || "").trim();
+    return BLOCK_EXPLORER + "@" + name + "/" + link;
+  }
+
   function profileMoreMenuHtml(author) {
     const items = [];
     if (isOwnAuthor(author)) {
@@ -10402,7 +10559,7 @@ let CS77_FILTER_LOW_REP = 20;
       </div>`;
   }
 
-  function clearProfileMoreStyle(menu) {
+  function clearAnchoredMenuStyle(menu) {
     menu.style.position = "";
     menu.style.top = "";
     menu.style.left = "";
@@ -10427,20 +10584,20 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!menu) return;
     menu.hidden = true;
-    clearProfileMoreStyle(menu);
+    clearAnchoredMenuStyle(menu);
     if (root && menu.parentNode !== root) root.appendChild(menu);
     else if (!root && menu.parentNode === document.body) menu.remove();
   }
 
-  function placeProfileMore(anchor, menu) {
+  function placeAnchoredMenu(anchor, menu, closeMenu) {
     if (!anchor || !menu || menu.hidden) return;
     if (!anchor.isConnected) {
-      closeProfileMore();
+      closeMenu();
       return;
     }
     const rect = anchor.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
-      closeProfileMore();
+      closeMenu();
       return;
     }
     const scrollTop = menu.scrollTop;
@@ -10479,11 +10636,49 @@ let CS77_FILTER_LOW_REP = 20;
     if (menu.scrollTop !== scrollTop) menu.scrollTop = scrollTop;
   }
 
+  function placeProfileMore(anchor, menu) {
+    placeAnchoredMenu(anchor, menu, closeProfileMore);
+  }
+
+  function closeContentMore() {
+    const root = document.querySelector(".content-more.is-open");
+    const menu =
+      document.querySelector("body > .content-more-menu") ||
+      (root && root.querySelector(".content-more-menu"));
+    if (root) {
+      root.classList.remove("is-open");
+      const btn = root.querySelector(".content-more-btn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+    if (!menu) return;
+    menu.hidden = true;
+    clearAnchoredMenuStyle(menu);
+    if (root && menu.parentNode !== root) root.appendChild(menu);
+    else if (!root && menu.parentNode === document.body) menu.remove();
+  }
+
+  function toggleContentMore(btn) {
+    const root = btn && btn.closest(".content-more");
+    if (!root) return;
+    const willOpen = !root.classList.contains("is-open");
+    closeContentMore();
+    closeProfileMore();
+    if (!willOpen) return;
+    const menu = root.querySelector(".content-more-menu");
+    if (!menu) return;
+    root.classList.add("is-open");
+    btn.setAttribute("aria-expanded", "true");
+    document.body.appendChild(menu);
+    menu.hidden = false;
+    placeAnchoredMenu(btn, menu, closeContentMore);
+  }
+
   function toggleProfileMore(btn) {
     const root = btn && btn.closest(".profile-more");
     if (!root) return;
     const willOpen = !root.classList.contains("is-open");
     closeProfileMore();
+    closeContentMore();
     if (!willOpen) return;
     const menu = root.querySelector(".profile-more-menu");
     if (!menu) return;
@@ -13544,6 +13739,7 @@ let CS77_FILTER_LOW_REP = 20;
     const pushed = routePushed;
     routeFromPop = false;
     routePushed = false;
+    contentEditToken += 1;
     if (fromPop) syncProfileReturnFromHistory();
     parkedForProfile = false;
     const fromProfileNav = profileNavSwitch;
@@ -13551,6 +13747,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeLogoMenu();
     hideVoteSlider();
     closeProfileMore();
+    closeContentMore();
     clearError();
     quietSmartHeader();
     const r = parseRoute();
@@ -14249,6 +14446,35 @@ let CS77_FILTER_LOW_REP = 20;
         if (profileMoreEl.closest(".profile-more-item")) closeProfileMore();
         return;
       }
+      const inContentMoreMenu = Boolean(
+        profileMoreEl && profileMoreEl.closest(".content-more-menu")
+      );
+      const inContentMore = Boolean(
+        profileMoreEl && (profileMoreEl.closest(".content-more") || inContentMoreMenu)
+      );
+      if (!inContentMore) closeContentMore();
+      if (inContentMoreMenu) {
+        const editItem = profileMoreEl.closest(".content-more-edit");
+        const copyItem = profileMoreEl.closest(".content-more-copy");
+        if (editItem || copyItem) {
+          e.preventDefault();
+          const root = document.querySelector(".content-more.is-open");
+          closeContentMore();
+          if (root && editItem) editContentFromMore(root);
+          else if (root) copyContentLink(root);
+          return;
+        }
+        if (profileMoreEl.closest(".content-more-item")) closeContentMore();
+        return;
+      }
+      if (inContentMore) {
+        const contentMoreBtn = profileMoreEl.closest(".content-more-btn");
+        if (contentMoreBtn) {
+          e.preventDefault();
+          toggleContentMore(contentMoreBtn);
+        }
+        return;
+      }
       if (!inInteractiveSurface(e.target)) return;
       const profileMoreBtn = e.target.closest(".profile-more-btn");
       if (profileMoreBtn && inInteractiveSurface(profileMoreBtn)) {
@@ -14317,18 +14543,6 @@ let CS77_FILTER_LOW_REP = 20;
       if (showMuted && inInteractiveSurface(showMuted)) {
         e.preventDefault();
         revealMuted(showMuted);
-        return;
-      }
-      const postEditBtn = e.target.closest(".post-edit-btn");
-      if (postEditBtn && inInteractiveSurface(postEditBtn)) {
-        e.preventDefault();
-        openPostEditor();
-        return;
-      }
-      const editBtn = e.target.closest(".comment-edit-btn");
-      if (editBtn && inInteractiveSurface(editBtn)) {
-        e.preventDefault();
-        toggleCommentEditor(editBtn);
         return;
       }
       const cancelBtn = e.target.closest(".composer-cancel");
