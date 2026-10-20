@@ -8572,7 +8572,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function renderTagsPage() {
     setPageMeta("Spaces — CyberSpace77");
     view.innerHTML = `
-      <section class="settings-page tags-page">
+      <section class="cs77-page tags-page">
         <h2 class="page-title">Spaces</h2>
         <h2 class="tags-page-title">Favorite tags</h2>
         <p class="feed-hint">Saved in this browser.</p>
@@ -8939,7 +8939,7 @@ let CS77_FILTER_LOW_REP = 20;
     const browseHref = HiveMd.escapeHtml(appHref(pathForSubspaces("browse")));
     const newestHref = HiveMd.escapeHtml(appHref(pathForSubspaces("newest")));
     return `
-      <section class="settings-page communities-page">
+      <section class="cs77-page communities-page">
         <h2 class="page-title">Subspaces</h2>
         <nav class="feed-nav subpage-nav" aria-label="Subspaces">
           <a href="${searchHref}" class="${page === "search" ? "is-active" : ""}">Search</a>
@@ -9393,7 +9393,7 @@ let CS77_FILTER_LOW_REP = 20;
     const subspacesHref = HiveMd.escapeHtml(appHref(pathForSearch("subspaces")));
     const value = HiveMd.escapeHtml(searchBox);
     return `
-      <section class="settings-page">
+      <section class="cs77-page">
         <h2 class="page-title">Search</h2>
         <nav class="feed-nav subpage-nav" aria-label="Search">
           <a href="${usersHref}" class="${page === "users" ? "is-active" : ""}">Users</a>
@@ -13750,7 +13750,7 @@ let CS77_FILTER_LOW_REP = 20;
     const profileHref = HiveMd.escapeHtml(appHref(pathForSettings("profile")));
     const nodesHref = HiveMd.escapeHtml(appHref(pathForSettings("nodes")));
     return `
-      <section class="settings-page">
+      <section class="cs77-page settings-page">
         <h2 class="page-title">Settings</h2>
         <nav class="feed-nav subpage-nav" aria-label="Settings">
           <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
