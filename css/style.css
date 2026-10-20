@@ -5437,6 +5437,7 @@ body:has(#publishOverlay:not([hidden])) {
   .post-stats-bar > .reblog-wrap,
   .post-stats-bar > .payout,
   .post-stats-bar > .content-more,
+  .article-stats > .content-more,
   .comment-actions > .content-more {
     flex-shrink: 0;
   }

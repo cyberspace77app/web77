@@ -9663,6 +9663,7 @@ let CS77_FILTER_LOW_REP = 20;
             ${voteControlHtml(root, "plain")}
             ${commentCountHtml(commentCount, "#comments")}
             ${payoutHtml(root, false)}
+            ${contentMoreHtml(root.author, root.permlink, "post")}
           </div>
         </div>
         ${articleTagsHtml(root)}
