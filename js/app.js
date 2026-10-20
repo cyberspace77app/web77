@@ -7527,9 +7527,11 @@ let CS77_FILTER_LOW_REP = 20;
     const share = shareLineHtml(post);
     const authorAttr = HiveMd.escapeHtml(shown.author);
     const permlinkAttr = HiveMd.escapeHtml(shown.permlink);
-    const community = communityLabelHtml(shown);
     const rep = Math.floor(HiveMd.displayReputation(shown.author_reputation));
     const muted = isMutedHidden(shown);
+    // Collapsed muted cards keep the author and time. The community pill and
+    // the first-tag pill stay off until the post is revealed.
+    const community = muted ? "" : communityLabelHtml(shown);
     const meta = `
         <div class="card-meta">
           ${authorLinkHtml(shown.author, "small", muted ? { avatar: false } : null)}
