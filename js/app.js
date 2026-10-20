@@ -91,10 +91,13 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsNodeBusy = false;
   let currentViewKey = "";
   const searchPages = {
-    users: { query: "", looked: false, loading: false, error: "", results: [] },
-    spaces: { query: "", looked: false, loading: false, error: "", results: [] },
-    subspaces: { query: "", looked: false, loading: false, error: "", results: [] },
+    users: { query: "", looked: false, loading: false, loadingMore: false, error: "", results: [], done: false, cursor: "" },
+    spaces: { query: "", looked: false, loading: false, loadingMore: false, error: "", results: [], done: false, cursor: "" },
+    subspaces: { query: "", looked: false, loading: false, loadingMore: false, error: "", results: [], done: false, cursor: "" },
   };
+  const SEARCH_USER_LIMIT = 100;
+  const SEARCH_TAG_LIMIT = 100;
+  const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
   let searchBox = "";
   let trendingTagNamesCache = null;
@@ -9254,6 +9257,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!state.results.length) {
       list.className = "community-list";
+      if (!state.done) {
+        list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+        return;
+      }
       const empty =
         page === "users"
           ? "No users matched that search."
@@ -9276,17 +9283,144 @@ let CS77_FILTER_LOW_REP = 20;
     list.innerHTML = state.results.map((row) => communityDirRowHtml(row, "toggle")).join("");
   }
 
-  async function searchUsersByQuery(raw) {
-    const q = String(raw || "")
+  function resetSearchPageState(state) {
+    state.query = "";
+    state.looked = false;
+    state.loading = false;
+    state.loadingMore = false;
+    state.error = "";
+    state.results = [];
+    state.done = false;
+    state.cursor = "";
+  }
+
+  function searchResultHtml(page, item) {
+    if (page === "spaces") return searchTagChipHtml(item);
+    if (page === "users") return searchUserRowHtml(item);
+    return communityDirRowHtml(item, "toggle");
+  }
+
+  function appendSearchResults(page, items) {
+    const list = $("#searchResults");
+    if (!list || !items || !items.length) return;
+    list.className = page === "spaces" ? "tags-fav-list" : "community-list";
+    const html = items.map((item) => searchResultHtml(page, item)).join("");
+    const hasRows = list.querySelector(".community-row, .fav-tag-chip");
+    if (!hasRows) list.innerHTML = html;
+    else list.insertAdjacentHTML("beforeend", html);
+  }
+
+  function setSearchMore(on) {
+    const more = $("#searchMore");
+    if (!more) return;
+    if (!on) {
+      more.hidden = true;
+      more.innerHTML = "";
+      return;
+    }
+    more.hidden = false;
+    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Searching…`;
+  }
+
+  function searchListNearEnd() {
+    const list = $("#searchResults");
+    if (!list) return false;
+    const rect = list.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
+  }
+
+  async function fetchUserSearchPage(query, cursor) {
+    const q = String(query || "")
       .trim()
       .replace(/^@/, "")
       .toLowerCase();
-    if (!/^[a-z0-9.\-]{1,16}$/.test(q)) return [];
-    const names = await HiveApi.lookupAccounts(q, 20);
-    return names
-      .map((name) => String(name || "").toLowerCase())
-      .filter((name, i, arr) => name.startsWith(q) && normalizeUserName(name) && arr.indexOf(name) === i)
-      .slice(0, 20);
+    if (!/^[a-z0-9.\-]{1,16}$/.test(q)) return { items: [], done: true, cursor: "" };
+    const names = await HiveApi.lookupAccounts(cursor || q, SEARCH_USER_LIMIT);
+    const items = [];
+    let lastSeen = cursor || "";
+    let passedPrefix = false;
+    for (let i = 0; i < names.length; i++) {
+      const name = String(names[i] || "").toLowerCase();
+      if (!name) continue;
+      lastSeen = name;
+      if (cursor && name === cursor) continue;
+      if (!name.startsWith(q)) {
+        passedPrefix = true;
+        break;
+      }
+      if (!normalizeUserName(name)) continue;
+      items.push(name);
+    }
+    return {
+      items,
+      done: passedPrefix || names.length < SEARCH_USER_LIMIT,
+      cursor: lastSeen,
+    };
+  }
+
+  async function fetchSpaceSearchPage(query, cursor, existing) {
+    const key = normalizeTag(query);
+    const typed = key && key.length >= 2 && normalizeRouteTag(key) ? normalizeRouteTag(key) : "";
+    if (!key || key.length < 2) return { items: [], done: true, cursor: "" };
+    const rows = await HiveApi.getTrendingTags(cursor || "", SEARCH_TAG_LIMIT);
+    const seen = new Set(existing || []);
+    const prefix = [];
+    const contains = [];
+    rows.forEach((row) => {
+      const name = normalizeRouteTag(row && row.name);
+      if (!name || name.length < 2 || seen.has(name) || isCommunityName(name) || name === typed) return;
+      if (name.startsWith(key)) prefix.push(name);
+      else if (name.indexOf(key) !== -1) contains.push(name);
+    });
+    const items = [];
+    if (!cursor && typed && !seen.has(typed)) items.push(typed);
+    prefix.concat(contains).forEach((name) => items.push(name));
+    const next = rows.length ? String(rows[rows.length - 1].name || "") : cursor || "";
+    return {
+      items,
+      done: rows.length < SEARCH_TAG_LIMIT || !next || next === cursor,
+      cursor: next,
+    };
+  }
+
+  async function fetchSubspaceSearchPage(query, cursor) {
+    const q = String(query || "").trim();
+    if (!q) return { items: [], done: true, cursor: "" };
+    const id = communityIdFromInput(q);
+    if (id) {
+      if (cursor) return { items: [], done: true, cursor };
+      const info = await lookupCommunityById(id, observer());
+      return { items: info ? mergeCommunityResults([info]) : [], done: true, cursor: id };
+    }
+    const list = await HiveApi.listCommunities({
+      query: q,
+      limit: SEARCH_COMMUNITY_LIMIT,
+      last: cursor || "",
+      observer: observer(),
+    });
+    const items = mergeCommunityResults(list);
+    const next = items.length ? items[items.length - 1].name : cursor || "";
+    return {
+      items,
+      done: list.length < SEARCH_COMMUNITY_LIMIT || !next || next === cursor,
+      cursor: next,
+    };
+  }
+
+  function takeNewSearchItems(page, existing, items) {
+    const seen = new Set();
+    existing.forEach((item) => {
+      seen.add(page === "subspaces" ? item.name : item);
+    });
+    const out = [];
+    items.forEach((item) => {
+      const key = page === "subspaces" ? item && item.name : item;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(item);
+    });
+    return out;
   }
 
   async function loadTrendingTagNames() {
@@ -9307,32 +9441,65 @@ let CS77_FILTER_LOW_REP = 20;
     return names;
   }
 
-  async function searchSpacesByQuery(raw) {
-    const key = normalizeTag(raw);
-    const typed = key && key.length >= 2 && normalizeRouteTag(key) ? normalizeRouteTag(key) : "";
-    let names = [];
-    let error = "";
+  function maybeLoadMoreSearch() {
+    const page = searchPageName();
+    if (!page) return;
+    const state = searchPages[page];
+    if (!state.looked || state.loading || state.loadingMore || state.done) return;
+    if (!$("#searchResults")) return;
+    if (searchListNearEnd()) fillSearchPage(page, searchGen, false);
+  }
+
+  async function fillSearchPage(page, gen, first) {
+    const state = searchPages[page];
+    if (!state || gen !== searchGen) return;
+    if (state.done || state.loadingMore) return;
+    if (!first && state.loading) return;
+    if (first) state.loading = true;
+    else state.loadingMore = true;
+    if (!first) setSearchMore(true);
     try {
-      names = await loadTrendingTagNames();
+      let added = [];
+      let loops = 0;
+      const maxLoops = page === "spaces" ? 4 : 1;
+      while (loops < maxLoops && !state.done) {
+        loops += 1;
+        const seen = state.results.concat(added);
+        const batch =
+          page === "users"
+            ? await fetchUserSearchPage(state.query, state.cursor)
+            : page === "spaces"
+              ? await fetchSpaceSearchPage(state.query, state.cursor, seen)
+              : await fetchSubspaceSearchPage(state.query, state.cursor);
+        if (gen !== searchGen) return;
+        state.cursor = batch.cursor || "";
+        state.done = Boolean(batch.done);
+        const fresh = takeNewSearchItems(page, seen, batch.items || []);
+        if (!fresh.length && page !== "spaces") state.done = true;
+        added = added.concat(fresh);
+        if (added.length || state.done || page !== "spaces") break;
+      }
+      if (gen !== searchGen) return;
+      const hadRows = state.results.length > 0;
+      if (added.length) state.results = state.results.concat(added);
+      state.error = "";
+      state.loading = false;
+      state.loadingMore = false;
+      setSearchMore(false);
+      if (searchPageName() !== page) return;
+      if (!hadRows || !added.length) paintSearchResults();
+      else appendSearchResults(page, added);
+      maybeLoadMoreSearch();
     } catch (err) {
-      error = err.message || String(err);
+      if (gen !== searchGen) return;
+      state.loading = false;
+      state.loadingMore = false;
+      state.done = true;
+      setSearchMore(false);
+      if (!state.results.length) state.error = err.message || String(err);
+      else setSearchStatus(err.message || String(err), true);
+      if (searchPageName() === page) paintSearchResults();
     }
-    const out = [];
-    if (typed) out.push(typed);
-    if (key && key.length >= 2) {
-      const prefix = [];
-      const contains = [];
-      names.forEach((name) => {
-        if (name === typed) return;
-        if (name.startsWith(key)) prefix.push(name);
-        else if (name.indexOf(key) !== -1) contains.push(name);
-      });
-      prefix.concat(contains).forEach((name) => {
-        if (out.length >= SUGGESTED_TAGS_SHOW) return;
-        out.push(name);
-      });
-    }
-    return { tags: out, error: out.length ? "" : error };
   }
 
   async function runSearch() {
@@ -9342,48 +9509,25 @@ let CS77_FILTER_LOW_REP = 20;
     searchBox = input.value;
     const raw = String(input.value || "").trim();
     const state = searchPages[page];
+    searchGen += 1;
+    const gen = searchGen;
     if (!raw) {
       searchBox = "";
       input.value = "";
-      state.query = "";
-      state.looked = false;
-      state.loading = false;
-      state.error = "";
-      state.results = [];
+      resetSearchPageState(state);
       setSearchStatus("");
+      setSearchMore(false);
       paintSearchResults();
       return;
     }
-    searchGen += 1;
-    const gen = searchGen;
+    resetSearchPageState(state);
     state.query = raw;
     state.looked = true;
     state.loading = true;
-    state.error = "";
-    state.results = [];
     setSearchStatus("");
+    setSearchMore(false);
     paintSearchResults();
-    try {
-      let results = [];
-      let error = "";
-      if (page === "users") results = await searchUsersByQuery(raw);
-      else if (page === "spaces") {
-        const found = await searchSpacesByQuery(raw);
-        results = found.tags;
-        error = found.error;
-      } else results = await searchCommunitiesByQuery(raw);
-      if (gen !== searchGen) return;
-      state.results = results;
-      state.error = error;
-      state.loading = false;
-      if (searchPageName() === page) paintSearchResults();
-    } catch (err) {
-      if (gen !== searchGen) return;
-      state.results = [];
-      state.error = err.message || String(err);
-      state.loading = false;
-      if (searchPageName() === page) paintSearchResults();
-    }
+    await fillSearchPage(page, gen, true);
   }
 
   function searchShellHtml(tab) {
@@ -9405,6 +9549,7 @@ let CS77_FILTER_LOW_REP = 20;
         </form>
         <p class="tags-status" id="searchStatus" hidden></p>
         <div id="searchResults"></div>
+        <div id="searchMore" class="loading-row" hidden></div>
       </section>
     `;
   }
@@ -9413,6 +9558,7 @@ let CS77_FILTER_LOW_REP = 20;
     setPageMeta("Search — CyberSpace77");
     view.innerHTML = searchShellHtml(page);
     paintSearchResults();
+    maybeLoadMoreSearch();
     const input = $("#searchInput");
     if (input && !isMobileViewport()) {
       input.focus();
@@ -15421,6 +15567,8 @@ let CS77_FILTER_LOW_REP = 20;
     bindScrollTop();
     window.addEventListener("scroll", maybeLoadMoreBrowse, { passive: true });
     window.addEventListener("resize", maybeLoadMoreBrowse);
+    window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");
