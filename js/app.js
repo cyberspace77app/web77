@@ -38,6 +38,8 @@ let CS77_FILTER_LOW_REP = 20;
   const MAX_BENEFICIARIES = 8;
   const FAVORITE_TAGS_KEY = "cs77_favorite_tags";
   const MAX_FAVORITE_TAGS = 40;
+  const FAVORITE_USERS_KEY = "cs77_favorite_users";
+  const MAX_FAVORITE_USERS = 40;
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
@@ -46,6 +48,7 @@ let CS77_FILTER_LOW_REP = 20;
   const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
   const AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
+  const TRENDING_TAGS_MS = 5 * 60 * 1000;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
   const LOGO_FAVORITES_SHOW = 10;
@@ -85,6 +88,15 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsNodeToken = 0;
   let settingsNodeBusy = false;
   let currentViewKey = "";
+  const searchPages = {
+    users: { query: "", looked: false, loading: false, error: "", results: [] },
+    spaces: { query: "", looked: false, loading: false, error: "", results: [] },
+    subspaces: { query: "", looked: false, loading: false, error: "", results: [] },
+  };
+  let searchGen = 0;
+  let searchBox = "";
+  let trendingTagNamesCache = null;
+  let trendingTagNamesAt = 0;
   // History entry id for the feed currently mounted in #view. A profile opened
   // from that feed parks the list under this id and Back mounts it again.
   let liveFeedNav = 0;
@@ -3469,6 +3481,23 @@ let CS77_FILTER_LOW_REP = 20;
     return "/settings";
   }
 
+  function normalizeSearchPage(raw) {
+    const page = String(raw || "")
+      .trim()
+      .toLowerCase();
+    if (!page || page === "users") return "users";
+    if (page === "spaces") return "spaces";
+    if (page === "subspaces") return "subspaces";
+    return "";
+  }
+
+  function pathForSearch(page) {
+    const p = normalizeSearchPage(page) || "users";
+    if (p === "spaces") return "/search/spaces";
+    if (p === "subspaces") return "/search/subspaces";
+    return "/search";
+  }
+
   function sessionProfilePath(href) {
     const raw =
       typeof href === "string" ? href : href && href.getAttribute ? href.getAttribute("href") : "";
@@ -3594,6 +3623,14 @@ let CS77_FILTER_LOW_REP = 20;
       }
       return { name: "notfound" };
     }
+    if (first === "search") {
+      if (parts.length === 1) return { name: "search", page: "users" };
+      if (parts.length === 2) {
+        const page = normalizeSearchPage(parts[1]);
+        if (page) return { name: "search", page };
+      }
+      return { name: "notfound" };
+    }
 
     if (first === "c" && parts.length >= 2) {
       const community = normalizeCommunityName(parts[1]);
@@ -3677,6 +3714,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "profile") return "profile:" + r.author + ":" + (r.page || "posts");
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
     if (r.name === "settings") return "settings:" + (r.page || "general");
+    if (r.name === "search") return "search:" + (r.page || "users");
     return r.name || "";
   }
 
@@ -3687,6 +3725,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (key === "imprint") return "/imprint";
     if (key === "settings" || key.indexOf("settings:") === 0) {
       return pathForSettings(key.indexOf("settings:") === 0 ? key.slice(9) : "general");
+    }
+    if (key === "search" || key.indexOf("search:") === 0) {
+      return pathForSearch(key.indexOf("search:") === 0 ? key.slice(7) : "users");
     }
     if (key === "tags") return "/spaces";
     if (key === "communities") return "/subspaces";
@@ -3851,6 +3892,44 @@ let CS77_FILTER_LOW_REP = 20;
     } catch {
       /* ignore quota / private mode */
     }
+  }
+
+  function normalizeUserName(raw) {
+    const name = String(raw || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) return "";
+    return name;
+  }
+
+  function readFavoriteUsers() {
+    try {
+      const raw = localStorage.getItem(FAVORITE_USERS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((name) => normalizeUserName(name))
+        .filter((name, i, arr) => name && arr.indexOf(name) === i)
+        .slice(0, MAX_FAVORITE_USERS);
+    } catch {
+      return [];
+    }
+  }
+
+  function storeFavoriteUsers(users) {
+    try {
+      localStorage.setItem(FAVORITE_USERS_KEY, JSON.stringify(users));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function isFavoriteUser(name) {
+    const id = normalizeUserName(name);
+    if (!id) return false;
+    return readFavoriteUsers().indexOf(id) !== -1;
   }
 
   function isFavoriteCommunity(name) {
@@ -5001,20 +5080,38 @@ let CS77_FILTER_LOW_REP = 20;
     const about = $("#logoAboutLink");
     const welcome = $("#logoWelcomeLink");
     const feed = $("#logoFeedLink");
+    const search = $("#logoSearchLink");
     const tags = $("#logoTagsLink");
     const communities = $("#logoCommunitiesLink");
+    const favUsers = $("#logoFavUsers");
     const favs = $("#logoFavTags");
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = "welcome, feed, spaces, subspaces, and about";
+    const menuLabel = "welcome, feed, search, spaces, subspaces, and about";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
+    if (search) search.setAttribute("href", appHref("/search"));
     if (tags) tags.setAttribute("href", appHref("/spaces"));
     if (communities) communities.setAttribute("href", appHref("/subspaces"));
+    if (favUsers) {
+      const list = readFavoriteUsers().slice(0, LOGO_FAVORITES_SHOW);
+      if (!list.length) {
+        favUsers.hidden = true;
+        favUsers.innerHTML = "";
+      } else {
+        favUsers.hidden = false;
+        favUsers.innerHTML = list
+          .map((name) => {
+            const safe = HiveMd.escapeHtml(name);
+            return `<a class="logo-dropdown-link" href="${HiveMd.escapeHtml(profileHref(name))}">@${safe}</a>`;
+          })
+          .join("");
+      }
+    }
     if (favs) {
       const list = readFavoriteTags().slice(0, LOGO_FAVORITES_SHOW);
       if (!list.length) {
@@ -8293,7 +8390,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function setTagsStatus(msg, isError) {
-    const el = $("#favTagsStatus");
+    const el = $("#favTagsStatus") || (parseRoute().name === "search" ? $("#searchStatus") : null);
     if (!el) return;
     if (!msg) {
       el.hidden = true;
@@ -8407,6 +8504,7 @@ let CS77_FILTER_LOW_REP = 20;
     setTagsStatus("");
     paintFavoriteTags();
     paintLogoMenu();
+    paintSearchResults();
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
     return true;
   }
@@ -8418,6 +8516,7 @@ let CS77_FILTER_LOW_REP = 20;
     setTagsStatus("");
     paintFavoriteTags();
     paintLogoMenu();
+    paintSearchResults();
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
   }
 
@@ -8469,7 +8568,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   /* ─── Communities directory ─── */
   function setCommunitiesStatus(id, msg, isError) {
-    const el = $(id);
+    const el = $(id) || (parseRoute().name === "search" ? $("#searchStatus") : null);
     if (!el) return;
     if (!msg) {
       el.hidden = true;
@@ -8579,6 +8678,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintSubscribedCommunities();
     paintCommunitySearch();
     paintLogoMenu();
+    paintSearchResults();
   }
 
   function addFavoriteCommunityRecord(row) {
@@ -8767,6 +8867,319 @@ let CS77_FILTER_LOW_REP = 20;
     const searchInput = $("#communitySearchInput");
     if (searchInput && !isMobileViewport()) searchInput.focus();
     if (user) await loadSubscribedCommunities(gen);
+  }
+
+  /* ─── Search ─── */
+  function searchPageName() {
+    const r = parseRoute();
+    if (r.name !== "search") return "";
+    return r.page === "spaces" || r.page === "subspaces" ? r.page : "users";
+  }
+
+  function setSearchStatus(msg, isError) {
+    const el = $("#searchStatus");
+    if (!el) return;
+    if (!msg) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-error");
+      return;
+    }
+    el.hidden = false;
+    el.textContent = msg;
+    el.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function addFavoriteUser(raw) {
+    const name = normalizeUserName(raw);
+    if (!name) {
+      setSearchStatus("Usernames are 3–16 letters, numbers, dots, or hyphens.", true);
+      return false;
+    }
+    const users = readFavoriteUsers();
+    if (users.indexOf(name) !== -1) {
+      setSearchStatus("Already in your list.");
+      return false;
+    }
+    if (users.length >= MAX_FAVORITE_USERS) {
+      setSearchStatus("You can save up to " + MAX_FAVORITE_USERS + " favorite users.", true);
+      return false;
+    }
+    users.push(name);
+    storeFavoriteUsers(users);
+    setSearchStatus("");
+    paintSearchResults();
+    paintLogoMenu();
+    return true;
+  }
+
+  function removeFavoriteUser(raw) {
+    const name = normalizeUserName(raw);
+    if (!name) return;
+    storeFavoriteUsers(readFavoriteUsers().filter((n) => n !== name));
+    setSearchStatus("");
+    paintSearchResults();
+    paintLogoMenu();
+  }
+
+  function toggleFavoriteUser(raw) {
+    const name = normalizeUserName(raw);
+    if (!name) return;
+    if (isFavoriteUser(name)) removeFavoriteUser(name);
+    else addFavoriteUser(name);
+  }
+
+  function searchUserRowHtml(name, mode) {
+    const safe = HiveMd.escapeHtml(name);
+    const fav = isFavoriteUser(name);
+    const action =
+      mode === "favorite"
+        ? `<button type="button" class="fav-tag-remove" data-toggle-user="${safe}" aria-label="Remove @${safe}">×</button>`
+        : `<button type="button" class="community-fav-btn${fav ? " is-saved" : ""}" data-toggle-user="${safe}" aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Remove @" + safe + " from favorites" : "Add @" + safe + " to favorites"}">${fav ? "Favorite" : "Add"}</button>`;
+    return `<div class="community-row search-user-row">
+        <a class="community-row-main" href="${HiveMd.escapeHtml(profileHref(name))}">
+          <img class="avatar" src="${HiveMd.avatarUrl(name, "small")}" alt="">
+          <span class="community-row-text">
+            <span class="community-row-title">@${safe}</span>
+          </span>
+        </a>
+        ${action}
+      </div>`;
+  }
+
+  function searchTagChipHtml(tag) {
+    const safe = HiveMd.escapeHtml(tag);
+    const fav = readFavoriteTags().indexOf(tag) !== -1;
+    const button = fav
+      ? `<button type="button" class="fav-tag-remove" data-remove-tag="${safe}" aria-label="Remove ${safe}">×</button>`
+      : `<button type="button" class="fav-tag-add" data-add-tag="${safe}" aria-label="Add ${safe} to favorites">++</button>`;
+    return `<span class="fav-tag-chip">
+        <a class="tag" href="${HiveMd.escapeHtml(favoriteTagHref(tag))}">#${safe}</a>
+        ${button}
+      </span>`;
+  }
+
+  function paintSearchFavorites(list, page) {
+    if (page === "spaces") {
+      const tags = readFavoriteTags();
+      if (!tags.length) {
+        list.className = "community-list";
+        list.innerHTML = `<p class="feed-hint tags-empty">No favorite tags yet.</p>`;
+        return;
+      }
+      list.className = "tags-fav-list";
+      list.innerHTML = tags.map((tag) => searchTagChipHtml(tag)).join("");
+      return;
+    }
+    if (page === "users") {
+      const users = readFavoriteUsers();
+      list.className = "community-list";
+      if (!users.length) {
+        list.innerHTML = `<p class="feed-hint tags-empty">No favorite users yet.</p>`;
+        return;
+      }
+      list.innerHTML = users.map((name) => searchUserRowHtml(name, "favorite")).join("");
+      return;
+    }
+    const rows = readFavoriteCommunities();
+    list.className = "community-list";
+    if (!rows.length) {
+      list.innerHTML = `<p class="feed-hint tags-empty">No favorite communities yet.</p>`;
+      return;
+    }
+    list.innerHTML = rows.map((row) => communityDirRowHtml(row, "favorite")).join("");
+  }
+
+  function paintSearchResults() {
+    const list = $("#searchResults");
+    const page = searchPageName();
+    if (!list || !page) return;
+    const state = searchPages[page];
+    if (state.loading) {
+      list.className = "community-list";
+      list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+      return;
+    }
+    if (!state.looked) {
+      paintSearchFavorites(list, page);
+      return;
+    }
+    if (state.error && !state.results.length) {
+      list.className = "community-list";
+      list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(state.error)}</p>`;
+      return;
+    }
+    if (!state.results.length) {
+      list.className = "community-list";
+      const empty =
+        page === "users"
+          ? "No users matched that search."
+          : page === "spaces"
+            ? "No spaces matched that search."
+            : "No subspaces matched that search.";
+      list.innerHTML = `<p class="feed-hint tags-empty">${empty}</p>`;
+      return;
+    }
+    if (page === "spaces") {
+      list.className = "tags-fav-list";
+      list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
+      return;
+    }
+    list.className = "community-list";
+    if (page === "users") {
+      list.innerHTML = state.results.map((name) => searchUserRowHtml(name)).join("");
+      return;
+    }
+    list.innerHTML = state.results.map((row) => communityDirRowHtml(row, "toggle")).join("");
+  }
+
+  async function searchUsersByQuery(raw) {
+    const q = String(raw || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!/^[a-z0-9.\-]{1,16}$/.test(q)) return [];
+    const names = await HiveApi.lookupAccounts(q, 20);
+    return names
+      .map((name) => String(name || "").toLowerCase())
+      .filter((name, i, arr) => name.startsWith(q) && normalizeUserName(name) && arr.indexOf(name) === i)
+      .slice(0, 20);
+  }
+
+  async function loadTrendingTagNames() {
+    if (trendingTagNamesCache && Date.now() - trendingTagNamesAt < TRENDING_TAGS_MS) {
+      return trendingTagNamesCache;
+    }
+    const rows = await HiveApi.getTrendingTags("", 250);
+    const names = [];
+    const seen = new Set();
+    (rows || []).forEach((row) => {
+      const name = normalizeRouteTag(row && row.name);
+      if (!name || name.length < 2 || seen.has(name) || isCommunityName(name)) return;
+      seen.add(name);
+      names.push(name);
+    });
+    trendingTagNamesCache = names;
+    trendingTagNamesAt = Date.now();
+    return names;
+  }
+
+  async function searchSpacesByQuery(raw) {
+    const key = normalizeTag(raw);
+    const typed = key && key.length >= 2 && normalizeRouteTag(key) ? normalizeRouteTag(key) : "";
+    let names = [];
+    let error = "";
+    try {
+      names = await loadTrendingTagNames();
+    } catch (err) {
+      error = err.message || String(err);
+    }
+    const out = [];
+    if (typed) out.push(typed);
+    if (key && key.length >= 2) {
+      const prefix = [];
+      const contains = [];
+      names.forEach((name) => {
+        if (name === typed) return;
+        if (name.startsWith(key)) prefix.push(name);
+        else if (name.indexOf(key) !== -1) contains.push(name);
+      });
+      prefix.concat(contains).forEach((name) => {
+        if (out.length >= SUGGESTED_TAGS_SHOW) return;
+        out.push(name);
+      });
+    }
+    return { tags: out, error: out.length ? "" : error };
+  }
+
+  async function runSearch() {
+    const input = $("#searchInput");
+    const page = searchPageName();
+    if (!input || !page) return;
+    searchBox = input.value;
+    const raw = String(input.value || "").trim();
+    const state = searchPages[page];
+    if (!raw) {
+      searchBox = "";
+      input.value = "";
+      state.query = "";
+      state.looked = false;
+      state.loading = false;
+      state.error = "";
+      state.results = [];
+      setSearchStatus("");
+      paintSearchResults();
+      return;
+    }
+    searchGen += 1;
+    const gen = searchGen;
+    state.query = raw;
+    state.looked = true;
+    state.loading = true;
+    state.error = "";
+    state.results = [];
+    setSearchStatus("");
+    paintSearchResults();
+    try {
+      let results = [];
+      let error = "";
+      if (page === "users") results = await searchUsersByQuery(raw);
+      else if (page === "spaces") {
+        const found = await searchSpacesByQuery(raw);
+        results = found.tags;
+        error = found.error;
+      } else results = await searchCommunitiesByQuery(raw);
+      if (gen !== searchGen) return;
+      state.results = results;
+      state.error = error;
+      state.loading = false;
+      if (searchPageName() === page) paintSearchResults();
+    } catch (err) {
+      if (gen !== searchGen) return;
+      state.results = [];
+      state.error = err.message || String(err);
+      state.loading = false;
+      if (searchPageName() === page) paintSearchResults();
+    }
+  }
+
+  function searchShellHtml(tab) {
+    const page = tab === "spaces" || tab === "subspaces" ? tab : "users";
+    const usersHref = HiveMd.escapeHtml(appHref(pathForSearch("users")));
+    const spacesHref = HiveMd.escapeHtml(appHref(pathForSearch("spaces")));
+    const subspacesHref = HiveMd.escapeHtml(appHref(pathForSearch("subspaces")));
+    const value = HiveMd.escapeHtml(searchBox);
+    return `
+      <section class="settings-page">
+        <h2 class="settings-title">Search</h2>
+        <nav class="feed-nav settings-nav" aria-label="Search">
+          <a href="${usersHref}" class="${page === "users" ? "is-active" : ""}">Users</a>
+          <a href="${spacesHref}" class="${page === "spaces" ? "is-active" : ""}">Spaces</a>
+          <a href="${subspacesHref}" class="${page === "subspaces" ? "is-active" : ""}">Subspaces</a>
+        </nav>
+        <form class="tags-add search-form" id="searchForm">
+          <input id="searchInput" type="text" maxlength="80" placeholder="Search" value="${value}" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search" aria-label="Search">
+        </form>
+        <p class="tags-status" id="searchStatus" hidden></p>
+        <div id="searchResults"></div>
+      </section>
+    `;
+  }
+
+  function renderSearchPage(page) {
+    setPageMeta("Search — CyberSpace77");
+    view.innerHTML = searchShellHtml(page);
+    paintSearchResults();
+    const input = $("#searchInput");
+    if (input && !isMobileViewport()) {
+      input.focus();
+      const end = input.value.length;
+      try {
+        input.setSelectionRange(end, end);
+      } catch {
+        /* unsupported input type */
+      }
+    }
   }
 
   /* ─── Post + comments ─── */
@@ -13953,6 +14366,8 @@ let CS77_FILTER_LOW_REP = 20;
       setPageMeta("About — CyberSpace77");
     } else if (r.name === "settings") {
       setPageMeta("Settings — CyberSpace77");
+    } else if (r.name === "search") {
+      setPageMeta("Search — CyberSpace77");
     } else if (r.name === "imprint") {
       setPageMeta("Imprint — CyberSpace77");
     }
@@ -14442,6 +14857,20 @@ let CS77_FILTER_LOW_REP = 20;
       currentViewKey = key;
       return;
     }
+    if (r.name === "search") {
+      const canonical = pathForSearch(r.page);
+      const here = currentPath().replace(/\/+$/, "") || "/";
+      if (here !== canonical) {
+        navigate(appHref(canonical), true);
+        return;
+      }
+      liveFeedNav = 0;
+      currentViewKey = key;
+      renderSearchPage(r.page);
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      return;
+    }
     if (r.name === "about") {
       liveFeedNav = 0;
       renderAbout();
@@ -14759,6 +15188,10 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener("pointercancel", endTouchVotePointer, true);
 
     document.addEventListener("input", (e) => {
+      if (e.target && e.target.id === "searchInput") {
+        searchBox = e.target.value;
+        return;
+      }
       const slider = e.target.closest(".vote-slider");
       if (slider) {
         const panel =
@@ -15001,6 +15434,12 @@ let CS77_FILTER_LOW_REP = 20;
         );
         return;
       }
+      const toggleUser = e.target.closest("[data-toggle-user]");
+      if (toggleUser && inInteractiveSurface(toggleUser)) {
+        e.preventDefault();
+        toggleFavoriteUser(toggleUser.getAttribute("data-toggle-user"));
+        return;
+      }
       const subBtn = e.target.closest(".community-sub-btn");
       if (subBtn && inInteractiveSurface(subBtn)) {
         e.preventDefault();
@@ -15081,6 +15520,11 @@ let CS77_FILTER_LOW_REP = 20;
       if (e.target.id === "communitySearchForm") {
         e.preventDefault();
         runCommunitySearch();
+        return;
+      }
+      if (e.target.id === "searchForm") {
+        e.preventDefault();
+        runSearch();
       }
     });
 

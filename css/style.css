@@ -2787,6 +2787,14 @@ a.tag:hover {
   flex-shrink: 0;
 }
 
+.search-form {
+  display: block;
+}
+
+.search-form input {
+  width: 100%;
+}
+
 .tags-status {
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -2824,6 +2832,14 @@ a.tag:hover {
 
 .community-row:hover {
   border-color: var(--yellow);
+}
+
+.community-row.search-user-row,
+.community-row.search-user-row:hover {
+  border: none;
+  border-radius: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .community-row-main {

@@ -221,6 +221,22 @@ function cs77_route(string $pathname): array
         }
         return $route;
     }
+    if ($first === "search") {
+        if (count($parts) === 1) {
+            $route["name"] = "search";
+            $route["page"] = "users";
+            return $route;
+        }
+        if (count($parts) === 2) {
+            $page = strtolower($parts[1]);
+            if ($page === "users" || $page === "spaces" || $page === "subspaces") {
+                $route["name"] = "search";
+                $route["page"] = $page;
+                return $route;
+            }
+        }
+        return $route;
+    }
     if ($first === "c" && count($parts) >= 2) {
         $community = cs77_community_name($parts[1]);
         if ($community === "") {
@@ -795,6 +811,8 @@ function cs77_page(array $route): array
         $title = "About — CyberSpace77";
     } elseif ($name === "settings") {
         $title = "Settings — CyberSpace77";
+    } elseif ($name === "search") {
+        $title = "Search — CyberSpace77";
     } elseif ($name === "imprint") {
         $title = "Imprint — CyberSpace77";
     } elseif ($name === "publish") {

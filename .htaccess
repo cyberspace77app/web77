@@ -5,7 +5,7 @@
 # /subspace/121566  /subspace/121566/trending|hot|rules|members
 # /c/hive-121566  /c/hive-121566/latest|trending|hot|rules|members
 # /121566 redirects to /subspace/121566
-# /trending  /hot  /created  /spaces  /subspaces  /welcome  /imprint  /settings  /settings/profile  /settings/nodes
+# /trending  /hot  /created  /search  /search/spaces  /search/subspaces  /spaces  /subspaces  /welcome  /imprint  /settings  /settings/profile  /settings/nodes
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
 #
 # Link-preview crawlers do not run the app, so they only see index.html.

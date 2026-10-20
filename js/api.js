@@ -498,6 +498,24 @@
     return Array.isArray(result) ? result : [];
   }
 
+  async function lookupAccounts(lowerBound, limit) {
+    const name = String(lowerBound || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!name) return [];
+    const lim = Math.min(Math.max(limit || 20, 1), 100);
+    const result = await hiveRpc("condenser_api.lookup_accounts", [name, lim]);
+    return Array.isArray(result) ? result : [];
+  }
+
+  async function getTrendingTags(startTag, limit) {
+    const start = String(startTag || "");
+    const lim = Math.min(Math.max(limit || 50, 1), 250);
+    const result = await hiveRpc("condenser_api.get_trending_tags", [start, lim]);
+    return Array.isArray(result) ? result : [];
+  }
+
   async function getDynamicGlobalProperties() {
     return hiveRpc("condenser_api.get_dynamic_global_properties", []);
   }
@@ -1042,6 +1060,8 @@
     unreadNotifications,
     accountNotifications,
     getAccounts,
+    lookupAccounts,
+    getTrendingTags,
     getDynamicGlobalProperties,
     getActiveVotes,
     getRebloggedBy,
