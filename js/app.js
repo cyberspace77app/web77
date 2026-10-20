@@ -859,10 +859,9 @@ let CS77_FILTER_LOW_REP = 20;
     const cls = pill ? "payout stat-pill" : "payout";
     const mode = figures.burned ? " is-burned" : figures.declined ? " is-declined" : "";
     const label = figures.burned ? "Burned payout" : figures.declined ? "Declined payout" : "Payout";
-    const attrs = `class="${cls}${mode}" data-payout-author="${author}" data-payout-permlink="${permlink}" aria-label="${label} ${figures.total.toFixed(2)}"`;
+    const attrs = `type="button" class="${cls}${mode}" data-payout-author="${author}" data-payout-permlink="${permlink}" aria-label="${label} ${figures.total.toFixed(2)}"`;
     const inner = `<span class="payout-value">${payoutTotalHtml(figures)}</span>`;
-    if (pill) return `<button type="button" ${attrs}>${inner}</button>`;
-    return `<span ${attrs}>${inner}</span>`;
+    return `<button ${attrs}>${inner}</button>`;
   }
 
   function applyPayoutEl(el, post) {
@@ -1035,7 +1034,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function showPayoutPanel(el) {
-    if (!el || !el.isConnected || !el.classList.contains("stat-pill")) return;
+    if (!el || !el.isConnected || !el.classList.contains("payout")) return;
     const author = el.getAttribute("data-payout-author");
     const permlink = el.getAttribute("data-payout-permlink");
     if (!author || !permlink) return;
@@ -13181,11 +13180,11 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener(
       "click",
       (e) => {
-        const payoutPill = e.target.closest(".payout.stat-pill");
-        if (payoutPill && inInteractiveSurface(payoutPill)) {
+        const payoutHit = e.target.closest(".payout");
+        if (payoutHit && inInteractiveSurface(payoutHit)) {
           e.preventDefault();
           e.stopPropagation();
-          togglePayoutPanel(payoutPill);
+          togglePayoutPanel(payoutHit);
           return;
         }
         if (!e.target.closest(".payout-panel")) hidePayoutPanel();
@@ -13477,11 +13476,11 @@ let CS77_FILTER_LOW_REP = 20;
         if (!fromArrow || !arrow.contains(fromArrow)) releaseVoteColor(arrow);
       }
       if (!hoverFine()) return;
-      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
-      if (payoutPill && inInteractiveSurface(payoutPill)) {
+      const payoutHit = e.target.closest && e.target.closest(".payout");
+      if (payoutHit && inInteractiveSurface(payoutHit)) {
         const fromPayout = e.relatedTarget;
-        if (fromPayout && payoutPill.contains(fromPayout)) return;
-        onPayoutEnter(payoutPill);
+        if (fromPayout && payoutHit.contains(fromPayout)) return;
+        onPayoutEnter(payoutHit);
         return;
       }
       const reblogHit = e.target.closest && e.target.closest(".reblog-hit");
@@ -13504,10 +13503,10 @@ let CS77_FILTER_LOW_REP = 20;
         if (!toArrow || !arrow.contains(toArrow)) arrow.setAttribute("data-vote-left", "1");
       }
       const panel = votersPanelNode;
-      const payoutPill = e.target.closest && e.target.closest(".payout.stat-pill");
-      if (payoutPill) {
+      const payoutHit = e.target.closest && e.target.closest(".payout");
+      if (payoutHit) {
         const toPayout = e.relatedTarget;
-        if (toPayout && payoutPill.contains(toPayout)) return;
+        if (toPayout && payoutHit.contains(toPayout)) return;
         if (toPayout && payoutPanelNode && payoutPanelNode.contains(toPayout)) return;
         scheduleHidePayout(e);
         return;

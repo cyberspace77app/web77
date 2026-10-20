@@ -2559,7 +2559,29 @@ a.article-community:hover {
 }
 
 .article-stats .payout {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
   color: var(--yellow);
+  cursor: pointer;
+  line-height: inherit;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.article-stats .payout:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.article-stats .payout:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .article-stats .comment-count-link {
