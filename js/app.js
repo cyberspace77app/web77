@@ -48,6 +48,8 @@ let CS77_FILTER_LOW_REP = 20;
   const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
   const AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
+  const COMMUNITY_BROWSE_LIMIT = 100;
+  const COMMUNITY_BROWSE_SCROLL_PX = 280;
   const TRENDING_TAGS_MS = 5 * 60 * 1000;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
@@ -155,6 +157,11 @@ let CS77_FILTER_LOW_REP = 20;
     searchError: "",
     searchLooked: false,
     searchLoading: false,
+    browse: [],
+    browseLast: "",
+    browseDone: false,
+    browseLoading: false,
+    browseError: "",
   };
   const profileState = {
     author: "",
@@ -3498,6 +3505,23 @@ let CS77_FILTER_LOW_REP = 20;
     return "/search";
   }
 
+  function normalizeSubspacesPage(raw) {
+    const page = String(raw || "")
+      .trim()
+      .toLowerCase();
+    if (page === "browse") return "browse";
+    if (page === "newest") return "newest";
+    if (page === "search") return "search";
+    return "";
+  }
+
+  function pathForSubspaces(page) {
+    const p = normalizeSubspacesPage(page);
+    if (p === "browse") return "/subspaces/browse";
+    if (p === "newest") return "/subspaces/newest";
+    return "/subspaces";
+  }
+
   function sessionProfilePath(href) {
     const raw =
       typeof href === "string" ? href : href && href.getAttribute ? href.getAttribute("href") : "";
@@ -3603,8 +3627,13 @@ let CS77_FILTER_LOW_REP = 20;
     if (parts.length === 1 && first === "spaces") {
       return { name: "tags" };
     }
-    if (parts.length === 1 && first === "subspaces") {
-      return { name: "communities" };
+    if (first === "subspaces") {
+      if (parts.length === 1) return { name: "communities", page: "search" };
+      if (parts.length === 2) {
+        const page = normalizeSubspacesPage(parts[1]);
+        if (page) return { name: "communities", page };
+      }
+      return { name: "notfound" };
     }
     if (parts.length === 1 && first === "welcome") {
       return { name: "welcome" };
@@ -3715,6 +3744,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
     if (r.name === "settings") return "settings:" + (r.page || "general");
     if (r.name === "search") return "search:" + (r.page || "users");
+    if (r.name === "communities") {
+      const page = r.page === "browse" || r.page === "newest" ? r.page : "search";
+      return "communities:" + page;
+    }
     return r.name || "";
   }
 
@@ -3730,7 +3763,10 @@ let CS77_FILTER_LOW_REP = 20;
       return pathForSearch(key.indexOf("search:") === 0 ? key.slice(7) : "users");
     }
     if (key === "tags") return "/spaces";
-    if (key === "communities") return "/subspaces";
+    if (key === "communities" || key.indexOf("communities:") === 0) {
+      const page = key.indexOf("communities:") === 0 ? key.slice(12) : "search";
+      return pathForSubspaces(page);
+    }
     if (key.indexOf("feed:") === 0) {
       const rest = key.slice(5);
       const colon = rest.indexOf(":");
@@ -8567,8 +8603,23 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   /* ─── Communities directory ─── */
+  function subspacesPageName() {
+    const r = parseRoute();
+    if (r.name !== "communities") return "";
+    if (r.page === "browse" || r.page === "newest") return r.page;
+    return "search";
+  }
+
+  function isCommunityRankPage() {
+    const page = subspacesPageName();
+    return page === "browse" || page === "newest";
+  }
+
   function setCommunitiesStatus(id, msg, isError) {
-    const el = $(id) || (parseRoute().name === "search" ? $("#searchStatus") : null);
+    const el =
+      $(id) ||
+      (isCommunityRankPage() ? $("#communityBrowseMsg") : null) ||
+      (parseRoute().name === "search" ? $("#searchStatus") : null);
     if (!el) return;
     if (!msg) {
       el.hidden = true;
@@ -8591,7 +8642,21 @@ let CS77_FILTER_LOW_REP = 20;
       title: String(row.title || name).trim() || name,
       about: String(row.about || "").trim(),
       subscribers: Number(row.subscribers || 0),
+      created: String(row.created_at || row.created || "").trim(),
     };
+  }
+
+  function communitySubscriberLabel(count) {
+    const n = Number(count);
+    if (!Number.isFinite(n) || n < 0) return "";
+    const whole = Math.floor(n);
+    let text = String(whole);
+    try {
+      text = whole.toLocaleString("en-US");
+    } catch {
+      text = String(whole);
+    }
+    return text + (whole === 1 ? " subscriber" : " subscribers");
   }
 
   function communityDirRowHtml(row, mode) {
@@ -8599,12 +8664,13 @@ let CS77_FILTER_LOW_REP = 20;
     if (!rec) return "";
     const name = HiveMd.escapeHtml(rec.name);
     const title = HiveMd.escapeHtml(rec.title);
-    const meta = [rec.name];
-    if (row && row.subscribers != null && row.subscribers !== "") {
-      const n = Number(row.subscribers);
-      if (Number.isFinite(n) && n > 0) {
-        meta.push(n + (n === 1 ? " subscriber" : " subscribers"));
-      }
+    let metaHtml = "";
+    let metaLabel = "";
+    if (mode === "newest" || mode === "browse") {
+      metaLabel = communitySubscriberLabel(rec.subscribers);
+    }
+    if (metaLabel) {
+      metaHtml = `<span class="community-row-meta">${HiveMd.escapeHtml(metaLabel)}</span>`;
     }
     const fav = isFavoriteCommunity(rec.name);
     const action =
@@ -8616,10 +8682,30 @@ let CS77_FILTER_LOW_REP = 20;
           <img class="avatar" src="${HiveMd.avatarUrl(rec.name, "small")}" alt="">
           <span class="community-row-text">
             <span class="community-row-title">${title}</span>
+            ${metaHtml}
           </span>
         </a>
         ${action}
       </div>`;
+  }
+
+  function paintBrowseFavoriteButtons() {
+    const list = $("#communityBrowseList");
+    if (!list) return;
+    const buttons = list.querySelectorAll("[data-toggle-community]");
+    for (let i = 0; i < buttons.length; i++) {
+      const btn = buttons[i];
+      const raw = btn.getAttribute("data-toggle-community") || "";
+      const title = btn.getAttribute("data-community-title") || raw;
+      const fav = isFavoriteCommunity(raw);
+      btn.classList.toggle("is-saved", fav);
+      btn.setAttribute("aria-pressed", fav ? "true" : "false");
+      btn.textContent = fav ? "Favorite" : "Add";
+      btn.setAttribute(
+        "aria-label",
+        fav ? "Remove " + title + " from favorites" : "Add " + title + " to favorites"
+      );
+    }
   }
 
   function paintFavoriteCommunities() {
@@ -8677,6 +8763,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteCommunities();
     paintSubscribedCommunities();
     paintCommunitySearch();
+    paintBrowseFavoriteButtons();
     paintLogoMenu();
     paintSearchResults();
   }
@@ -8737,6 +8824,7 @@ let CS77_FILTER_LOW_REP = 20;
         title: rec.title,
         about: rec.about,
         subscribers: rec.subscribers,
+        created: rec.created,
       });
     });
     return out;
@@ -8795,13 +8883,13 @@ let CS77_FILTER_LOW_REP = 20;
     paintCommunitySearch(true);
     try {
       const matches = await searchCommunitiesByQuery(raw);
-      if (communityDirState.gen !== gen || parseRoute().name !== "communities") return;
+      if (communityDirState.gen !== gen || subspacesPageName() !== "search") return;
       communityDirState.search = matches;
       communityDirState.searchError = "";
       communityDirState.searchLoading = false;
       paintCommunitySearch();
     } catch (err) {
-      if (communityDirState.gen !== gen || parseRoute().name !== "communities") return;
+      if (communityDirState.gen !== gen || subspacesPageName() !== "search") return;
       communityDirState.search = [];
       communityDirState.searchError = err.message || String(err);
       communityDirState.searchLoading = false;
@@ -8816,23 +8904,20 @@ let CS77_FILTER_LOW_REP = 20;
     list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading subscriptions…</div>`;
     try {
       const rows = await HiveApi.listAllSubscriptions(user);
-      if (communityDirState.gen !== gen || parseRoute().name !== "communities") return;
+      if (communityDirState.gen !== gen || subspacesPageName() !== "search") return;
       communityDirState.subs = mergeCommunityResults(rows).sort((a, b) =>
         String(a.title || a.name).localeCompare(String(b.title || b.name))
       );
       communityDirState.subsError = "";
     } catch (err) {
-      if (communityDirState.gen !== gen || parseRoute().name !== "communities") return;
+      if (communityDirState.gen !== gen || subspacesPageName() !== "search") return;
       communityDirState.subs = [];
       communityDirState.subsError = err.message || String(err);
     }
     paintSubscribedCommunities();
   }
 
-  async function renderCommunitiesPage() {
-    setPageMeta("Communities — CyberSpace77");
-    communityDirState.gen += 1;
-    const gen = communityDirState.gen;
+  function resetCommunityDirectory() {
     communityDirState.subs = [];
     communityDirState.subsError = "";
     communityDirState.searchQuery = "";
@@ -8840,6 +8925,32 @@ let CS77_FILTER_LOW_REP = 20;
     communityDirState.searchError = "";
     communityDirState.searchLooked = false;
     communityDirState.searchLoading = false;
+    communityDirState.browse = [];
+    communityDirState.browseLast = "";
+    communityDirState.browseDone = false;
+    communityDirState.browseLoading = false;
+    communityDirState.browseError = "";
+  }
+
+  function subspacesShellHtml(tab) {
+    const page = tab === "browse" || tab === "newest" ? tab : "search";
+    const searchHref = HiveMd.escapeHtml(appHref(pathForSubspaces("search")));
+    const browseHref = HiveMd.escapeHtml(appHref(pathForSubspaces("browse")));
+    const newestHref = HiveMd.escapeHtml(appHref(pathForSubspaces("newest")));
+    return `
+      <section class="settings-page communities-page">
+        <h2 class="settings-title">Subspaces</h2>
+        <nav class="feed-nav settings-nav" aria-label="Subspaces">
+          <a href="${searchHref}" class="${page === "search" ? "is-active" : ""}">Search</a>
+          <a href="${browseHref}" class="${page === "browse" ? "is-active" : ""}">Browse</a>
+          <a href="${newestHref}" class="${page === "newest" ? "is-active" : ""}">Newest</a>
+        </nav>
+        <div id="subspacesPanel"></div>
+      </section>
+    `;
+  }
+
+  function subspacesSearchHtml() {
     const user = observer();
     const subscribedBlock = user
       ? `
@@ -8847,26 +8958,157 @@ let CS77_FILTER_LOW_REP = 20;
         <p class="feed-hint">Communities you follow on Hive.</p>
         <div class="community-list" id="subscribedCommunitiesList"></div>`
       : "";
-    view.innerHTML = `
-      <section class="tags-page communities-page">
-        <h2 class="tags-page-title">Search communities</h2>
-        <p class="feed-hint">Find communities by title, hive-id, or number.</p>
-        <form class="tags-add" id="communitySearchForm">
-          <input id="communitySearchInput" type="text" maxlength="80" placeholder="" autocomplete="off" spellcheck="false" autocapitalize="off">
-          <button type="submit" class="btn-primary btn-compact">Search</button>
-        </form>
-        <p class="tags-status" id="communitySearchStatus" hidden></p>
-        <div class="community-list" id="communitySearchList"></div>
-        <h2 class="tags-page-title">Favorite communities</h2>
-        <p class="feed-hint">Saved in this browser.</p>
-        <div class="community-list" id="favCommunitiesList"></div>
-        ${subscribedBlock}
-      </section>
+    return `
+      <h2 class="tags-page-title">Search communities</h2>
+      <p class="feed-hint">Find communities by title, hive-id, or number.</p>
+      <form class="tags-add" id="communitySearchForm">
+        <input id="communitySearchInput" type="text" maxlength="80" placeholder="" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <button type="submit" class="btn-primary btn-compact">Search</button>
+      </form>
+      <p class="tags-status" id="communitySearchStatus" hidden></p>
+      <div class="community-list" id="communitySearchList"></div>
+      <h2 class="tags-page-title">Favorite communities</h2>
+      <p class="feed-hint">Saved in this browser.</p>
+      <div class="community-list" id="favCommunitiesList"></div>
+      ${subscribedBlock}
     `;
+  }
+
+  function subspacesBrowseHtml(tab) {
+    const hint = tab === "newest" ? "Newly created subspaces." : "Ranked by subscribers.";
+    return `
+      <p class="feed-hint">${hint}</p>
+      <p class="tags-status" id="communityBrowseMsg" hidden></p>
+      <div class="community-list" id="communityBrowseList"></div>
+      <div id="communityBrowseMore" class="loading-row" hidden></div>
+    `;
+  }
+
+  function browseListNearEnd() {
+    const list = $("#communityBrowseList");
+    if (!list) return false;
+    const rect = list.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
+  }
+
+  function maybeLoadMoreBrowse() {
+    if (!isCommunityRankPage()) return;
+    if (communityDirState.browseLoading || communityDirState.browseDone) return;
+    if (!$("#communityBrowseList")) return;
+    if (browseListNearEnd()) loadMoreBrowseCommunities();
+  }
+
+  function setBrowseMoreLoading(on) {
+    const more = $("#communityBrowseMore");
+    if (!more) return;
+    if (!on) {
+      more.hidden = true;
+      more.innerHTML = "";
+      return;
+    }
+    more.hidden = false;
+    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading subspaces…`;
+  }
+
+  async function loadMoreBrowseCommunities() {
+    if (!isCommunityRankPage()) return;
+    if (communityDirState.browseLoading || communityDirState.browseDone) return;
+    const gen = communityDirState.gen;
+    const last = communityDirState.browseLast;
+    const page = subspacesPageName();
+    const sort = page === "newest" ? "new" : "subs";
+    const mode = page === "newest" ? "newest" : "browse";
+    communityDirState.browseLoading = true;
+    const list = $("#communityBrowseList");
+    if (!communityDirState.browse.length) {
+      if (list) {
+        list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading subspaces…</div>`;
+      }
+    } else {
+      setBrowseMoreLoading(true);
+    }
+    let batch = [];
+    let error = "";
+    try {
+      // "subs" is subscriber count. "new" is creation time, newest first.
+      // last is the previous community name; hivemind does not repeat that row.
+      batch = await HiveApi.listCommunities({
+        sort,
+        limit: COMMUNITY_BROWSE_LIMIT,
+        last,
+        observer: observer(),
+      });
+    } catch (err) {
+      error = err.message || String(err);
+    }
+    if (communityDirState.gen !== gen) return;
+    communityDirState.browseLoading = false;
+    setBrowseMoreLoading(false);
+    if (subspacesPageName() !== page) return;
+    if (error) {
+      communityDirState.browseError = error;
+      communityDirState.browseDone = true;
+      if (!communityDirState.browse.length && list) {
+        list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(error)}</p>`;
+      } else {
+        setCommunitiesStatus("#communityBrowseMsg", error, true);
+      }
+      return;
+    }
+    const rows = mergeCommunityResults(batch);
+    const seen = new Set(communityDirState.browse.map((row) => row.name));
+    const added = [];
+    rows.forEach((row) => {
+      if (!row || seen.has(row.name)) return;
+      seen.add(row.name);
+      added.push(row);
+    });
+    const nextLast = rows.length ? rows[rows.length - 1].name : "";
+    if (
+      !batch.length ||
+      !added.length ||
+      !nextLast ||
+      nextLast === last ||
+      batch.length < COMMUNITY_BROWSE_LIMIT
+    ) {
+      communityDirState.browseDone = true;
+    } else {
+      communityDirState.browseLast = nextLast;
+    }
+    if (added.length) communityDirState.browse = communityDirState.browse.concat(added);
+    communityDirState.browseError = "";
+    const host = $("#communityBrowseList");
+    if (!host) return;
+    if (!communityDirState.browse.length) {
+      host.innerHTML = `<p class="feed-hint tags-empty">No subspaces yet.</p>`;
+      return;
+    }
+    const html = added.map((row) => communityDirRowHtml(row, mode)).join("");
+    if (!host.querySelector(".community-row")) host.innerHTML = html;
+    else if (html) host.insertAdjacentHTML("beforeend", html);
+    maybeLoadMoreBrowse();
+  }
+
+  async function renderCommunitiesPage(page) {
+    const tab = page === "browse" || page === "newest" ? page : "search";
+    setPageMeta("Subspaces — CyberSpace77");
+    communityDirState.gen += 1;
+    const gen = communityDirState.gen;
+    resetCommunityDirectory();
+    view.innerHTML = subspacesShellHtml(tab);
+    const host = $("#subspacesPanel");
+    if (!host) return;
+    if (tab === "browse" || tab === "newest") {
+      host.innerHTML = subspacesBrowseHtml(tab);
+      await loadMoreBrowseCommunities();
+      return;
+    }
+    host.innerHTML = subspacesSearchHtml();
     paintFavoriteCommunities();
     const searchInput = $("#communitySearchInput");
     if (searchInput && !isMobileViewport()) searchInput.focus();
-    if (user) await loadSubscribedCommunities(gen);
+    if (observer()) await loadSubscribedCommunities(gen);
   }
 
   /* ─── Search ─── */
@@ -14359,7 +14601,7 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (r.name === "tags") {
       setPageMeta("Tags — CyberSpace77");
     } else if (r.name === "communities") {
-      setPageMeta("Communities — CyberSpace77");
+      setPageMeta("Subspaces — CyberSpace77");
     } else if (r.name === "welcome") {
       setPageMeta("CyberSpace77");
     } else if (r.name === "about") {
@@ -14836,9 +15078,15 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (r.name === "communities") {
+      const canonical = pathForSubspaces(r.page);
+      const here = currentPath().replace(/\/+$/, "") || "/";
+      if (here !== canonical) {
+        navigate(appHref(canonical), true);
+        return;
+      }
       liveFeedNav = 0;
       currentViewKey = key;
-      await renderCommunitiesPage();
+      await renderCommunitiesPage(r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
       return;
@@ -15170,6 +15418,8 @@ let CS77_FILTER_LOW_REP = 20;
     bindLogoMenu();
     bindNodeMenus();
     bindScrollTop();
+    window.addEventListener("scroll", maybeLoadMoreBrowse, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreBrowse);
     bindSmartHeader();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");

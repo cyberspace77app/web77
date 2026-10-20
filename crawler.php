@@ -197,8 +197,20 @@ function cs77_route(string $pathname): array
         $route["name"] = "tags";
         return $route;
     }
-    if (count($parts) === 1 && $first === "subspaces") {
-        $route["name"] = "communities";
+    if ($first === "subspaces") {
+        if (count($parts) === 1) {
+            $route["name"] = "communities";
+            $route["page"] = "search";
+            return $route;
+        }
+        if (count($parts) === 2) {
+            $page = strtolower($parts[1]);
+            if ($page === "search" || $page === "browse" || $page === "newest") {
+                $route["name"] = "communities";
+                $route["page"] = $page;
+                return $route;
+            }
+        }
         return $route;
     }
     if (count($parts) === 1 && ($first === "welcome" || $first === "about" || $first === "imprint")) {
@@ -804,7 +816,7 @@ function cs77_page(array $route): array
     } elseif ($name === "tags") {
         $title = "Tags — CyberSpace77";
     } elseif ($name === "communities") {
-        $title = "Communities — CyberSpace77";
+        $title = "Subspaces — CyberSpace77";
     } elseif ($name === "welcome") {
         $title = "CyberSpace77";
     } elseif ($name === "about") {
