@@ -205,6 +205,22 @@ function cs77_route(string $pathname): array
         $route["name"] = $first;
         return $route;
     }
+    if ($first === "settings") {
+        if (count($parts) === 1) {
+            $route["name"] = "settings";
+            $route["page"] = "general";
+            return $route;
+        }
+        if (count($parts) === 2) {
+            $page = strtolower($parts[1]);
+            if ($page === "general" || $page === "profile") {
+                $route["name"] = "settings";
+                $route["page"] = $page;
+                return $route;
+            }
+        }
+        return $route;
+    }
     if ($first === "c" && count($parts) >= 2) {
         $community = cs77_community_name($parts[1]);
         if ($community === "") {
@@ -777,6 +793,8 @@ function cs77_page(array $route): array
         $title = "CyberSpace77";
     } elseif ($name === "about") {
         $title = "About — CyberSpace77";
+    } elseif ($name === "settings") {
+        $title = "Settings — CyberSpace77";
     } elseif ($name === "imprint") {
         $title = "Imprint — CyberSpace77";
     } elseif ($name === "publish") {

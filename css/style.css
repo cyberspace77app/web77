@@ -2654,7 +2654,8 @@ a.tag:hover {
 }
 
 .about-title,
-.imprint-title {
+.imprint-title,
+.settings-title {
   font-family: var(--font-serif);
   font-weight: 400;
   font-size: 2.4rem;
@@ -5776,4 +5777,213 @@ min-height: 0;
   .location-locate {
     flex: 1 1 auto;
   }
+}
+
+.settings-page {
+  padding-top: 0.35rem;
+}
+
+.settings-form {
+  max-width: 36rem;
+}
+
+.settings-field {
+  margin-bottom: 1.15rem;
+}
+
+.settings-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0 0 0.4rem;
+}
+
+.settings-note {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--gray-dim);
+  margin: 0 0 0.7rem;
+}
+
+.settings-field .settings-note {
+  margin-top: -0.05rem;
+}
+
+.settings-form input,
+.settings-form textarea {
+  display: block;
+  width: 100%;
+  padding: 0.8rem 0.95rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1.45;
+  outline: none;
+}
+
+.settings-form textarea {
+  resize: vertical;
+  min-height: 6.5rem;
+}
+
+.settings-form textarea.settings-about {
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.settings-form textarea.settings-custom {
+  min-height: 12rem;
+  font-size: 0.82rem;
+}
+
+.settings-form input:focus,
+.settings-form textarea:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+.settings-form input::placeholder {
+  color: var(--gray-dim);
+}
+
+.settings-weight {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.settings-weight input {
+  flex: 0 0 auto;
+  width: 6rem;
+  min-width: 0;
+  max-width: 6rem;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.settings-weight input::-webkit-outer-spin-button,
+.settings-weight input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  display: none;
+}
+
+.settings-weight-unit {
+  font-family: var(--font-mono);
+  color: var(--gray);
+}
+
+.settings-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: flex-start;
+}
+
+.settings-avatar-preview {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: #12080c;
+  flex: 0 0 auto;
+}
+
+.settings-media-main {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.settings-media-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.settings-upload {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.75rem;
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.settings-upload:hover:not(:disabled) {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+}
+
+.settings-upload:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-cover-preview {
+  display: block;
+  width: 100%;
+  height: 7.5rem;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #12080c;
+  margin-bottom: 0.55rem;
+}
+
+.settings-cover-preview[hidden] {
+  display: none;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.settings-actions .btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-status {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--yellow);
+  margin: 0.85rem 0 0;
+}
+
+.settings-status.is-error {
+  color: var(--red-bright);
+}
+
+.settings-status:empty {
+  display: none;
+}
+
+.settings-page .empty-state {
+  max-width: 36rem;
+}
+
+.settings-page .empty-state .btn-primary {
+  margin-top: 1.15rem;
 }

@@ -21,6 +21,10 @@ let CS77_FILTER_LOW_REP = 20;
     post: "cs77_vote_weight_post",
     comment: "cs77_vote_weight_comment",
   };
+  const DEFAULT_VOTE_WEIGHT_KEYS = {
+    post: "cs77_default_vote_weight_post",
+    comment: "cs77_default_vote_weight_comment",
+  };
   const DOWNVOTE_WEIGHT_KEYS = {
     post: "cs77_downvote_weight_post",
     comment: "cs77_downvote_weight_comment",
@@ -37,6 +41,8 @@ let CS77_FILTER_LOW_REP = 20;
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
+  const PROFILE_FIELDS = ["name", "about", "location", "website", "profile_image", "cover_image"];
+  const SETTINGS_METADATA_MAX = 16384;
   const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
   const AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
@@ -73,6 +79,9 @@ let CS77_FILTER_LOW_REP = 20;
   let publishSubsUser = "";
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
+  let settingsProfileDraft = null;
+  let settingsProfileBaseline = null;
+  let settingsBusy = false;
   let currentViewKey = "";
   // History entry id for the feed currently mounted in #view. A profile opened
   // from that feed parks the list under this id and Back mounts it again.
@@ -1218,7 +1227,7 @@ let CS77_FILTER_LOW_REP = 20;
       return plainVoteHtml(author, permlink, upCount, downCount);
     }
     const kind = voteKindFromPost(post);
-    const pct = readStoredWeight(kind);
+    const pct = upvoteStartPercent(kind);
     const downPct = readStoredDownvoteWeight(kind);
     const pending = user && viewState.pending ? "disabled" : "";
     const pill = variant === "pills" ? "stat-pill" : "";
@@ -1339,6 +1348,48 @@ let CS77_FILTER_LOW_REP = 20;
     const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
     localStorage.setItem(VOTE_WEIGHT_KEYS[kind], String(pct));
     return pct;
+  }
+
+  // A default above 0 replaces the last-used weight when a new upvote opens.
+  // 0 and an empty value mean "not set", so the last vote weight is used.
+  function readDefaultVoteWeight(kind) {
+    kind = normalizeVoteKind(kind);
+    let raw = null;
+    try {
+      raw = localStorage.getItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
+    } catch {
+      return null;
+    }
+    if (raw == null) return null;
+    const text = String(raw).trim();
+    if (!text) return null;
+    const n = Number(text);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.max(1, Math.min(100, Math.round(n)));
+  }
+
+  function storeDefaultVoteWeight(percent, kind) {
+    kind = normalizeVoteKind(kind);
+    const text = String(percent == null ? "" : percent).trim();
+    const n = text === "" ? 0 : Number(text);
+    const clear = !text || !Number.isFinite(n) || n <= 0;
+    try {
+      if (clear) {
+        localStorage.removeItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
+        return null;
+      }
+      const pct = Math.max(1, Math.min(100, Math.round(n)));
+      localStorage.setItem(DEFAULT_VOTE_WEIGHT_KEYS[kind], String(pct));
+      return pct;
+    } catch {
+      return null;
+    }
+  }
+
+  function upvoteStartPercent(kind) {
+    const preset = readDefaultVoteWeight(kind);
+    if (preset != null) return preset;
+    return readStoredWeight(kind);
   }
 
   function readStoredDownvoteWeight(kind) {
@@ -2366,7 +2417,7 @@ let CS77_FILTER_LOW_REP = 20;
     const pct =
       mode === "down"
         ? readStoredDownvoteWeight(voteKindFromEl(wrap))
-        : readStoredWeight(voteKindFromEl(wrap));
+        : upvoteStartPercent(voteKindFromEl(wrap));
     if (slider) {
       slider.value = String(pct);
       paintVoteSlider(slider, valueEl);
@@ -2424,7 +2475,7 @@ let CS77_FILTER_LOW_REP = 20;
       const slider = panel.querySelector(".vote-slider");
       if (slider) return Math.max(0, Math.min(100, Number(slider.value) || 0));
     }
-    return readStoredWeight(voteKindFromEl(btn));
+    return upvoteStartPercent(voteKindFromEl(btn));
   }
 
   function currentDownvotePercent(el) {
@@ -3164,6 +3215,7 @@ let CS77_FILTER_LOW_REP = 20;
     welcome: true,
     about: true,
     imprint: true,
+    settings: true,
     c: true,
   };
 
@@ -3334,6 +3386,21 @@ let CS77_FILTER_LOW_REP = 20;
     return appHref(pathForProfile(author, page));
   }
 
+  function normalizeSettingsPage(raw) {
+    const page = String(raw || "")
+      .trim()
+      .toLowerCase();
+    if (!page || page === "general") return "general";
+    if (page === "profile") return "profile";
+    return "";
+  }
+
+  function pathForSettings(page) {
+    const p = normalizeSettingsPage(page) || "general";
+    if (p === "profile") return "/settings/profile";
+    return "/settings";
+  }
+
   function sessionProfilePath(href) {
     const raw =
       typeof href === "string" ? href : href && href.getAttribute ? href.getAttribute("href") : "";
@@ -3451,6 +3518,14 @@ let CS77_FILTER_LOW_REP = 20;
     if (parts.length === 1 && first === "imprint") {
       return { name: "imprint" };
     }
+    if (first === "settings") {
+      if (parts.length === 1) return { name: "settings", page: "general" };
+      if (parts.length === 2) {
+        const page = normalizeSettingsPage(parts[1]);
+        if (page) return { name: "settings", page };
+      }
+      return { name: "notfound" };
+    }
 
     if (first === "c" && parts.length >= 2) {
       const community = normalizeCommunityName(parts[1]);
@@ -3533,6 +3608,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "post") return "post:" + r.author + "/" + r.permlink;
     if (r.name === "profile") return "profile:" + r.author + ":" + (r.page || "posts");
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
+    if (r.name === "settings") return "settings:" + (r.page === "profile" ? "profile" : "general");
     return r.name || "";
   }
 
@@ -3541,6 +3617,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (key === "welcome") return "/welcome";
     if (key === "about") return "/about";
     if (key === "imprint") return "/imprint";
+    if (key === "settings" || key.indexOf("settings:") === 0) {
+      return pathForSettings(key.indexOf("settings:") === 0 ? key.slice(9) : "general");
+    }
     if (key === "tags") return "/spaces";
     if (key === "communities") return "/subspaces";
     if (key.indexOf("feed:") === 0) {
@@ -4062,12 +4141,30 @@ let CS77_FILTER_LOW_REP = 20;
   function metadataFromAccount(account) {
     const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
     const legacy = HiveMd.parseJsonMetadata(account && account.json_metadata);
+    const postingOk = posting && typeof posting === "object" && !Array.isArray(posting);
+    const legacyOk = legacy && typeof legacy === "object" && !Array.isArray(legacy);
     const postingProfile =
-      posting && typeof posting.profile === "object" && posting.profile ? posting.profile : {};
+      postingOk &&
+      posting.profile &&
+      typeof posting.profile === "object" &&
+      !Array.isArray(posting.profile)
+        ? posting.profile
+        : null;
     const legacyProfile =
-      legacy && typeof legacy.profile === "object" && legacy.profile ? legacy.profile : {};
-    return Object.assign({}, legacy, posting, {
-      profile: Object.assign({}, legacyProfile, postingProfile),
+      legacyOk && legacy.profile && typeof legacy.profile === "object" && !Array.isArray(legacy.profile)
+        ? legacy.profile
+        : {};
+    const profile = Object.assign({}, legacyProfile, postingProfile || {});
+    // Once posting metadata has a profile, its name, about, pictures, and the
+    // other edited fields are the profile. Missing ones stay cleared instead
+    // of coming back from the older json_metadata copy.
+    if (postingProfile) {
+      PROFILE_FIELDS.forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(postingProfile, key)) delete profile[key];
+      });
+    }
+    return Object.assign({}, legacyOk ? legacy : {}, postingOk ? posting : {}, {
+      profile,
     });
   }
 
@@ -4812,6 +4909,7 @@ let CS77_FILTER_LOW_REP = 20;
     stopNotifPoll();
     resetNotifs();
     resetAccountState();
+    clearSettingsProfileScratch();
     renderSession();
     currentViewKey = "";
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
@@ -4913,6 +5011,7 @@ let CS77_FILTER_LOW_REP = 20;
                   <a class="session-account-link" href="${commentsUrl}">Comments</a>
                   <a class="session-account-link" href="${repliesUrl}">Replies</a>
                   <a class="session-account-link" href="${walletUrl}">Wallet</a>
+                  <a class="session-account-link" href="${HiveMd.escapeHtml(appHref("/settings"))}">Settings</a>
                   <button type="button" class="session-account-link" id="accountLogoutBtn">Logout</button>
                 </nav>
               </div>
@@ -12204,6 +12303,574 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  function settingsShellHtml(tab) {
+    const generalHref = HiveMd.escapeHtml(appHref(pathForSettings("general")));
+    const profileHref = HiveMd.escapeHtml(appHref(pathForSettings("profile")));
+    const page = tab === "profile" ? "profile" : "general";
+    return `
+      <section class="settings-page">
+        <h2 class="settings-title">Settings</h2>
+        <nav class="feed-nav settings-nav" aria-label="Settings">
+          <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
+          <a href="${profileHref}" class="${page === "profile" ? "is-active" : ""}">Profile</a>
+        </nav>
+        <div id="settingsPanel"></div>
+      </section>
+    `;
+  }
+
+  function settingsGeneralHtml() {
+    return `
+      <form class="settings-form" id="settingsGeneralForm" autocomplete="off">
+        <div class="settings-field">
+          <label class="settings-label" for="settingsVotePost">Default vote weight for posts</label>
+          <div class="settings-weight">
+            <input id="settingsVotePost" type="number" min="0" max="100" step="1" inputmode="numeric" autocomplete="off" aria-describedby="settingsWeightNote">
+            <span class="settings-weight-unit">%</span>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsVoteComment">Default vote weight for comments</label>
+          <div class="settings-weight">
+            <input id="settingsVoteComment" type="number" min="0" max="100" step="1" inputmode="numeric" autocomplete="off" aria-describedby="settingsWeightNote">
+            <span class="settings-weight-unit">%</span>
+          </div>
+        </div>
+        <p class="settings-note" id="settingsWeightNote">Saved in this browser. Empty or 0 uses the last vote weight.</p>
+      </form>
+    `;
+  }
+
+  function fillSettingsWeights() {
+    const post = $("#settingsVotePost");
+    const comment = $("#settingsVoteComment");
+    if (post) {
+      const stored = readDefaultVoteWeight("post");
+      post.value = stored == null ? "" : String(stored);
+    }
+    if (comment) {
+      const stored = readDefaultVoteWeight("comment");
+      comment.value = stored == null ? "" : String(stored);
+    }
+  }
+
+  function commitSettingsWeightInput(input) {
+    if (!input) return;
+    const kind = input.id === "settingsVoteComment" ? "comment" : "post";
+    const stored = storeDefaultVoteWeight(input.value, kind);
+    const next = stored == null ? "" : String(stored);
+    if (input.value !== next) input.value = next;
+  }
+
+  function bindSettingsGeneral() {
+    const form = $("#settingsGeneralForm");
+    if (!form) return;
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      commitSettingsWeightInput($("#settingsVotePost"));
+      commitSettingsWeightInput($("#settingsVoteComment"));
+    });
+    fillSettingsWeights();
+  }
+
+  function profileObject(metadata) {
+    const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {};
+    const profile =
+      meta.profile && typeof meta.profile === "object" && !Array.isArray(meta.profile) ? meta.profile : {};
+    return { meta, profile };
+  }
+
+  function profileFieldText(profile, key) {
+    const value = profile ? profile[key] : "";
+    return typeof value === "string" ? value : "";
+  }
+
+  function copyJsonKeys(obj, skip) {
+    const out = {};
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out;
+    Object.keys(obj).forEach((key) => {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      if (skip && skip[key]) return;
+      out[key] = obj[key];
+    });
+    return out;
+  }
+
+  function customSettingsFromMetadata(metadata) {
+    const { meta, profile } = profileObject(metadata);
+    const out = copyJsonKeys(meta, { profile: true });
+    const extra = {};
+    Object.keys(profile).forEach((key) => {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      if (PROFILE_FIELDS.indexOf(key) !== -1 && (profile[key] == null || typeof profile[key] === "string")) {
+        return;
+      }
+      extra[key] = profile[key];
+    });
+    if (Object.keys(extra).length) out.profile = extra;
+    return out;
+  }
+
+  function formatSettingsCustom(obj) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj) || !Object.keys(obj).length) return "{}";
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function parseSettingsCustom(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return {};
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Custom settings are not valid JSON.");
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("Custom settings must be a JSON object.");
+    }
+    return data;
+  }
+
+  function settingsProfileFieldsFromMetadata(metadata) {
+    const { profile } = profileObject(metadata);
+    const fields = {
+      custom: formatSettingsCustom(customSettingsFromMetadata(metadata)),
+    };
+    PROFILE_FIELDS.forEach((key) => {
+      fields[key] = profileFieldText(profile, key);
+    });
+    return fields;
+  }
+
+  function composeProfileMetadata(fields, custom) {
+    const meta = copyJsonKeys(custom, { profile: true });
+    const src =
+      custom.profile && typeof custom.profile === "object" && !Array.isArray(custom.profile)
+        ? custom.profile
+        : {};
+    const profile = {};
+    Object.keys(src).forEach((key) => {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      if (PROFILE_FIELDS.indexOf(key) !== -1 && (src[key] == null || typeof src[key] === "string")) return;
+      profile[key] = src[key];
+    });
+    PROFILE_FIELDS.forEach((key) => {
+      const text = String(fields[key] == null ? "" : fields[key]).trim();
+      if (text) profile[key] = text;
+    });
+    meta.profile = profile;
+    return meta;
+  }
+
+  function settingsPictureSrc(url) {
+    const text = String(url || "").trim();
+    if (!/^https?:\/\//i.test(text)) return "";
+    return HiveMd.proxyImage(text, 960);
+  }
+
+  function settingsProfileFormHtml(fields) {
+    const esc = HiveMd.escapeHtml;
+    const avatarSrc = settingsPictureSrc(fields.profile_image) || AVATAR_DEFAULT_LARGE;
+    const coverSrc = settingsPictureSrc(fields.cover_image);
+    return `
+      <form class="settings-form" id="settingsProfileForm" autocomplete="off">
+        <div class="settings-field">
+          <label class="settings-label" for="settingsName">Name</label>
+          <input id="settingsName" name="name" type="text" autocomplete="nickname" value="${esc(fields.name || "")}">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsAbout">About</label>
+          <textarea id="settingsAbout" class="settings-about" name="about" rows="4">${esc(fields.about || "")}</textarea>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsLocation">Location</label>
+          <input id="settingsLocation" name="location" type="text" autocomplete="off" value="${esc(fields.location || "")}">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsWebsite">Website</label>
+          <input id="settingsWebsite" name="website" type="text" inputmode="url" autocomplete="url" placeholder="https://" value="${esc(fields.website || "")}">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsAvatar">Avatar picture</label>
+          <div class="settings-media">
+            <img id="settingsAvatarPreview" class="settings-avatar-preview" src="${esc(avatarSrc)}" alt="" width="72" height="72">
+            <div class="settings-media-main">
+              <input id="settingsAvatar" name="profile_image" type="text" inputmode="url" autocomplete="off" placeholder="https://" value="${esc(fields.profile_image || "")}">
+              <div class="settings-media-actions">
+                <button type="button" class="settings-upload" id="settingsAvatarUpload">Upload</button>
+                <input id="settingsAvatarFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsCover">Cover background</label>
+          <p class="settings-note">Used in other frontends.</p>
+          <img id="settingsCoverPreview" class="settings-cover-preview" alt="" ${coverSrc ? `src="${esc(coverSrc)}"` : "hidden"}>
+          <input id="settingsCover" name="cover_image" type="text" inputmode="url" autocomplete="off" placeholder="https://" value="${esc(fields.cover_image || "")}">
+          <div class="settings-media-actions">
+            <button type="button" class="settings-upload" id="settingsCoverUpload">Upload</button>
+            <input id="settingsCoverFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsCustom">Custom</label>
+          <p class="settings-note">Other settings stored in your profile. They stay in this JSON when you save.</p>
+          <textarea id="settingsCustom" class="settings-custom" name="custom" rows="12" spellcheck="false">${esc(fields.custom || "{}")}</textarea>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsSaveBtn">Save</button>
+          <button type="button" class="btn-ghost" id="settingsResetBtn">Reset</button>
+        </div>
+        <p class="settings-status" id="settingsStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function settingsProfileGuestHtml() {
+    return `
+      <div class="panel empty-state">
+        <h2>Log in to edit your profile</h2>
+        <p>Name, about, and pictures are stored on Hive.</p>
+        <button type="button" class="btn-primary" id="settingsLoginBtn">Login</button>
+      </div>
+    `;
+  }
+
+  function readSettingsProfileFields() {
+    const form = $("#settingsProfileForm");
+    if (!form) return null;
+    return {
+      name: ($("#settingsName") && $("#settingsName").value) || "",
+      about: ($("#settingsAbout") && $("#settingsAbout").value) || "",
+      location: ($("#settingsLocation") && $("#settingsLocation").value) || "",
+      website: ($("#settingsWebsite") && $("#settingsWebsite").value) || "",
+      profile_image: ($("#settingsAvatar") && $("#settingsAvatar").value) || "",
+      cover_image: ($("#settingsCover") && $("#settingsCover").value) || "",
+      custom: ($("#settingsCustom") && $("#settingsCustom").value) || "",
+    };
+  }
+
+  function copySettingsProfileFields(fields) {
+    return {
+      name: (fields && fields.name) || "",
+      about: (fields && fields.about) || "",
+      location: (fields && fields.location) || "",
+      website: (fields && fields.website) || "",
+      profile_image: (fields && fields.profile_image) || "",
+      cover_image: (fields && fields.cover_image) || "",
+      custom: (fields && fields.custom) || "{}",
+    };
+  }
+
+  function clearSettingsProfileScratch() {
+    settingsProfileDraft = null;
+    settingsProfileBaseline = null;
+  }
+
+  function rememberSettingsProfileDraft() {
+    const user = observer();
+    const fields = readSettingsProfileFields();
+    if (!user || !fields) return;
+    settingsProfileDraft = Object.assign({ user }, copySettingsProfileFields(fields));
+  }
+
+  function writeSettingsProfileFields(fields) {
+    const values = copySettingsProfileFields(fields);
+    const set = (id, value) => {
+      const el = $(id);
+      if (el) el.value = value;
+    };
+    set("#settingsName", values.name);
+    set("#settingsAbout", values.about);
+    set("#settingsLocation", values.location);
+    set("#settingsWebsite", values.website);
+    set("#settingsAvatar", values.profile_image);
+    set("#settingsCover", values.cover_image);
+    set("#settingsCustom", values.custom);
+    paintSettingsPicture("avatar", values.profile_image);
+    paintSettingsPicture("cover", values.cover_image);
+    return values;
+  }
+
+  function resetSettingsProfile() {
+    const user = observer();
+    const base = settingsProfileBaseline;
+    if (settingsBusy || !user || !base || base.user !== user) return;
+    const values = writeSettingsProfileFields(base);
+    settingsProfileDraft = Object.assign({ user }, values);
+    setSettingsStatus("", false);
+  }
+
+  function setSettingsStatus(message, isError) {
+    const el = $("#settingsStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setSettingsFormLocked(locked) {
+    const save = $("#settingsSaveBtn");
+    const reset = $("#settingsResetBtn");
+    const avatar = $("#settingsAvatarUpload");
+    const cover = $("#settingsCoverUpload");
+    if (save) save.disabled = locked;
+    if (reset) reset.disabled = locked;
+    if (avatar) avatar.disabled = locked;
+    if (cover) cover.disabled = locked;
+  }
+
+  function paintSettingsPicture(kind, url) {
+    if (kind === "cover") {
+      const img = $("#settingsCoverPreview");
+      if (!img) return;
+      const src = settingsPictureSrc(url);
+      if (!src) {
+        img.hidden = true;
+        img.removeAttribute("src");
+        return;
+      }
+      img.hidden = false;
+      img.src = src;
+      return;
+    }
+    const img = $("#settingsAvatarPreview");
+    if (!img) return;
+    img.hidden = false;
+    img.src = settingsPictureSrc(url) || AVATAR_DEFAULT_LARGE;
+  }
+
+  function bindSettingsPicture(kind) {
+    const input = $(kind === "cover" ? "#settingsCover" : "#settingsAvatar");
+    const file = $(kind === "cover" ? "#settingsCoverFile" : "#settingsAvatarFile");
+    const button = $(kind === "cover" ? "#settingsCoverUpload" : "#settingsAvatarUpload");
+    const preview = $(kind === "cover" ? "#settingsCoverPreview" : "#settingsAvatarPreview");
+    if (button && file) {
+      button.addEventListener("click", () => {
+        if (!settingsBusy) file.click();
+      });
+    }
+    if (input) {
+      input.addEventListener("input", () => paintSettingsPicture(kind, input.value));
+    }
+    if (preview) {
+      preview.addEventListener("error", () => {
+        const raw = (input && input.value && String(input.value).trim()) || "";
+        const current = preview.getAttribute("src") || "";
+        if (raw && current !== raw && /^https?:\/\//i.test(raw)) {
+          preview.hidden = false;
+          preview.src = raw;
+          return;
+        }
+        if (kind === "cover") {
+          preview.hidden = true;
+          return;
+        }
+        if (current !== AVATAR_DEFAULT_LARGE) preview.src = AVATAR_DEFAULT_LARGE;
+      });
+    }
+  }
+
+  function bindSettingsProfileForm() {
+    const form = $("#settingsProfileForm");
+    if (!form) return;
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveSettingsProfile();
+    });
+    bindSettingsPicture("avatar");
+    bindSettingsPicture("cover");
+    const reset = $("#settingsResetBtn");
+    if (reset) {
+      reset.addEventListener("click", () => {
+        resetSettingsProfile();
+      });
+    }
+  }
+
+  async function uploadSettingsPicture(kind, file) {
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (settingsBusy) return;
+    if (!isImageFile(file)) {
+      setSettingsStatus("Choose an image file (png, jpg, gif, webp).", true);
+      return;
+    }
+    if (!hasSigner(user)) {
+      setSettingsStatus(signerNeededMessage(), true);
+      return;
+    }
+    settingsBusy = true;
+    setSettingsFormLocked(true);
+    setSettingsStatus(signingLabel("image"), false);
+    try {
+      const url = await uploadHiveImage(file, user);
+      if (parseRoute().name !== "settings") return;
+      const input = $(kind === "cover" ? "#settingsCover" : "#settingsAvatar");
+      if (input) {
+        input.value = url;
+        paintSettingsPicture(kind, url);
+        rememberSettingsProfileDraft();
+      }
+      setSettingsStatus("Image uploaded.", false);
+    } catch (err) {
+      if (parseRoute().name === "settings") {
+        setSettingsStatus((err && err.message) || "Image upload failed.", true);
+      }
+    } finally {
+      settingsBusy = false;
+      setSettingsFormLocked(false);
+    }
+  }
+
+  function applySavedProfile(user, metadata, json) {
+    const image = profileImageFromMetadata(metadata);
+    writeStoredProfileImage(user, image);
+    if (accountState.user === user && accountState.account) {
+      accountState.account.posting_json_metadata = json;
+      accountState.metadata = metadata;
+      accountState.profileImage = image;
+    }
+    paintSessionAvatar();
+    if (profileState.author === user && profileState.profile) {
+      profileState.profile.metadata = metadata;
+      profileState.profile.profile_image = image;
+      syncOwnProfileBanner();
+    }
+  }
+
+  async function saveSettingsProfile() {
+    if (settingsBusy) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    rememberSettingsProfileDraft();
+    const fields = readSettingsProfileFields();
+    if (!fields) return;
+    let custom;
+    try {
+      custom = parseSettingsCustom(fields.custom);
+    } catch (err) {
+      setSettingsStatus((err && err.message) || "Custom settings are not valid JSON.", true);
+      return;
+    }
+    const metadata = composeProfileMetadata(fields, custom);
+    const json = JSON.stringify(metadata);
+    if (json.length > SETTINGS_METADATA_MAX) {
+      setSettingsStatus("Profile settings are too long to save.", true);
+      return;
+    }
+    if (!hasSigner(user)) {
+      setSettingsStatus(signerNeededMessage(), true);
+      return;
+    }
+    settingsBusy = true;
+    setSettingsFormLocked(true);
+    setSettingsStatus("Saving…", false);
+    const { promise } = ChainQueue.enqueue({
+      username: user,
+      key: "Posting",
+      operations: [
+        [
+          "account_update2",
+          {
+            account: user,
+            json_metadata: "",
+            posting_json_metadata: json,
+            extensions: [],
+          },
+        ],
+      ],
+      meta: { type: "profile" },
+    });
+    try {
+      await promise;
+      if (observer() !== user) return;
+      applySavedProfile(user, metadata, json);
+      const saved = copySettingsProfileFields(fields);
+      settingsProfileBaseline = Object.assign({ user }, saved);
+      settingsProfileDraft = Object.assign({ user }, saved);
+      setSettingsStatus("Saved.", false);
+    } catch (err) {
+      if (parseRoute().name === "settings") {
+        setSettingsStatus((err && err.message) || "Could not save profile.", true);
+      }
+    } finally {
+      settingsBusy = false;
+      setSettingsFormLocked(false);
+    }
+  }
+
+  async function loadSettingsMetadata(user) {
+    if (!ownAccountReady(user)) await loadAccountResources();
+    if (observer() !== user) return null;
+    if (ownAccountReady(user)) return accountState.metadata || metadataFromAccount(accountState.account);
+    const rows = await HiveApi.getAccounts([user]);
+    const account = rows && rows[0];
+    if (!account || String(account.name || "").toLowerCase() !== user) {
+      throw new Error("Could not load this account.");
+    }
+    return metadataFromAccount(account);
+  }
+
+  async function fillSettingsProfile() {
+    const panel = $("#settingsPanel");
+    if (!panel) return;
+    const user = observer();
+    if (!user) {
+      panel.innerHTML = settingsProfileGuestHtml();
+      const login = $("#settingsLoginBtn");
+      if (login) login.addEventListener("click", openLogin);
+      return;
+    }
+    const key = routeKey(parseRoute());
+    if (settingsProfileDraft && settingsProfileDraft.user !== user) settingsProfileDraft = null;
+    if (settingsProfileBaseline && settingsProfileBaseline.user !== user) settingsProfileBaseline = null;
+    const draft = settingsProfileDraft && settingsProfileDraft.user === user ? settingsProfileDraft : null;
+    if (!settingsProfileBaseline) {
+      if (!draft && !ownAccountReady(user)) {
+        panel.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading profile…</div>`;
+      }
+      let metadata = null;
+      try {
+        metadata = await loadSettingsMetadata(user);
+      } catch (err) {
+        if (!routeStill(key)) return;
+        panel.innerHTML = `
+          <div class="panel empty-state">
+            <h2>Could not load profile</h2>
+            <p>${HiveMd.escapeHtml((err && err.message) || "Could not load this account.")}</p>
+          </div>
+        `;
+        return;
+      }
+      if (!routeStill(key) || !metadata) return;
+      settingsProfileBaseline = Object.assign({ user }, copySettingsProfileFields(settingsProfileFieldsFromMetadata(metadata)));
+    }
+    if (!routeStill(key)) return;
+    const fields = draft || settingsProfileBaseline;
+    panel.innerHTML = settingsProfileFormHtml(fields);
+    bindSettingsProfileForm();
+  }
+
+  async function renderSettings(page) {
+    const tab = page === "profile" ? "profile" : "general";
+    setPageMeta("Settings — CyberSpace77");
+    view.innerHTML = settingsShellHtml(tab);
+    if (tab === "general") {
+      const panel = $("#settingsPanel");
+      if (panel) panel.innerHTML = settingsGeneralHtml();
+      bindSettingsGeneral();
+      return;
+    }
+    await fillSettingsProfile();
+  }
+
   function renderAbout() {
     setPageMeta("About — CyberSpace77");
     view.innerHTML = `
@@ -12357,6 +13024,8 @@ let CS77_FILTER_LOW_REP = 20;
       setPageMeta("CyberSpace77");
     } else if (r.name === "about") {
       setPageMeta("About — CyberSpace77");
+    } else if (r.name === "settings") {
+      setPageMeta("Settings — CyberSpace77");
     } else if (r.name === "imprint") {
       setPageMeta("Imprint — CyberSpace77");
     }
@@ -12691,6 +13360,7 @@ let CS77_FILTER_LOW_REP = 20;
     const keepPost = r.name === "publish" && postLayer.open;
     if (r.name !== "community") resetCommunityState();
     if (r.name !== "profile") resetProfileState();
+    if (r.name !== "settings") clearSettingsProfileScratch();
     if (r.name !== "publish") {
       document.body.classList.toggle(
         "is-profile",
@@ -12823,6 +13493,20 @@ let CS77_FILTER_LOW_REP = 20;
       liveFeedNav = 0;
       currentViewKey = key;
       await renderCommunitiesPage();
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      return;
+    }
+    if (r.name === "settings") {
+      const canonical = pathForSettings(r.page);
+      const here = currentPath().replace(/\/+$/, "") || "/";
+      if (here !== canonical) {
+        navigate(appHref(canonical), true);
+        return;
+      }
+      liveFeedNav = 0;
+      currentViewKey = key;
+      await renderSettings(r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
       return;
@@ -13157,6 +13841,9 @@ let CS77_FILTER_LOW_REP = 20;
         else storeWeight(slider.value, voteKindFromEl(slider));
         return;
       }
+      if (e.target && e.target.closest && e.target.closest("#settingsProfileForm")) {
+        rememberSettingsProfileDraft();
+      }
       if (
         e.target.id === "publishTitle" ||
         e.target.id === "publishBody" ||
@@ -13175,6 +13862,17 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("change", (e) => {
       if (e.target && e.target.id === "publishReward") schedulePublishDraftSave();
+      if (e.target && (e.target.id === "settingsVotePost" || e.target.id === "settingsVoteComment")) {
+        commitSettingsWeightInput(e.target);
+        return;
+      }
+      if (e.target && (e.target.id === "settingsAvatarFile" || e.target.id === "settingsCoverFile")) {
+        const input = e.target;
+        const file = input.files && input.files[0];
+        const kind = input.id === "settingsCoverFile" ? "cover" : "avatar";
+        input.value = "";
+        if (file) uploadSettingsPicture(kind, file);
+      }
     });
 
     document.addEventListener(
