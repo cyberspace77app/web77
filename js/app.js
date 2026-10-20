@@ -8570,9 +8570,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderTagsPage() {
-    setPageMeta("Tags — CyberSpace77");
+    setPageMeta("Spaces — CyberSpace77");
     view.innerHTML = `
-      <section class="tags-page">
+      <section class="settings-page tags-page">
+        <h2 class="page-title">Spaces</h2>
         <h2 class="tags-page-title">Favorite tags</h2>
         <p class="feed-hint">Saved in this browser.</p>
         <div class="tags-fav-list" id="favTagsList"></div>
@@ -8939,8 +8940,8 @@ let CS77_FILTER_LOW_REP = 20;
     const newestHref = HiveMd.escapeHtml(appHref(pathForSubspaces("newest")));
     return `
       <section class="settings-page communities-page">
-        <h2 class="settings-title">Subspaces</h2>
-        <nav class="feed-nav settings-nav" aria-label="Subspaces">
+        <h2 class="page-title">Subspaces</h2>
+        <nav class="feed-nav subpage-nav" aria-label="Subspaces">
           <a href="${searchHref}" class="${page === "search" ? "is-active" : ""}">Search</a>
           <a href="${browseHref}" class="${page === "browse" ? "is-active" : ""}">Browse</a>
           <a href="${newestHref}" class="${page === "newest" ? "is-active" : ""}">Newest</a>
@@ -9393,8 +9394,8 @@ let CS77_FILTER_LOW_REP = 20;
     const value = HiveMd.escapeHtml(searchBox);
     return `
       <section class="settings-page">
-        <h2 class="settings-title">Search</h2>
-        <nav class="feed-nav settings-nav" aria-label="Search">
+        <h2 class="page-title">Search</h2>
+        <nav class="feed-nav subpage-nav" aria-label="Search">
           <a href="${usersHref}" class="${page === "users" ? "is-active" : ""}">Users</a>
           <a href="${spacesHref}" class="${page === "spaces" ? "is-active" : ""}">Spaces</a>
           <a href="${subspacesHref}" class="${page === "subspaces" ? "is-active" : ""}">Subspaces</a>
@@ -13750,8 +13751,8 @@ let CS77_FILTER_LOW_REP = 20;
     const nodesHref = HiveMd.escapeHtml(appHref(pathForSettings("nodes")));
     return `
       <section class="settings-page">
-        <h2 class="settings-title">Settings</h2>
-        <nav class="feed-nav settings-nav" aria-label="Settings">
+        <h2 class="page-title">Settings</h2>
+        <nav class="feed-nav subpage-nav" aria-label="Settings">
           <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
           <a href="${profileHref}" class="${page === "profile" ? "is-active" : ""}">Profile</a>
           <a href="${nodesHref}" class="${page === "nodes" ? "is-active" : ""}">Nodes</a>
@@ -14599,7 +14600,7 @@ let CS77_FILTER_LOW_REP = 20;
         communityAboutFor(r.community)
       );
     } else if (r.name === "tags") {
-      setPageMeta("Tags — CyberSpace77");
+      setPageMeta("Spaces — CyberSpace77");
     } else if (r.name === "communities") {
       setPageMeta("Subspaces — CyberSpace77");
     } else if (r.name === "welcome") {

@@ -2655,7 +2655,7 @@ a.tag:hover {
 
 .about-title,
 .imprint-title,
-.settings-title {
+.page-title {
   font-family: var(--font-serif);
   font-weight: 400;
   font-size: 2.4rem;

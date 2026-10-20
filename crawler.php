@@ -814,7 +814,7 @@ function cs77_page(array $route): array
             $title = "CyberSpace77";
         }
     } elseif ($name === "tags") {
-        $title = "Tags — CyberSpace77";
+        $title = "Spaces — CyberSpace77";
     } elseif ($name === "communities") {
         $title = "Subspaces — CyberSpace77";
     } elseif ($name === "welcome") {
