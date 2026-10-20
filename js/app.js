@@ -1514,6 +1514,13 @@ let CS77_FILTER_LOW_REP = 20;
       if (payoutPanelNode && (t === payoutPanelNode || (t && t.nodeType === 1 && payoutPanelNode.contains(t)))) {
         return;
       }
+      const profileMoreMenu = document.querySelector("body > .profile-more-menu");
+      if (
+        profileMoreMenu &&
+        (t === profileMoreMenu || (t && t.nodeType === 1 && profileMoreMenu.contains(t)))
+      ) {
+        return;
+      }
     }
     if (openSlider && !openSlider.panel.hidden) {
       placeVoteSlider(openSlider.btn, openSlider.panel);
@@ -1532,6 +1539,13 @@ let CS77_FILTER_LOW_REP = 20;
       placePayoutPanel(openPayout.el, payoutPanelEl());
     } else if (openPayout) {
       hidePayoutPanel();
+    }
+    const profileMoreRoot = view.querySelector(".profile-more.is-open");
+    const profileMoreMenu = document.querySelector("body > .profile-more-menu");
+    if (profileMoreRoot && profileMoreMenu && !profileMoreMenu.hidden) {
+      placeProfileMore(profileMoreRoot.querySelector(".profile-more-btn"), profileMoreMenu);
+    } else if (profileMoreMenu) {
+      closeProfileMore();
     }
   }
 
@@ -10388,14 +10402,81 @@ let CS77_FILTER_LOW_REP = 20;
       </div>`;
   }
 
+  function clearProfileMoreStyle(menu) {
+    menu.style.position = "";
+    menu.style.top = "";
+    menu.style.left = "";
+    menu.style.right = "";
+    menu.style.zIndex = "";
+    menu.style.maxHeight = "";
+    menu.style.maxWidth = "";
+    menu.style.overflowX = "";
+    menu.style.overflowY = "";
+    menu.style.overscrollBehavior = "";
+  }
+
   function closeProfileMore() {
     const root = view.querySelector(".profile-more.is-open");
-    if (!root) return;
-    root.classList.remove("is-open");
-    const btn = root.querySelector(".profile-more-btn");
-    const menu = root.querySelector(".profile-more-menu");
-    if (btn) btn.setAttribute("aria-expanded", "false");
-    if (menu) menu.hidden = true;
+    const menu =
+      document.querySelector("body > .profile-more-menu") ||
+      (root && root.querySelector(".profile-more-menu"));
+    if (root) {
+      root.classList.remove("is-open");
+      const btn = root.querySelector(".profile-more-btn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+    if (!menu) return;
+    menu.hidden = true;
+    clearProfileMoreStyle(menu);
+    if (root && menu.parentNode !== root) root.appendChild(menu);
+    else if (!root && menu.parentNode === document.body) menu.remove();
+  }
+
+  function placeProfileMore(anchor, menu) {
+    if (!anchor || !menu || menu.hidden) return;
+    if (!anchor.isConnected) {
+      closeProfileMore();
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      closeProfileMore();
+      return;
+    }
+    const scrollTop = menu.scrollTop;
+    menu.style.position = "fixed";
+    menu.style.zIndex = "70";
+    menu.style.right = "auto";
+    menu.style.maxWidth = Math.max(120, window.innerWidth - 16) + "px";
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const contentH = menu.scrollHeight;
+    const placeAbove = contentH > spaceBelow && spaceAbove > spaceBelow;
+    const maxH = Math.max(80, Math.round(placeAbove ? spaceAbove : spaceBelow));
+    menu.style.maxHeight = maxH + "px";
+    menu.style.overflowY = contentH > maxH ? "auto" : "";
+    menu.style.overscrollBehavior = contentH > maxH ? "contain" : "";
+    menu.style.left = Math.round(rect.left) + "px";
+    if (placeAbove) {
+      menu.style.top = Math.max(8, Math.round(rect.top - Math.min(contentH, maxH) - 8)) + "px";
+    } else {
+      menu.style.top = Math.round(rect.bottom + 8) + "px";
+    }
+    let box = menu.getBoundingClientRect();
+    const maxRight = window.innerWidth - 8;
+    if (box.right > maxRight) {
+      menu.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
+      box = menu.getBoundingClientRect();
+    }
+    if (box.left < 8) {
+      menu.style.left = "8px";
+      box = menu.getBoundingClientRect();
+    }
+    if (box.right > maxRight) {
+      menu.style.maxWidth = Math.max(80, Math.round(maxRight - 8)) + "px";
+      menu.style.overflowX = "auto";
+    }
+    if (menu.scrollTop !== scrollTop) menu.scrollTop = scrollTop;
   }
 
   function toggleProfileMore(btn) {
@@ -10405,9 +10486,12 @@ let CS77_FILTER_LOW_REP = 20;
     closeProfileMore();
     if (!willOpen) return;
     const menu = root.querySelector(".profile-more-menu");
+    if (!menu) return;
     root.classList.add("is-open");
     btn.setAttribute("aria-expanded", "true");
-    if (menu) menu.hidden = false;
+    document.body.appendChild(menu);
+    menu.hidden = false;
+    placeProfileMore(btn, menu);
   }
 
   function profilePageTitle(author, page) {
@@ -13466,6 +13550,7 @@ let CS77_FILTER_LOW_REP = 20;
     profileNavSwitch = false;
     closeLogoMenu();
     hideVoteSlider();
+    closeProfileMore();
     clearError();
     quietSmartHeader();
     const r = parseRoute();
@@ -14148,7 +14233,22 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("click", (e) => {
       const profileMoreEl = eventElement(e.target);
-      if (!profileMoreEl || !profileMoreEl.closest(".profile-more")) closeProfileMore();
+      const inProfileMoreMenu = Boolean(profileMoreEl && profileMoreEl.closest(".profile-more-menu"));
+      const inProfileMore = Boolean(
+        profileMoreEl && (profileMoreEl.closest(".profile-more") || inProfileMoreMenu)
+      );
+      if (!inProfileMore) closeProfileMore();
+      if (inProfileMoreMenu) {
+        const profileMuteBtn = profileMoreEl.closest(".profile-mute-btn");
+        if (profileMuteBtn) {
+          e.preventDefault();
+          closeProfileMore();
+          toggleProfileMute();
+          return;
+        }
+        if (profileMoreEl.closest(".profile-more-item")) closeProfileMore();
+        return;
+      }
       if (!inInteractiveSurface(e.target)) return;
       const profileMoreBtn = e.target.closest(".profile-more-btn");
       if (profileMoreBtn && inInteractiveSurface(profileMoreBtn)) {
@@ -14156,14 +14256,6 @@ let CS77_FILTER_LOW_REP = 20;
         toggleProfileMore(profileMoreBtn);
         return;
       }
-      const profileMuteBtn = e.target.closest(".profile-mute-btn");
-      if (profileMuteBtn && inInteractiveSurface(profileMuteBtn)) {
-        e.preventDefault();
-        closeProfileMore();
-        toggleProfileMute();
-        return;
-      }
-      if (e.target.closest(".profile-more-item")) closeProfileMore();
       const removeTag = e.target.closest("[data-remove-tag]");
       if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
