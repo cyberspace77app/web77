@@ -307,6 +307,18 @@
     });
   }
 
+  // Hive delete_comment. The author signs with the posting key. The chain
+  // accepts it only when the post or comment has no direct replies, still has
+  // a cashout record, and its net rshares are not positive.
+  function deleteComment({ author, permlink }) {
+    return enqueue({
+      username: author,
+      key: "Posting",
+      operations: [["delete_comment", { author, permlink }]],
+      meta: { type: "delete_comment", author, permlink },
+    });
+  }
+
   function subscribe(fn) {
     if (typeof fn === "function") listeners.add(fn);
     return () => listeners.delete(fn);
@@ -322,6 +334,7 @@
     enqueue,
     vote,
     comment,
+    deleteComment,
     subscribe,
     size,
   };

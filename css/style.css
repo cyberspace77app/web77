@@ -3705,6 +3705,24 @@ a.tag:hover {
   cursor: wait;
 }
 
+.content-more-delete {
+  color: var(--red-bright);
+}
+
+.content-more-delete:hover,
+.content-more-delete:focus-visible {
+  color: var(--red-bright);
+  text-shadow: var(--glow-red);
+}
+
+#contentDeleteStatus {
+  margin-top: 0;
+}
+
+#contentDeleteStatus.is-error {
+  color: var(--red-bright);
+}
+
 .community-nsfw {
   color: var(--red-bright);
   letter-spacing: 0.12em;
