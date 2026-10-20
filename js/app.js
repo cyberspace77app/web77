@@ -4347,6 +4347,15 @@ let CS77_FILTER_LOW_REP = 20;
     return "";
   }
 
+  function notificationPayoutText(msg) {
+    return String(msg).replace(
+      /\(\s*(-)?\s*\$\s*(-)?(\d+(?:\.\d*)?)\s*\)/g,
+      function (_full, lead, inner, amount) {
+        return "(H\u00a0" + (lead || inner ? "-" : "") + amount + ")";
+      }
+    );
+  }
+
   function notificationMessage(item) {
     let msg = String((item && item.msg) || "");
     const t = notificationType(item);
@@ -4357,7 +4366,7 @@ let CS77_FILTER_LOW_REP = 20;
       const actor = notificationActor(item);
       msg = actor ? "@" + actor + " followed you" : "Someone followed you";
     }
-    return msg;
+    return notificationPayoutText(msg);
   }
 
   function notificationMessageHtml(item, actor, href) {
