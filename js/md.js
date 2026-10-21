@@ -965,6 +965,76 @@
     );
   }
 
+  // Unlisted Vimeo videos use a 10-character hex privacy hash, either as
+  // /123/5e2d1c1e6d or as ?h=5e2d1c1e6d. A word such as /transcript is not one.
+  function vimeoPrivacyHash(value) {
+    const hash = String(value || "");
+    return /^[0-9a-fA-F]{10}$/.test(hash) ? hash : "";
+  }
+
+  // Plain vimeo.com and player.vimeo.com video URLs. Share-tracking query
+  // parameters (share, fl, fe) are ignored. A markdown link is not parsed here.
+  function vimeoFromUrl(href) {
+    const raw = unescapeHtml(String(href || "")).trim();
+    if (!raw) return null;
+    let url;
+    try {
+      url = new URL(raw);
+    } catch (err) {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    let path = url.pathname;
+    if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
+    let id = "";
+    let hash = "";
+    if (host === "player.vimeo.com") {
+      const player = /^\/video\/(\d{1,12})$/.exec(path);
+      if (!player) return null;
+      id = player[1];
+      hash = vimeoPrivacyHash(url.searchParams.get("h"));
+    } else if (host === "vimeo.com") {
+      const structured =
+        /^\/(?:channels\/[^/]+|groups\/[^/]+\/videos|album\/\d+\/video|showcase\/\d+\/video|ondemand\/[^/]+|video)\/(\d{1,12})$/i.exec(
+          path
+        );
+      if (structured) {
+        id = structured[1];
+        hash = vimeoPrivacyHash(url.searchParams.get("h"));
+      } else {
+        const plain = /^\/(\d{1,12})(?:\/([A-Za-z0-9]+))?$/.exec(path);
+        if (!plain) return null;
+        id = plain[1];
+        if (plain[2]) {
+          hash = vimeoPrivacyHash(plain[2]);
+          if (!hash) return null;
+        } else {
+          hash = vimeoPrivacyHash(url.searchParams.get("h"));
+        }
+      }
+    } else {
+      return null;
+    }
+    if (!/^\d{1,12}$/.test(id)) return null;
+    return { id: id, hash: hash };
+  }
+
+  function vimeoEmbedHtml(id, hash) {
+    const safeId = String(id || "");
+    if (!/^\d{1,12}$/.test(safeId)) return "";
+    let src = "https://player.vimeo.com/video/" + safeId;
+    const safeHash = vimeoPrivacyHash(hash);
+    if (safeHash) src += "?h=" + safeHash;
+    return (
+      '<div class="embed">' +
+      '<iframe src="' +
+      src +
+      '" allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin" title="Vimeo"></iframe>' +
+      "</div>"
+    );
+  }
+
   function tweetEmbedHtml(id) {
     if (!/^\d{1,22}$/.test(id)) return "";
     const href = "https://x.com/i/status/" + id;
@@ -1426,6 +1496,11 @@
       const speak = threeSpeakFromUrl(url);
       if (speak) {
         const embed = threeSpeakEmbedHtml(speak.id, speak.route);
+        if (embed) return embed + parts.trail;
+      }
+      const vimeo = vimeoFromUrl(url);
+      if (vimeo) {
+        const embed = vimeoEmbedHtml(vimeo.id, vimeo.hash);
         if (embed) return embed + parts.trail;
       }
       const tweet = tweetIdFromUrl(url);
@@ -2428,12 +2503,19 @@
       const info = threeSpeakFromUrl(url.href);
       return info ? "https://play.3speak.tv/" + info.route + "?v=" + info.id : "";
     }
+    if (host === "vimeo.com" || host === "player.vimeo.com") {
+      const info = vimeoFromUrl(url.href);
+      if (!info) return "";
+      return info.hash
+        ? "https://vimeo.com/" + info.id + "/" + info.hash
+        : "https://vimeo.com/" + info.id;
+    }
     return "";
   }
 
   const RAW_SKIP_TAGS = new Set(["pre", "code", "script", "style", "textarea"]);
 
-  // Keep a YouTube or 3Speak address that an author pasted as a player.
+  // Keep a YouTube, Vimeo, or 3Speak address that an author pasted as a player.
   // Fences, inline code, and code blocks stay untouched.
   function rewriteKnownMediaPlayers(src) {
     const s = String(src || "");
