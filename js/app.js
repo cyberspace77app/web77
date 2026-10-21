@@ -5837,6 +5837,21 @@ let CS77_FILTER_LOW_REP = 20;
     return normalizePublishReward(el ? el.value : "default");
   }
 
+  function publishRewardNoteText(value) {
+    const reward = normalizePublishReward(value);
+    if (reward === "hp") return "All author rewards are paid in hive power (staked hive).";
+    if (reward === "burned") {
+      return "Author rewards are burned, curators can still earn curation rewards.";
+    }
+    if (reward === "decline") return "Both author and curation rewards are declined.";
+    return "* Author rewards are paid as 50% HP and 50% liquid hbd or hive.";
+  }
+
+  function paintPublishRewardNote() {
+    const note = document.querySelector(".publish-reward-note");
+    if (note) note.textContent = publishRewardNoteText(readPublishReward());
+  }
+
   function readPublishBeneficiaryRows() {
     const root = $("#publishBeneficiaryRows");
     if (!root) return [];
@@ -5901,6 +5916,7 @@ let CS77_FILTER_LOW_REP = 20;
       const value = normalizePublishReward(state && state.reward);
       reward.value = value;
     }
+    paintPublishRewardNote();
     paintPublishBeneficiaries(state && state.beneficiaries);
   }
 
@@ -15619,12 +15635,16 @@ let CS77_FILTER_LOW_REP = 20;
           savePublishDraft();
           updatePublishPreview();
         }
+        if (e.target.id === "publishReward") paintPublishRewardNote();
         schedulePublishDraftSave();
       }
     });
 
     document.addEventListener("change", (e) => {
-      if (e.target && e.target.id === "publishReward") schedulePublishDraftSave();
+      if (e.target && e.target.id === "publishReward") {
+        paintPublishRewardNote();
+        schedulePublishDraftSave();
+      }
       if (e.target && (e.target.id === "settingsVotePost" || e.target.id === "settingsVoteComment")) {
         commitSettingsWeightInput(e.target);
         return;
