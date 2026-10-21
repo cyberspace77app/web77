@@ -8,27 +8,20 @@
 # /trending  /hot  /created  /search  /search/spaces  /search/subspaces  /spaces  /subspaces  /subspaces/browse  /subspaces/newest  /welcome  /imprint  /settings  /settings/profile  /settings/nodes
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
 #
-# Link-preview crawlers do not run the app, so they only see index.html.
-# Those user agents get crawler.php, which fills the title and Open Graph tags.
-# The tokens are the documented preview fetchers (Facebook, Instagram, Messenger,
-# X, Telegram, WhatsApp, Discord, Slack, LinkedIn, Pinterest, Reddit, and the
-# other unfurlers that send the same strings). iMessage includes
-# facebookexternalhit and Twitterbot. Search crawlers are left on index.html.
+# Social media or messenger link-preview crawlers do not run the app, so they only see index.html.
+# Those user agents get crawler.php, which pre-fetches the title and Open Graph tags.
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
 
-  RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Twitterbot|TelegramBot|WhatsApp|Discordbot|Slackbot|Slack-ImgProxy|LinkedInBot|Pinterest|redditbot|Embedly|Iframely|vkShare|MicrosoftPreview|BingPreview|Viber|Tumblr|Snapchat|Mastodon|Akkoma|Pleroma|Misskey|Bluesky|bitlybot|kakaotalk-scrap|FlipboardProxy|GoogleMessages|Quora Link Preview|Yahoo Link Preview|outbrain|rogerbot)" [NC]
-  RewriteRule ^$ /crawler.php [QSA,L]
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
 
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
   RewriteCond %{HTTP_USER_AGENT} "(facebookexternalhit|Twitterbot|TelegramBot|WhatsApp|Discordbot|Slackbot|Slack-ImgProxy|LinkedInBot|Pinterest|redditbot|Embedly|Iframely|vkShare|MicrosoftPreview|BingPreview|Viber|Tumblr|Snapchat|Mastodon|Akkoma|Pleroma|Misskey|Bluesky|bitlybot|kakaotalk-scrap|FlipboardProxy|GoogleMessages|Quora Link Preview|Yahoo Link Preview|outbrain|rogerbot)" [NC]
   RewriteRule ^ /crawler.php [QSA,L]
 
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ /index.html [QSA,L]
 </IfModule>
 
