@@ -924,7 +924,7 @@ function cs77_apply(string $html, array $page, string $origin): string
     }
     $defaultImage = cs77_attr($html, "property", "og:image");
     if ($defaultImage === "") {
-        $defaultImage = "/assets/cyberspace77.png";
+        $defaultImage = "/assets/cyberspace77.jpg";
     }
     $description = $page["description"] !== "" ? $page["description"] : $defaultDescription;
     $image = cs77_absolute_url($page["image"] !== "" ? $page["image"] : $defaultImage, $origin);
