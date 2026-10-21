@@ -10880,19 +10880,126 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  // Title, description, and image all move together. An empty description or
-  // image falls back to the tags from index.html.
-  function setPageMeta(title, description, image) {
+  const authorImageCache = new Map();
+  const authorImageLoads = new Map();
+  let pageMetaGen = 0;
+
+  // Title, description, and image move together. An omitted description or
+  // image falls back to the tags from index.html. Profile and subspace pages
+  // pass allowEmptyDescription so a missing about stays blank.
+  function setPageMeta(title, description, image, options) {
     const defaults = pageMetaDefaults();
+    const allowEmpty = Boolean(options && options.allowEmptyDescription);
     const nextTitle = String(title || "").trim() || "CyberSpace77";
-    const nextDescription =
-      String(description || "").replace(/\s+/g, " ").trim() || defaults.description;
+    let nextDescription = String(description || "").replace(/\s+/g, " ").trim();
+    if (!nextDescription && !allowEmpty) nextDescription = defaults.description;
     const nextImage = absoluteMetaUrl(image || defaults.image);
+    const gen = ++pageMetaGen;
     document.title = nextTitle;
     setMetaContent('meta[name="description"]', nextDescription);
     setMetaContent('meta[property="og:title"]', nextTitle);
     setMetaContent('meta[property="og:description"]', nextDescription);
     if (nextImage) setMetaContent('meta[property="og:image"]', nextImage);
+    return gen;
+  }
+
+  function profileImageOf(profile) {
+    const meta = (profile && (profile.metadata || profile.posting_json_metadata)) || {};
+    const info = meta && typeof meta.profile === "object" && meta.profile ? meta.profile : {};
+    return String((info && info.profile_image) || (profile && profile.profile_image) || "").trim();
+  }
+
+  function authorImageKey(author) {
+    return String(author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+  }
+
+  // null means the picture is not known yet. An empty string means the
+  // account has no profile image set.
+  function knownAuthorImage(author) {
+    const name = authorImageKey(author);
+    if (!name) return "";
+    if (accountState.loaded && accountState.user === name) {
+      return accountState.profileImage || "";
+    }
+    if (profileState.author === name && profileState.profile) {
+      return profileImageOf(profileState.profile);
+    }
+    if (authorImageCache.has(name)) return authorImageCache.get(name);
+    return null;
+  }
+
+  function rememberAuthorImage(author, image) {
+    const name = authorImageKey(author);
+    if (!name) return;
+    authorImageCache.set(name, String(image || "").trim());
+  }
+
+  function authorImage(author) {
+    const name = authorImageKey(author);
+    if (!name) return Promise.resolve("");
+    const known = knownAuthorImage(name);
+    if (known != null) return Promise.resolve(known);
+    if (authorImageLoads.has(name)) return authorImageLoads.get(name);
+    const load = HiveApi.getProfile(name, observer())
+      .then((profile) => {
+        const image = profileImageOf(profile);
+        rememberAuthorImage(name, image);
+        return image;
+      })
+      .catch(() => {
+        authorImageLoads.delete(name);
+        return "";
+      });
+    authorImageLoads.set(name, load);
+    return load;
+  }
+
+  function loadedProfileFor(author) {
+    const name = authorImageKey(author);
+    if (!name) return null;
+    if (profileState.author === name && profileState.profile) return profileState.profile;
+    if (ownAccountReady(name)) return profileFromAccountState();
+    return null;
+  }
+
+  function setProfileMeta(author, page, profile) {
+    const name = authorImageKey(author);
+    const loaded = profile || loadedProfileFor(name);
+    const about = loaded ? profileAboutText(loaded) : "";
+    const image = loaded ? profileImageOf(loaded) : knownAuthorImage(name) || "";
+    if (loaded) rememberAuthorImage(name, profileImageOf(loaded));
+    setPageMeta(profilePageTitle(name, page), about, image || AVATAR_DEFAULT_LARGE, {
+      allowEmptyDescription: true,
+    });
+  }
+
+  function setCommunityMeta(name, page, info) {
+    const id = String(name || "").toLowerCase();
+    const loaded = info || (communityState.name === id ? communityState.info : null);
+    const about = loaded ? communityAboutText(loaded) : "";
+    const known = knownAuthorImage(id);
+    const gen = setPageMeta(
+      communityPageTitle(loaded, id, page),
+      about,
+      known || pageMetaDefaults().image,
+      { allowEmptyDescription: true }
+    );
+    if (known != null) return;
+    authorImage(id).then((picture) => {
+      if (gen !== pageMetaGen) return;
+      const route = parseRoute();
+      if (!route || route.name !== "community" || String(route.community || "").toLowerCase() !== id) {
+        return;
+      }
+      setPageMeta(
+        communityPageTitle(loaded, id, page),
+        about,
+        picture || pageMetaDefaults().image,
+        { allowEmptyDescription: true }
+      );
+    });
   }
 
   function profileAboutText(profile) {
@@ -10901,22 +11008,8 @@ let CS77_FILTER_LOW_REP = 20;
     return String((info && info.about) || (profile && profile.about) || "").trim();
   }
 
-  function profileAboutFor(author) {
-    const name = String(author || "")
-      .replace(/^@/, "")
-      .toLowerCase();
-    if (!name || profileState.author !== name) return "";
-    return profileAboutText(profileState.profile);
-  }
-
   function communityAboutText(info) {
     return String((info && info.about) || "").trim();
-  }
-
-  function communityAboutFor(name) {
-    const id = String(name || "").toLowerCase();
-    if (!id || communityState.name !== id) return "";
-    return communityAboutText(communityState.info);
   }
 
   function textFromExcerptHtml(html) {
@@ -10958,11 +11051,34 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function setPostTitle(root) {
-    setPageMeta(
-      `${(root && root.title) || "Post"} — CyberSpace77`,
-      postMetaDescription(root),
-      postMetaImage(root)
-    );
+    const title = `${(root && root.title) || "Post"} — CyberSpace77`;
+    const description = postMetaDescription(root);
+    const fromPost = postMetaImage(root);
+    if (fromPost) {
+      setPageMeta(title, description, fromPost);
+      return;
+    }
+    const author = authorImageKey(root && root.author);
+    const known = knownAuthorImage(author);
+    if (known != null) {
+      setPageMeta(title, description, known || AVATAR_DEFAULT_LARGE);
+      return;
+    }
+    const gen = setPageMeta(title, description, AVATAR_DEFAULT_LARGE);
+    authorImage(author).then((image) => {
+      if (gen !== pageMetaGen) return;
+      const route = parseRoute();
+      const permlink = String((root && root.permlink) || "");
+      if (
+        !route ||
+        route.name !== "post" ||
+        authorImageKey(route.author) !== author ||
+        String(route.permlink || "") !== permlink
+      ) {
+        return;
+      }
+      setPageMeta(title, description, image || AVATAR_DEFAULT_LARGE);
+    });
   }
 
   function setCommentCount(n) {
@@ -12067,7 +12183,7 @@ let CS77_FILTER_LOW_REP = 20;
     const aboutEl = banner.querySelector(".profile-about");
     if (aboutEl) aboutEl.textContent = about;
     if (!postLayer.open && parseRoute().name === "profile" && profileState.author) {
-      setPageMeta(profilePageTitle(profileState.author, profileState.page), about);
+      setProfileMeta(profileState.author, profileState.page, profile);
     }
     const postsEl = banner.querySelector(".profile-post-count");
     if (postsEl) postsEl.textContent = (Number(account.post_count) || 0) + " posts";
@@ -13396,7 +13512,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const tab = normalizeProfilePage(page) || "posts";
-    setPageMeta(profilePageTitle(name, tab), profileAboutFor(name));
+    setProfileMeta(name, tab);
     const own = isOwnAuthor(name);
     if (profileBannerReady(name)) {
       profileState.page = tab;
@@ -13404,7 +13520,7 @@ let CS77_FILTER_LOW_REP = 20;
       claimAnimToken += 1;
       profileState.wallet = null;
       profileState.walletTx = null;
-      setPageMeta(profilePageTitle(name, tab), profileAboutText(profileState.profile));
+      setProfileMeta(name, tab, profileState.profile);
       paintProfileNavActive(tab);
       showProfileSectionLoading();
       try {
@@ -13459,7 +13575,7 @@ let CS77_FILTER_LOW_REP = 20;
       profileState.walletTx = null;
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
-      setPageMeta(profilePageTitle(name, tab), profileAboutText(profile));
+      setProfileMeta(name, tab, profile);
       view.innerHTML = chrome + `<div id="profileSection">${profileSectionLoadingHtml()}</div>`;
 
       if (own && accountState.user === name && accountState.account) {
@@ -13824,7 +13940,7 @@ let CS77_FILTER_LOW_REP = 20;
     const id = normalizeCommunityName(name);
     const tab = normalizeCommunityPage(page) || "latest";
     const known = communityState.name === id ? communityState.info : null;
-    setPageMeta(communityPageTitle(known, id, tab), communityAboutFor(id));
+    setCommunityMeta(id, tab, known);
     view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading community…</div>`;
     try {
       const info = await HiveApi.getCommunity(id, observer());
@@ -13840,7 +13956,7 @@ let CS77_FILTER_LOW_REP = 20;
       communityState.info = info;
       communityState.subscribed = communitySubscribed(info);
       communityState.pending = false;
-      setPageMeta(communityPageTitle(info, communityState.name, tab), communityAboutText(info));
+      setCommunityMeta(communityState.name, tab, info);
       const chrome = communityBannerHtml(info) + communityNavHtml(communityState.name, tab);
 
       if (tab === "rules") {
@@ -14755,12 +14871,9 @@ let CS77_FILTER_LOW_REP = 20;
             : "CyberSpace77"
       );
     } else if (r.name === "profile") {
-      setPageMeta(profilePageTitle(r.author, r.page), profileAboutFor(r.author));
+      setProfileMeta(r.author, r.page);
     } else if (r.name === "community") {
-      setPageMeta(
-        communityPageTitle(communityState.info, r.community, r.page),
-        communityAboutFor(r.community)
-      );
+      setCommunityMeta(r.community, r.page);
     } else if (r.name === "tags") {
       setPageMeta("Spaces — CyberSpace77");
     } else if (r.name === "communities") {

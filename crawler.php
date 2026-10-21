@@ -4,8 +4,8 @@
  * .htaccess sends those user agents here. Everyone else still gets index.html.
  *
  * The response is index.html with the title, description, and image the app
- * would set for the same URL. Posts and profiles (and subspace pages) are
- * filled from the Hive API.
+ * would set for the same URL. Posts, comments, profiles, and subspace pages
+ * are filled from the Hive API.
  */
 
 declare(strict_types=1);
@@ -461,10 +461,10 @@ function cs77_http_post(string $url, string $payload): ?string
     return is_string($body) && $body !== "" ? $body : null;
 }
 
-function cs77_profile_about($profile): string
+function cs77_profile_info($profile): array
 {
     if (!is_array($profile)) {
-        return "";
+        return [];
     }
     $meta = $profile["metadata"] ?? ($profile["posting_json_metadata"] ?? []);
     if (is_string($meta)) {
@@ -472,11 +472,49 @@ function cs77_profile_about($profile): string
         $meta = is_array($decoded) ? $decoded : [];
     }
     if (!is_array($meta)) {
-        $meta = [];
+        return [];
     }
     $info = (isset($meta["profile"]) && is_array($meta["profile"])) ? $meta["profile"] : [];
+    return $info;
+}
+
+function cs77_profile_about($profile): string
+{
+    if (!is_array($profile)) {
+        return "";
+    }
+    $info = cs77_profile_info($profile);
     $about = (string)($info["about"] ?? ($profile["about"] ?? ""));
     return trim($about);
+}
+
+function cs77_profile_image($profile): string
+{
+    if (!is_array($profile)) {
+        return "";
+    }
+    $info = cs77_profile_info($profile);
+    $image = trim((string)($info["profile_image"] ?? ""));
+    if ($image !== "") {
+        return $image;
+    }
+    return trim((string)($profile["profile_image"] ?? ""));
+}
+
+function cs77_account_image(string $account): string
+{
+    $name = strtolower(trim($account));
+    if ($name === "") {
+        return "";
+    }
+    $loaded = cs77_hive("bridge.get_profile", [
+        "account" => $name,
+        "observer" => "",
+    ]);
+    if ($loaded["state"] !== "ok" || !is_array($loaded["result"])) {
+        return "";
+    }
+    return cs77_profile_image($loaded["result"]);
 }
 
 function cs77_json_meta($raw): array
@@ -804,6 +842,7 @@ function cs77_page(array $route): array
     $title = "Not found — CyberSpace77";
     $description = "";
     $image = "";
+    $exactDescription = false;
     $name = $route["name"];
     if ($name === "feed") {
         if ($route["tag"] !== "") {
@@ -843,6 +882,11 @@ function cs77_page(array $route): array
                 $title = "Not found — CyberSpace77";
             } else {
                 $description = cs77_profile_about($profile);
+                $exactDescription = true;
+                $image = cs77_profile_image($profile);
+                if ($image === "") {
+                    $image = "/assets/satoshi.png";
+                }
             }
         }
     } elseif ($name === "community") {
@@ -856,6 +900,8 @@ function cs77_page(array $route): array
             $info = $loaded["result"];
             $title = cs77_community_title($info, $route["community"], $route["page"] !== "" ? $route["page"] : "latest");
             $description = trim((string)($info["about"] ?? ""));
+            $exactDescription = true;
+            $image = cs77_account_image($route["community"]);
         } else {
             $title = cs77_community_title(null, $route["community"], $route["page"] !== "" ? $route["page"] : "latest");
         }
@@ -881,6 +927,12 @@ function cs77_page(array $route): array
                     ? $authored
                     : cs77_post_description((string)($post["body"] ?? ""));
                 $image = cs77_post_image($post);
+                if ($image === "") {
+                    $image = cs77_account_image($author);
+                }
+                if ($image === "") {
+                    $image = "/assets/satoshi.png";
+                }
             }
         }
     }
@@ -888,6 +940,7 @@ function cs77_page(array $route): array
         "title" => $title,
         "description" => cs77_one_line($description),
         "image" => $image,
+        "exact_description" => $exactDescription,
     ];
 }
 
@@ -926,7 +979,9 @@ function cs77_apply(string $html, array $page, string $origin): string
     if ($defaultImage === "") {
         $defaultImage = "/assets/cyberspace77.jpg";
     }
-    $description = $page["description"] !== "" ? $page["description"] : $defaultDescription;
+    $description = !empty($page["exact_description"])
+        ? $page["description"]
+        : ($page["description"] !== "" ? $page["description"] : $defaultDescription);
     $image = cs77_absolute_url($page["image"] !== "" ? $page["image"] : $defaultImage, $origin);
     $title = $page["title"] !== "" ? $page["title"] : "CyberSpace77";
     $html = preg_replace("/<title>.*?<\\/title>/s", "<title>" . cs77_escape($title) . "</title>", $html, 1);
