@@ -3463,7 +3463,7 @@ a.tag:hover {
   margin-top: 0.65rem;
   font-family: var(--font-mono);
   font-size: 0.78rem;
-  color: var(--yellow);
+  color: var(--gray);
 }
 
 .composer-status.is-error {
