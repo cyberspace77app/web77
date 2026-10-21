@@ -4233,6 +4233,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!postLayer.open) return;
     if (location.hash === "#comments") {
       settlePostAnchor({ jumpComments: true }, true);
+      if (currentPost) setPostTitle(currentPost);
       return;
     }
     if (parseCommentFragment(location.hash)) {
@@ -4241,7 +4242,10 @@ let CS77_FILTER_LOW_REP = 20;
         { anchor: location.hash },
         Boolean(pv && !htmlHasPendingComments(pv.innerHTML))
       );
+      if (currentPost) setPostTitle(currentPost);
+      return;
     }
+    if (currentPost) setPostTitle(currentPost);
   });
 
   /* ─── Session / login ─── */
@@ -11050,35 +11054,158 @@ let CS77_FILTER_LOW_REP = 20;
     return "";
   }
 
-  function setPostTitle(root) {
-    const title = `${(root && root.title) || "Post"} — CyberSpace77`;
-    const description = postMetaDescription(root);
-    const fromPost = postMetaImage(root);
-    if (fromPost) {
-      setPageMeta(title, description, fromPost);
-      return;
+  function repliedPostTitle(comment, article) {
+    const rootTitle = String((comment && comment.root_title) || "").trim();
+    if (rootTitle) return rootTitle;
+    if (article && isRootPost(article)) {
+      const title = String(article.title || "").trim();
+      if (title) return title;
     }
-    const author = authorImageKey(root && root.author);
-    const known = knownAuthorImage(author);
-    if (known != null) {
-      setPageMeta(title, description, known || AVATAR_DEFAULT_LARGE);
-      return;
-    }
-    const gen = setPageMeta(title, description, AVATAR_DEFAULT_LARGE);
-    authorImage(author).then((image) => {
-      if (gen !== pageMetaGen) return;
-      const route = parseRoute();
-      const permlink = String((root && root.permlink) || "");
+    const raw = String((comment && comment.title) || "").trim();
+    const stripped = raw.replace(/^(?:re:\s*)+/i, "").trim();
+    return stripped || raw || "Post";
+  }
+
+  function commentPageTitle(comment, article) {
+    const author = "@" + authorImageKey(comment && comment.author);
+    return author + " replied to: " + repliedPostTitle(comment, article) + " — CyberSpace77";
+  }
+
+  function commentMetaDescription(comment) {
+    if (!comment || !window.HiveMd || typeof HiveMd.excerpt !== "function") return "";
+    const result = HiveMd.excerpt(comment, 280, {
+      firstSentence: true,
+      preserveLineBreaks: false,
+    });
+    return textFromExcerptHtml(result && result.html);
+  }
+
+  function findLoadedComment(author, permlink) {
+    const name = authorImageKey(author);
+    const link = String(permlink || "").toLowerCase();
+    if (!name || !link) return null;
+    let found = null;
+    const walk = (node) => {
+      if (!node || found) return;
       if (
-        !route ||
-        route.name !== "post" ||
-        authorImageKey(route.author) !== author ||
-        String(route.permlink || "") !== permlink
+        authorImageKey(node.author) === name &&
+        String(node.permlink || "").toLowerCase() === link
       ) {
+        found = node;
         return;
       }
-      setPageMeta(title, description, image || AVATAR_DEFAULT_LARGE);
+      const replies = node._replies || [];
+      for (let i = 0; i < replies.length; i++) walk(replies[i]);
+    };
+    walk(currentPost);
+    if (found) return found;
+    const cached = contentOf(name, permlink) || contentOf(author, permlink);
+    return cached || null;
+  }
+
+  function samePostRoute(author, permlink) {
+    const route = parseRoute();
+    return Boolean(
+      route &&
+        route.name === "post" &&
+        authorImageKey(route.author) === authorImageKey(author) &&
+        String(route.permlink || "") === String(permlink || "")
+    );
+  }
+
+  function setNodeMeta(node, title, description, routeAuthor, routePermlink, hash) {
+    const apply = (image) => setPageMeta(title, description, image);
+    const fromNode = postMetaImage(node);
+    if (fromNode) {
+      apply(fromNode);
+      return;
+    }
+    const author = authorImageKey(node && node.author);
+    const known = knownAuthorImage(author);
+    if (known != null) {
+      apply(known || AVATAR_DEFAULT_LARGE);
+      return;
+    }
+    const gen = apply(AVATAR_DEFAULT_LARGE);
+    authorImage(author).then((image) => {
+      if (gen !== pageMetaGen) return;
+      if (!samePostRoute(routeAuthor, routePermlink)) return;
+      if ((location.hash || "") !== hash) return;
+      apply(image || AVATAR_DEFAULT_LARGE);
     });
+  }
+
+  function setPostTitle(root) {
+    const routeAuthor = authorImageKey((root && root.author) || "");
+    const routePermlink = String((root && root.permlink) || "");
+    const hash = location.hash || "";
+    const frag = parseCommentFragment(hash);
+    const fragOnArticle =
+      frag &&
+      root &&
+      isRootPost(root) &&
+      !(
+        authorImageKey(root.author) === frag.author &&
+        String(root.permlink || "") === String(frag.permlink || "")
+      );
+    if (fragOnArticle) {
+      const comment = findLoadedComment(frag.author, frag.permlink);
+      if (comment) {
+        setNodeMeta(
+          comment,
+          commentPageTitle(comment, root),
+          commentMetaDescription(comment),
+          routeAuthor,
+          routePermlink,
+          hash
+        );
+        return;
+      }
+      const gen = setPageMeta(
+        commentPageTitle({ author: frag.author }, root),
+        "",
+        AVATAR_DEFAULT_LARGE
+      );
+      if (!window.HiveApi || typeof HiveApi.getPost !== "function") return;
+      HiveApi.getPost(frag.author, frag.permlink)
+        .then((comment) => {
+          if (gen !== pageMetaGen || !comment || !comment.author) return;
+          const still = parseCommentFragment(location.hash);
+          if (!still || still.author !== frag.author || String(still.permlink) !== String(frag.permlink)) {
+            return;
+          }
+          if (!samePostRoute(routeAuthor, routePermlink)) return;
+          setNodeMeta(
+            comment,
+            commentPageTitle(comment, root),
+            commentMetaDescription(comment),
+            routeAuthor,
+            routePermlink,
+            location.hash || ""
+          );
+        })
+        .catch(() => {});
+      return;
+    }
+    if (root && !isRootPost(root)) {
+      setNodeMeta(
+        root,
+        commentPageTitle(root, null),
+        commentMetaDescription(root),
+        routeAuthor,
+        routePermlink,
+        hash
+      );
+      return;
+    }
+    setNodeMeta(
+      root,
+      `${(root && root.title) || "Post"} — CyberSpace77`,
+      postMetaDescription(root),
+      routeAuthor,
+      routePermlink,
+      hash
+    );
   }
 
   function setCommentCount(n) {

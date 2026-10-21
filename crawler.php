@@ -59,15 +59,38 @@ function cs77_origin(): string
     return ($https ? "https" : "http") . "://" . $host;
 }
 
-function cs77_request_path(): string
+function cs77_request_uri(): string
 {
     $uri = (string)($_SERVER["REQUEST_URI"] ?? "/");
-    $path = parse_url($uri, PHP_URL_PATH);
+    return $uri === "" ? "/" : $uri;
+}
+
+function cs77_request_path(): string
+{
+    $path = parse_url(cs77_request_uri(), PHP_URL_PATH);
     if (!is_string($path) || $path === "") {
         $path = "/";
     }
     $decoded = rawurldecode($path);
     return $decoded === "" ? "/" : $decoded;
+}
+
+function cs77_request_fragment(): string
+{
+    $frag = parse_url(cs77_request_uri(), PHP_URL_FRAGMENT);
+    if (!is_string($frag) || $frag === "") {
+        return "";
+    }
+    $decoded = rawurldecode($frag);
+    return $decoded === "" ? $frag : $decoded;
+}
+
+function cs77_fragment_comment(string $fragment): array
+{
+    if (!preg_match("/^@([a-z0-9.\\-]{3,16})\\/([^\\s#?]+)/i", $fragment, $match)) {
+        return ["author" => "", "permlink" => ""];
+    }
+    return ["author" => strtolower($match[1]), "permlink" => $match[2]];
 }
 
 function cs77_one_line(string $text): string
@@ -539,6 +562,79 @@ function cs77_post_authored_description($post): string
     return trim($description);
 }
 
+function cs77_is_comment($post): bool
+{
+    if (!is_array($post)) {
+        return false;
+    }
+    if (trim((string)($post["parent_author"] ?? "")) !== "") {
+        return true;
+    }
+    return (int)($post["depth"] ?? 0) > 0;
+}
+
+function cs77_replied_title($comment, string $articleTitle): string
+{
+    if (is_array($comment)) {
+        $root = trim((string)($comment["root_title"] ?? ""));
+        if ($root !== "") {
+            return $root;
+        }
+    }
+    if ($articleTitle !== "") {
+        return $articleTitle;
+    }
+    $title = trim((string)(is_array($comment) ? ($comment["title"] ?? "") : ""));
+    $stripped = preg_replace("/^(?:re:\\s*)+/i", "", $title);
+    $stripped = trim(is_string($stripped) ? $stripped : "");
+    if ($stripped !== "") {
+        return $stripped;
+    }
+    return $title !== "" ? $title : "Post";
+}
+
+function cs77_comment_heading(string $author, string $postTitle): string
+{
+    $subject = $postTitle !== "" ? $postTitle : "Post";
+    return "@" . $author . " replied to: " . $subject . " — CyberSpace77";
+}
+
+function cs77_fetch_post(string $author, string $permlink): array
+{
+    $loaded = cs77_hive("bridge.get_post", [
+        "author" => $author,
+        "permlink" => $permlink,
+        "observer" => "",
+    ]);
+    $post = [];
+    $state = $loaded["state"];
+    if ($state === "ok" && is_array($loaded["result"])) {
+        $post = $loaded["result"];
+        if (trim((string)($post["author"] ?? "")) === "") {
+            $post = [];
+            $state = "missing";
+        }
+    }
+    return ["state" => $state, "post" => $post];
+}
+
+function cs77_comment_page($comment, string $articleTitle): array
+{
+    $author = trim((string)($comment["author"] ?? ""));
+    $image = cs77_post_image($comment);
+    if ($image === "") {
+        $image = cs77_account_image($author);
+    }
+    if ($image === "") {
+        $image = "/assets/satoshi.png";
+    }
+    return [
+        "title" => cs77_comment_heading($author, cs77_replied_title($comment, $articleTitle)),
+        "description" => cs77_post_description((string)($comment["body"] ?? "")),
+        "image" => $image,
+    ];
+}
+
 function cs77_post_image($post): string
 {
     if (!is_array($post)) {
@@ -907,19 +1003,32 @@ function cs77_page(array $route): array
         }
     } elseif ($name === "post") {
         $title = "Post — CyberSpace77";
-        $loaded = cs77_hive("bridge.get_post", [
-            "author" => $route["author"],
-            "permlink" => $route["permlink"],
-            "observer" => "",
-        ]);
-        if ($loaded["state"] === "missing") {
+        $loadedPost = cs77_fetch_post($route["author"], $route["permlink"]);
+        $post = $loadedPost["post"];
+        if ($loadedPost["state"] === "missing") {
             $title = "Not found — CyberSpace77";
-        } elseif ($loaded["state"] === "ok" && is_array($loaded["result"])) {
-            $post = $loaded["result"];
-            $author = trim((string)($post["author"] ?? ""));
-            if ($author === "") {
-                $title = "Not found — CyberSpace77";
+        } elseif ($post !== []) {
+            $fragment = cs77_fragment_comment(cs77_request_fragment());
+            $anchored = [];
+            if ($fragment["author"] !== "" && !(
+                strcasecmp($fragment["author"], (string)$post["author"]) === 0
+                && (string)$fragment["permlink"] === (string)$post["permlink"]
+            )) {
+                $anchored = cs77_fetch_post($fragment["author"], $fragment["permlink"])["post"];
+            }
+            if ($anchored !== [] && cs77_is_comment($anchored)) {
+                $articleTitle = cs77_is_comment($post) ? "" : trim((string)($post["title"] ?? ""));
+                $commentPage = cs77_comment_page($anchored, $articleTitle);
+                $title = $commentPage["title"];
+                $description = $commentPage["description"];
+                $image = $commentPage["image"];
+            } elseif (cs77_is_comment($post)) {
+                $commentPage = cs77_comment_page($post, "");
+                $title = $commentPage["title"];
+                $description = $commentPage["description"];
+                $image = $commentPage["image"];
             } else {
+                $author = trim((string)($post["author"] ?? ""));
                 $postTitle = trim((string)($post["title"] ?? ""));
                 $title = ($postTitle !== "" ? $postTitle : "Post") . " — CyberSpace77";
                 $authored = cs77_post_authored_description($post);
