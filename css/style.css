@@ -4361,6 +4361,7 @@ body:has(#publishOverlay:not([hidden])) {
   opacity: 0.85;
 }
 
+.publish-card.is-editing-comment .publish-title-field,
 .publish-card.is-editing-comment .publish-title-input,
 .publish-card.is-editing-comment .publish-title-count,
 .publish-card.is-editing-comment .publish-tags-head,
@@ -4370,7 +4371,6 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .publish-head {
-  position: relative;
   display: flex;
   align-items: center;
   margin-bottom: 0.9rem;
@@ -4378,16 +4378,21 @@ body:has(#publishOverlay:not([hidden])) {
 
 .publish-head h2 {
   margin-bottom: 0;
-  padding-right: calc(1.4rem + 0.75rem);
+}
+
+.publish-title-field {
+  position: relative;
+  margin: 0 0 1rem;
 }
 
 .publish-title-count {
   position: absolute;
-  top: 50%;
-  right: 0;
+  right: 0.7rem;
+  bottom: 0.52rem;
   width: 1.4rem;
   height: 1.4rem;
-  transform: translateY(-50%);
+  z-index: 1;
+  pointer-events: none;
 }
 
 .publish-title-count svg {
@@ -4425,7 +4430,7 @@ body:has(#publishOverlay:not([hidden])) {
   min-height: calc(1.35em + 1.6rem + 2px);
   height: calc(1.35em + 1.6rem + 2px);
   padding: 0.8rem 0.95rem;
-  margin: 0 0 1rem;
+  margin: 0;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);

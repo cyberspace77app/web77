@@ -38,6 +38,7 @@ let CS77_FILTER_LOW_REP = 20;
   // comment_operation allows at most HIVE_COMMENT_TITLE_LIMIT - 1 bytes.
   const HIVE_COMMENT_TITLE_LIMIT = 256;
   const PUBLISH_TITLE_MAX = HIVE_COMMENT_TITLE_LIMIT - 1;
+  const PUBLISH_TITLE_RING_AT = 128;
   const MAX_BENEFICIARIES = 8;
   const FAVORITE_TAGS_KEY = "cs77_favorite_tags";
   const MAX_FAVORITE_TAGS = 40;
@@ -5586,21 +5587,21 @@ let CS77_FILTER_LOW_REP = 20;
     const el = $("#publishTitleCount");
     if (!el) return;
     const comment = editingComment();
-    el.hidden = comment;
     const title = $("#publishTitle");
     const used = title ? utf8Size(title.value) : 0;
     const max = PUBLISH_TITLE_MAX;
     const ratio = max > 0 ? Math.min(1, Math.max(0, used / max)) : 0;
     const atLimit = max > 0 && used >= max;
-    el.hidden = comment || used <= 0;
-    el.classList.toggle("is-limit", atLimit && !comment);
+    const showRing = !comment && used > PUBLISH_TITLE_RING_AT;
+    el.hidden = !showRing;
+    el.classList.toggle("is-limit", atLimit && showRing);
     const arc = el.querySelector(".publish-title-count-arc");
     const radius = 8;
     const turn = 2 * Math.PI * radius;
     if (arc) {
       arc.style.strokeDasharray = turn.toFixed(3);
       arc.style.strokeDashoffset = (turn * (1 - ratio)).toFixed(3);
-      arc.style.opacity = used > 0 ? "1" : "0";
+      arc.style.opacity = showRing ? "1" : "0";
     }
     const label = used + " of " + max + " title bytes";
     el.setAttribute("aria-label", label);
@@ -5677,11 +5678,94 @@ let CS77_FILTER_LOW_REP = 20;
     return next;
   }
 
+  let publishTitleMirror = null;
+
+  function publishTitleLineHeight(el) {
+    const line = parseFloat(getComputedStyle(el).lineHeight);
+    return line > 0 ? line : 0;
+  }
+
+  function publishTitleContentWidth(el) {
+    const cs = getComputedStyle(el);
+    const padL = parseFloat(cs.paddingLeft) || 0;
+    const padR = parseFloat(cs.paddingRight) || 0;
+    return Math.max(0, el.clientWidth - padL - padR);
+  }
+
+  function publishTitleLastLineWidth(el) {
+    const value = String(el.value || "");
+    const width = publishTitleContentWidth(el);
+    if (!value || width <= 0) return 0;
+    const cs = getComputedStyle(el);
+    let mirror = publishTitleMirror;
+    if (!mirror) {
+      mirror = document.createElement("div");
+      mirror.setAttribute("aria-hidden", "true");
+      mirror.style.position = "fixed";
+      mirror.style.left = "0";
+      mirror.style.top = "0";
+      mirror.style.visibility = "hidden";
+      mirror.style.pointerEvents = "none";
+      mirror.style.boxSizing = "content-box";
+      mirror.style.padding = "0";
+      mirror.style.border = "0";
+      mirror.style.minHeight = "0";
+      mirror.style.whiteSpace = "pre-wrap";
+      document.body.appendChild(mirror);
+      publishTitleMirror = mirror;
+    }
+    mirror.style.width = width + "px";
+    mirror.style.font = cs.font;
+    mirror.style.letterSpacing = cs.letterSpacing;
+    mirror.style.wordSpacing = cs.wordSpacing;
+    mirror.style.lineHeight = cs.lineHeight;
+    mirror.style.whiteSpace = cs.whiteSpace || "pre-wrap";
+    mirror.style.overflowWrap = cs.overflowWrap || "break-word";
+    mirror.style.wordBreak = cs.wordBreak || "normal";
+    mirror.textContent = value;
+    const range = document.createRange();
+    range.selectNodeContents(mirror);
+    const rects = range.getClientRects();
+    if (!rects.length) return 0;
+    let lineTop = rects[0].top;
+    for (let i = 1; i < rects.length; i++) {
+      if (rects[i].top > lineTop) lineTop = rects[i].top;
+    }
+    let left = Infinity;
+    let right = -Infinity;
+    for (let i = 0; i < rects.length; i++) {
+      const rect = rects[i];
+      if (rect.top < lineTop - 1) continue;
+      if (rect.left < left) left = rect.left;
+      if (rect.right > right) right = rect.right;
+    }
+    return right > left ? right - left : 0;
+  }
+
+  // Distance from the content's right edge to where the last line should stop
+  // so it stays clear of the ring. Zero while the ring is hidden.
+  function publishTitleRingKeepClear(el) {
+    const ring = $("#publishTitleCount");
+    if (!ring || ring.hidden) return 0;
+    const ringRect = ring.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    if (ringRect.width <= 0 || elRect.width <= 0) return 0;
+    const cs = getComputedStyle(el);
+    const padR = parseFloat(cs.paddingRight) || 0;
+    const borderRight = Math.max(0, el.offsetWidth - el.clientWidth - el.clientLeft);
+    const contentRight = elRect.right - borderRight - padR;
+    const gap = (parseFloat(cs.fontSize) || 16) * 0.45;
+    const clear = contentRight - ringRect.left + gap;
+    return clear > 0 ? clear : 0;
+  }
+
   function fitPublishTitle(input) {
     const el = input || $("#publishTitle");
     if (!el || el.hidden) return;
     const overlay = $("#publishOverlay");
     if (overlay && overlay.hidden) return;
+    const line = publishTitleLineHeight(el);
+    const before = el.offsetHeight;
     el.style.height = "auto";
     let border = el.offsetHeight - el.clientHeight;
     if (border < 0) border = 0;
@@ -5689,6 +5773,19 @@ let CS77_FILTER_LOW_REP = 20;
     if (el.scrollHeight > el.clientHeight) {
       el.style.height = el.offsetHeight + (el.scrollHeight - el.clientHeight) + "px";
     }
+    const fitted = el.offsetHeight;
+    const hadExtra = line > 0 && before >= fitted + line - 1;
+    paintPublishTitleCount();
+    const ring = $("#publishTitleCount");
+    const showRing = Boolean(ring && !ring.hidden);
+    const value = String(el.value || "");
+    const contentWidth = publishTitleContentWidth(el);
+    const last = showRing ? publishTitleLastLineWidth(el) : 0;
+    const keep = showRing ? publishTitleRingKeepClear(el) : 0;
+    const slack = hadExtra && showRing ? 6 : 0;
+    const extra = showRing && contentWidth > 0 && keep > 0 && last > contentWidth - keep - slack;
+    el.classList.toggle("is-ring-line", extra);
+    if (extra && line > 0) el.style.height = fitted + line + "px";
   }
 
   function applyPublishForm(state) {
@@ -7215,6 +7312,7 @@ let CS77_FILTER_LOW_REP = 20;
     ov.hidden = false;
     paintPublishChrome();
     fitPublishTitle();
+    requestAnimationFrame(() => fitPublishTitle());
     paintPublishDest();
     paintPublishTags();
     renderDestMenu();
@@ -15931,6 +16029,9 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("scroll", maybeLoadMoreBrowse, { passive: true });
     window.addEventListener("resize", maybeLoadMoreBrowse);
     window.addEventListener("resize", () => fitPublishTitle());
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => fitPublishTitle());
+    }
     window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
     window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
@@ -15979,7 +16080,12 @@ let CS77_FILTER_LOW_REP = 20;
         e.target.id === "publishReward" ||
         (e.target.closest && e.target.closest(".publish-beneficiary-row"))
       ) {
-        if (e.target.id === "publishTitle" && !e.isComposing) enforcePublishTitleLimit(e.target);
+        if (e.target.id === "publishTitle") {
+          // Predictive text keeps the word in composition. Refresh the ring
+          // and the height, and leave the byte cap until the word is committed.
+          if (e.isComposing) fitPublishTitle(e.target);
+          else enforcePublishTitleLimit(e.target);
+        }
         if (e.target.id === "publishTitle" || e.target.id === "publishBody") {
           savePublishDraft();
           updatePublishPreview();
@@ -15989,12 +16095,32 @@ let CS77_FILTER_LOW_REP = 20;
       }
     });
 
-    document.addEventListener("compositionend", (e) => {
-      if (!e.target || e.target.id !== "publishTitle") return;
-      enforcePublishTitleLimit(e.target);
+    let publishTitleComposeTimer = 0;
+    const settlePublishTitle = (input) => {
+      enforcePublishTitleLimit(input);
       savePublishDraft();
       updatePublishPreview();
       schedulePublishDraftSave();
+    };
+    // Gboard updates the underlined word through compositionupdate, and writes
+    // the tapped suggestion after compositionend.
+    document.addEventListener("compositionupdate", (e) => {
+      if (!e.target || e.target.id !== "publishTitle") return;
+      fitPublishTitle(e.target);
+      savePublishDraft();
+      updatePublishPreview();
+      schedulePublishDraftSave();
+    });
+    document.addEventListener("compositionend", (e) => {
+      if (!e.target || e.target.id !== "publishTitle") return;
+      const input = e.target;
+      settlePublishTitle(input);
+      if (publishTitleComposeTimer) clearTimeout(publishTitleComposeTimer);
+      publishTitleComposeTimer = setTimeout(() => {
+        publishTitleComposeTimer = 0;
+        if (!input.isConnected) return;
+        settlePublishTitle(input);
+      }, 0);
     });
 
     document.addEventListener("change", (e) => {
