@@ -5619,7 +5619,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Hive counts title bytes. Keep whole characters and stop at PUBLISH_TITLE_MAX.
   function clampPublishTitle(text) {
-    const value = String(text || "");
+    const value = String(text || "").replace(/\r\n|\r|\n/g, " ");
     if (!value || utf8Size(value) <= PUBLISH_TITLE_MAX) return value;
     let out = "";
     let bytes = 0;
@@ -5646,7 +5646,22 @@ let CS77_FILTER_LOW_REP = 20;
         input.setSelectionRange(Math.min(caret, caretEnd), Math.max(caret, caretEnd));
       }
     }
+    fitPublishTitle(input);
     return next;
+  }
+
+  function fitPublishTitle(input) {
+    const el = input || $("#publishTitle");
+    if (!el || el.hidden) return;
+    const overlay = $("#publishOverlay");
+    if (overlay && overlay.hidden) return;
+    el.style.height = "auto";
+    let border = el.offsetHeight - el.clientHeight;
+    if (border < 0) border = 0;
+    el.style.height = el.scrollHeight + border + "px";
+    if (el.scrollHeight > el.clientHeight) {
+      el.style.height = el.offsetHeight + (el.scrollHeight - el.clientHeight) + "px";
+    }
   }
 
   function applyPublishForm(state) {
@@ -5665,7 +5680,10 @@ let CS77_FILTER_LOW_REP = 20;
     const title = $("#publishTitle");
     const body = $("#publishBody");
     const tagInput = $("#publishTagInput");
-    if (title) title.value = publishTitleDraft;
+    if (title) {
+      title.value = publishTitleDraft;
+      fitPublishTitle(title);
+    }
     if (body) body.value = publishBodyDraft;
     if (tagInput) tagInput.value = (state && state.tagInput) || "";
     applyPublishAdvanced(state);
@@ -7071,7 +7089,10 @@ let CS77_FILTER_LOW_REP = 20;
     const title = $("#publishTitle");
     const body = $("#publishBody");
     const tagInput = $("#publishTagInput");
-    if (title) title.value = "";
+    if (title) {
+      title.value = "";
+      fitPublishTitle(title);
+    }
     if (body) body.value = "";
     if (tagInput) tagInput.value = "";
     applyPublishAdvanced(null);
@@ -7164,6 +7185,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     ov.hidden = false;
     paintPublishChrome();
+    fitPublishTitle();
     paintPublishDest();
     paintPublishTags();
     renderDestMenu();
@@ -10389,7 +10411,10 @@ let CS77_FILTER_LOW_REP = 20;
     const comment = editingComment();
     if (!comment) {
       const titleEl = $("#publishTitle");
-      if (titleEl) titleEl.value = clampPublishTitle(title);
+      if (titleEl) {
+        titleEl.value = clampPublishTitle(title);
+        fitPublishTitle(titleEl);
+      }
       publishTags = tagsFromPublishFile(data.tags);
       const tagInput = $("#publishTagInput");
       if (tagInput) tagInput.value = "";
@@ -15869,6 +15894,7 @@ let CS77_FILTER_LOW_REP = 20;
     bindScrollTop();
     window.addEventListener("scroll", maybeLoadMoreBrowse, { passive: true });
     window.addEventListener("resize", maybeLoadMoreBrowse);
+    window.addEventListener("resize", () => fitPublishTitle());
     window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
     window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
@@ -16532,6 +16558,10 @@ let CS77_FILTER_LOW_REP = 20;
           closeMdMenu();
           const mdBtn = $("#publishMdBtn");
           if (mdBtn) mdBtn.focus();
+          return;
+        }
+        if (e.target.id === "publishTitle" && e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+          e.preventDefault();
           return;
         }
         if (e.target.id === "publishTagInput") {

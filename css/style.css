@@ -4368,16 +4368,26 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .publish-card .publish-title-input {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: calc(1.35em + 1.6rem + 2px);
+  height: calc(1.35em + 1.6rem + 2px);
   padding: 0.8rem 0.95rem;
-  margin-bottom: 1rem;
+  margin: 0 0 1rem;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--yellow);
   font-family: var(--font-serif);
   font-size: 1.35rem;
+  line-height: 1.35;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .publish-card .publish-title-input:focus {
