@@ -5579,6 +5579,32 @@ let CS77_FILTER_LOW_REP = 20;
       pageEl.classList.toggle("is-editing", editing);
       pageEl.classList.toggle("is-editing-comment", comment);
     }
+    paintPublishTitleCount();
+  }
+
+  function paintPublishTitleCount() {
+    const el = $("#publishTitleCount");
+    if (!el) return;
+    const comment = editingComment();
+    el.hidden = comment;
+    const title = $("#publishTitle");
+    const used = title ? utf8Size(title.value) : 0;
+    const max = PUBLISH_TITLE_MAX;
+    const ratio = max > 0 ? Math.min(1, Math.max(0, used / max)) : 0;
+    const atLimit = max > 0 && used >= max;
+    el.hidden = comment || used <= 0;
+    el.classList.toggle("is-limit", atLimit && !comment);
+    const arc = el.querySelector(".publish-title-count-arc");
+    const radius = 8;
+    const turn = 2 * Math.PI * radius;
+    if (arc) {
+      arc.style.strokeDasharray = turn.toFixed(3);
+      arc.style.strokeDashoffset = (turn * (1 - ratio)).toFixed(3);
+      arc.style.opacity = used > 0 ? "1" : "0";
+    }
+    const label = used + " of " + max + " title bytes";
+    el.setAttribute("aria-label", label);
+    el.title = label;
   }
 
   function focusPublishField() {
@@ -5647,6 +5673,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     fitPublishTitle(input);
+    paintPublishTitleCount();
     return next;
   }
 
@@ -5684,6 +5711,7 @@ let CS77_FILTER_LOW_REP = 20;
       title.value = publishTitleDraft;
       fitPublishTitle(title);
     }
+    paintPublishTitleCount();
     if (body) body.value = publishBodyDraft;
     if (tagInput) tagInput.value = (state && state.tagInput) || "";
     applyPublishAdvanced(state);
@@ -7093,6 +7121,7 @@ let CS77_FILTER_LOW_REP = 20;
       title.value = "";
       fitPublishTitle(title);
     }
+    paintPublishTitleCount();
     if (body) body.value = "";
     if (tagInput) tagInput.value = "";
     applyPublishAdvanced(null);
@@ -10416,6 +10445,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (titleEl) {
         titleEl.value = clampPublishTitle(title);
         fitPublishTitle(titleEl);
+        paintPublishTitleCount();
       }
       publishTags = tagsFromPublishFile(data.tags);
       const tagInput = $("#publishTagInput");
