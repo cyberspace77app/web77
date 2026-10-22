@@ -9,7 +9,7 @@ let CS77_FILTER_LOW_REP = 20;
   "use strict";
 
   const APP_ID = "cyberspace77.com";
-  const APP_VERSION = "0.17";
+  const APP_VERSION = "0.18";
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
