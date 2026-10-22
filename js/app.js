@@ -7446,6 +7446,8 @@ let CS77_FILTER_LOW_REP = 20;
     setPublishFabHidden(true);
     pendingPublish = false;
     ov.hidden = false;
+    fitPublishTitle();
+    requestAnimationFrame(() => fitPublishTitle());
     focusPublishField();
   }
 
@@ -10459,6 +10461,10 @@ let CS77_FILTER_LOW_REP = 20;
     savePublishDraft();
     updatePublishPreview();
     schedulePublishDraftSave();
+    if (!comment) {
+      fitPublishTitle();
+      requestAnimationFrame(() => fitPublishTitle());
+    }
     setPublishStatus(
       skippedCommunity
         ? "Post loaded. The community was not a hive id, so this publishes to your blog."
