@@ -742,7 +742,7 @@ html.has-mouse .node-menu:hover .node-dropdown {
   top: 100%;
   right: 0;
   z-index: 42;
-  /* Same offset as the notification panel, so this menu lines up with the node pill menu. */
+  /* Gap under the username and avatar. On desktop this also lines the menu up with the node pill menu. Mobile keeps the same gap. */
   padding-top: calc(0.5rem + 2.6px);
   min-width: 8.75rem;
 }
@@ -5488,10 +5488,6 @@ body:has(#publishOverlay:not([hidden])) {
     right: 1.1rem;
     width: auto;
     max-width: none;
-    padding-top: 0.4rem;
-  }
-
-  .session-account-menu {
     padding-top: 0.4rem;
   }
 
