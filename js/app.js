@@ -5210,7 +5210,7 @@ let CS77_FILTER_LOW_REP = 20;
           <div class="session-chip">
             <button type="button" class="session-avatar-btn" aria-haspopup="true" aria-expanded="false" aria-controls="sessionDropdown" aria-label="Notifications">
               <span class="session-avatar-wrap">
-                <img src="${sessionAvatarSrc(user)}" alt="" width="22" height="22">
+                <img src="${sessionAvatarSrc(user)}" alt="" width="24" height="24">
                 <span class="session-badge" id="sessionBadge" hidden></span>
               </span>
             </button>

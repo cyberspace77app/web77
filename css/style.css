@@ -666,15 +666,15 @@ html.has-mouse .node-menu:hover .node-dropdown {
 .session-avatar-wrap {
   position: relative;
   display: block;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
 }
 
 .session-chip img {
   display: block;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
@@ -743,7 +743,7 @@ html.has-mouse .node-menu:hover .node-dropdown {
   right: 0;
   z-index: 42;
   /* Same offset as the notification panel, so this menu lines up with the node pill menu. */
-  padding-top: calc(0.5rem + 3.6px);
+  padding-top: calc(0.5rem + 2.6px);
   min-width: 8.75rem;
 }
 
@@ -809,7 +809,7 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   right: 0;
   z-index: 42;
   /* The session chip is shorter than the node pill and centered with it, so this extra gap lines the notification panel up with the node menu. */
-  padding-top: calc(0.5rem + 3.6px);
+  padding-top: calc(0.5rem + 2.6px);
   width: min(22rem, calc(100vw - 2.2rem));
 }
 
