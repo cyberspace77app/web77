@@ -4445,6 +4445,10 @@ body:has(#publishOverlay:not([hidden])) {
   box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
 }
 
+.publish-card .publish-title-input::placeholder {
+  color: var(--gray-dim);
+}
+
 .publish-login-wrap {
   margin-top: 1.25rem;
 }
@@ -4561,6 +4565,12 @@ body:has(#publishOverlay:not([hidden])) {
 .publish-card .composer-input {
   min-height: 12rem;
   color: var(--gray);
+}
+
+.publish-card .composer-input::placeholder {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .publish-tags-head {
