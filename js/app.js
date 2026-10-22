@@ -9229,7 +9229,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     more.hidden = false;
-    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading subspaces…`;
+    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading Subspaces…`;
   }
 
   async function loadMoreBrowseCommunities() {
@@ -14273,7 +14273,7 @@ let CS77_FILTER_LOW_REP = 20;
     const tab = normalizeCommunityPage(page) || "latest";
     const known = communityState.name === id ? communityState.info : null;
     setCommunityMeta(id, tab, known);
-    view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading community…</div>`;
+    view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading subspace…</div>`;
     try {
       const info = await HiveApi.getCommunity(id, observer());
       setNodeLabel();
