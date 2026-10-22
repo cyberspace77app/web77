@@ -35,6 +35,9 @@ let CS77_FILTER_LOW_REP = 20;
   const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   const MAX_TAGS = 10;
   const PUBLISH_DESC_MAX = 160;
+  // comment_operation allows at most HIVE_COMMENT_TITLE_LIMIT - 1 bytes.
+  const HIVE_COMMENT_TITLE_LIMIT = 256;
+  const PUBLISH_TITLE_MAX = HIVE_COMMENT_TITLE_LIMIT - 1;
   const MAX_BENEFICIARIES = 8;
   const FAVORITE_TAGS_KEY = "cs77_favorite_tags";
   const MAX_FAVORITE_TAGS = 40;
@@ -5565,7 +5568,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (h2) h2.textContent = comment ? "Edit comment" : editing ? "Edit post" : "New post";
     if (submit) submit.textContent = editing ? "Save" : "Publish";
     if (dest) dest.hidden = editing;
-    if (title) title.hidden = comment;
+    if (title) {
+      title.hidden = comment;
+      title.maxLength = PUBLISH_TITLE_MAX;
+    }
     if (tagsHead) tagsHead.hidden = comment;
     if (tagsWrap) tagsWrap.hidden = comment;
     if (body) body.placeholder = comment ? "Write your comment…" : "Write your post…";
@@ -5605,8 +5611,46 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
+  function utf8Size(text) {
+    const value = String(text || "");
+    if (typeof TextEncoder === "function") return new TextEncoder().encode(value).length;
+    return value.length;
+  }
+
+  // Hive counts title bytes. Keep whole characters and stop at PUBLISH_TITLE_MAX.
+  function clampPublishTitle(text) {
+    const value = String(text || "");
+    if (!value || utf8Size(value) <= PUBLISH_TITLE_MAX) return value;
+    let out = "";
+    let bytes = 0;
+    for (const ch of value) {
+      const n = utf8Size(ch);
+      if (bytes + n > PUBLISH_TITLE_MAX) break;
+      out += ch;
+      bytes += n;
+    }
+    return out;
+  }
+
+  function enforcePublishTitleLimit(input) {
+    if (!input) return "";
+    const raw = String(input.value || "");
+    const next = clampPublishTitle(raw);
+    if (next !== raw) {
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      input.value = next;
+      if (typeof input.setSelectionRange === "function") {
+        const caret = Math.min(start == null ? next.length : start, next.length);
+        const caretEnd = Math.min(end == null ? caret : end, next.length);
+        input.setSelectionRange(Math.min(caret, caretEnd), Math.max(caret, caretEnd));
+      }
+    }
+    return next;
+  }
+
   function applyPublishForm(state) {
-    publishTitleDraft = (state && state.title) || "";
+    publishTitleDraft = clampPublishTitle((state && state.title) || "");
     publishBodyDraft = (state && state.body) || "";
     publishTags = Array.isArray(state && state.tags) ? state.tags.slice() : [];
     if (state && state.dest) {
@@ -7145,9 +7189,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (pageEl && pageEl.classList.contains("is-pending")) return;
     const commentEdit = editingComment();
+    const titleEl = $("#publishTitle");
+    if (!commentEdit && titleEl) enforcePublishTitleLimit(titleEl);
     const title = commentEdit
       ? String((publishEdit && publishEdit.title) || "").trim()
-      : (($("#publishTitle") && $("#publishTitle").value) || "").trim();
+      : clampPublishTitle(((titleEl && titleEl.value) || "").trim());
     const body = (($("#publishBody") && $("#publishBody").value) || "").trim();
     if (!commentEdit) takeTagsFromInput();
     if (!commentEdit && !title) {
@@ -10343,7 +10389,7 @@ let CS77_FILTER_LOW_REP = 20;
     const comment = editingComment();
     if (!comment) {
       const titleEl = $("#publishTitle");
-      if (titleEl) titleEl.value = title.slice(0, 255);
+      if (titleEl) titleEl.value = clampPublishTitle(title);
       publishTags = tagsFromPublishFile(data.tags);
       const tagInput = $("#publishTagInput");
       if (tagInput) tagInput.value = "";
@@ -15871,6 +15917,7 @@ let CS77_FILTER_LOW_REP = 20;
         e.target.id === "publishReward" ||
         (e.target.closest && e.target.closest(".publish-beneficiary-row"))
       ) {
+        if (e.target.id === "publishTitle" && !e.isComposing) enforcePublishTitleLimit(e.target);
         if (e.target.id === "publishTitle" || e.target.id === "publishBody") {
           savePublishDraft();
           updatePublishPreview();
@@ -15878,6 +15925,14 @@ let CS77_FILTER_LOW_REP = 20;
         if (e.target.id === "publishReward") paintPublishRewardNote();
         schedulePublishDraftSave();
       }
+    });
+
+    document.addEventListener("compositionend", (e) => {
+      if (!e.target || e.target.id !== "publishTitle") return;
+      enforcePublishTitleLimit(e.target);
+      savePublishDraft();
+      updatePublishPreview();
+      schedulePublishDraftSave();
     });
 
     document.addEventListener("change", (e) => {
