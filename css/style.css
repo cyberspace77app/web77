@@ -4574,10 +4574,6 @@ body:has(#publishOverlay:not([hidden])) {
   color: var(--gray);
 }
 
-.publish-dest-note.is-error {
-  color: var(--red-bright);
-}
-
 .publish-card .comment-composer {
   margin: 0 0 1rem;
 }

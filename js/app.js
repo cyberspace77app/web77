@@ -83,16 +83,12 @@ let CS77_FILTER_LOW_REP = 20;
   let pendingCommentsScroll = false;
   let pendingPublish = false;
   let publishDest = { type: "blog", name: "", title: "My cyberspace" };
-  // Last destination this account is allowed to publish to. A subspace stays
-  // here only after bridge.get_community says the account can post there.
-  let publishDestAllowed = { type: "blog", name: "", title: "My cyberspace" };
+  // Warning under Publish in when this account cannot post in the subspace.
+  // Publish still sends. Hivemind mutes that post in the subspace.
   let publishDestNote = "";
-  let publishDestNoteError = false;
   let publishAccessSeq = 0;
-  let publishAccessWait = null;
-  let publishSubmitLock = false;
-  // Silent council comment check. Starts when the box is focused or Reply is
-  // clicked. Comment waits for this request and does not send another.
+  // Silent council comment check. The note warns when a comment would be muted.
+  // Comment and Reply still send.
   let commentAccessSeq = 0;
   let commentAccessWait = null;
   let commentAccessCommunity = "";
@@ -5900,7 +5896,6 @@ let CS77_FILTER_LOW_REP = 20;
       };
       if (!publishEdit && publishDest.type !== "community") {
         cancelPublishCommunityCheck();
-        publishDestAllowed = blogPublishDest();
         setPublishDestNote("");
       }
     }
@@ -6097,14 +6092,6 @@ let CS77_FILTER_LOW_REP = 20;
 
   function cancelPublishCommunityCheck() {
     publishAccessSeq += 1;
-    publishAccessWait = null;
-  }
-
-  function releasePublishSubmit() {
-    if (publishSubmitLock) return;
-    const pageEl = $("#publishPage");
-    const btn = $("#publishSubmit");
-    if (btn && !(pageEl && pageEl.classList.contains("is-pending"))) btn.disabled = false;
   }
 
   function paintPublishDestNote() {
@@ -6113,20 +6100,16 @@ let CS77_FILTER_LOW_REP = 20;
     const show = Boolean(publishDestNote) && !publishEdit;
     note.hidden = !show;
     note.textContent = show ? publishDestNote : "";
-    note.classList.toggle("is-error", show && publishDestNoteError);
+    note.classList.remove("is-error");
   }
 
-  function setPublishDestNote(message, isError) {
+  function setPublishDestNote(message) {
     publishDestNote = String(message || "");
-    publishDestNoteError = Boolean(publishDestNote && isError);
     paintPublishDestNote();
   }
 
-  // The subspace stays selected. The error sits under it. The status line stays clear until Publish.
-  function holdPublishCommunity(id, title, message, demote) {
-    const allowedId =
-      publishDestAllowed.type === "community" ? normalizeCommunityName(publishDestAllowed.name) : "";
-    if (demote && allowedId && allowedId === id) publishDestAllowed = blogPublishDest();
+  // The subspace stays selected. The note under it is a warning. Publish still sends.
+  function holdPublishCommunity(id, title, message) {
     const label = String(title || "").trim() || id;
     publishDest = { type: "community", name: id, title: label };
     notePublishCommunityTitle(id, label);
@@ -6134,24 +6117,21 @@ let CS77_FILTER_LOW_REP = 20;
     renderDestMenu();
     schedulePublishDraftSave();
     setPublishStatus("");
-    setPublishDestNote(message, true);
+    setPublishDestNote(message);
   }
 
   // Topic posts are open. Journal and council posts need a member role or higher.
-  // One request per selection. Publish waits for it and does not send another.
+  // One request per selection. A refusal only paints the note. Publish still sends.
   function ensurePublishCommunity(name, title) {
     const id = normalizeCommunityName(name);
     const user = observer();
     const seq = ++publishAccessSeq;
-    if (!id || !user || publishEdit) {
-      publishAccessWait = null;
-      return Promise.resolve(false);
-    }
+    if (!id || !user || publishEdit) return Promise.resolve(false);
     const fallbackTitle = String(title || "").trim() || id;
-    // The rights check stays silent. A refusal paints the error note when the call returns.
+    // The rights check stays silent. A refusal paints the gray note when the call returns.
     setPublishDestNote("");
     setPublishStatus("");
-    const wait = HiveApi.getCommunity(id, user)
+    return HiveApi.getCommunity(id, user)
       .then((info) => {
         if (seq !== publishAccessSeq) return false;
         if (observer() !== user) return false;
@@ -6159,17 +6139,15 @@ let CS77_FILTER_LOW_REP = 20;
           holdPublishCommunity(
             id,
             fallbackTitle,
-            "Could not check whether you can post in " + fallbackTitle + ".",
-            true
+            "Could not check whether you can post in " + fallbackTitle + "."
           );
           return false;
         }
         const nextTitle = String(info.title || "").trim() || fallbackTitle;
         if (!communityAllowsPost(info)) {
-          holdPublishCommunity(id, nextTitle, communityPostDeniedMessage(info, nextTitle), true);
+          holdPublishCommunity(id, nextTitle, communityPostDeniedMessage(info, nextTitle));
           return false;
         }
-        publishDestAllowed = { type: "community", name: id, title: nextTitle };
         publishDest = { type: "community", name: id, title: nextTitle };
         notePublishCommunityTitle(id, nextTitle);
         paintPublishDest();
@@ -6184,18 +6162,10 @@ let CS77_FILTER_LOW_REP = 20;
         holdPublishCommunity(
           id,
           fallbackTitle,
-          "Could not check whether you can post in " + fallbackTitle + ".",
-          false
+          "Could not check whether you can post in " + fallbackTitle + "."
         );
         return false;
-      })
-      .finally(() => {
-        if (seq !== publishAccessSeq) return;
-        publishAccessWait = null;
       });
-    wait.communityId = id;
-    publishAccessWait = wait;
-    return wait;
   }
 
   function syncPublishCommunityAccess() {
@@ -6203,7 +6173,6 @@ let CS77_FILTER_LOW_REP = 20;
     const id = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
     if (!id) {
       cancelPublishCommunityCheck();
-      publishDestAllowed = blogPublishDest();
       publishDest = blogPublishDest();
       paintPublishDest();
       setPublishDestNote("");
@@ -6212,36 +6181,12 @@ let CS77_FILTER_LOW_REP = 20;
     ensurePublishCommunity(id, publishDest.title);
   }
 
-  function publishCommunityPermitted(id) {
-    const selected = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
-    if (selected !== id) return false;
-    if (publishDestNoteError) return false;
-    const allowedId =
-      publishDestAllowed.type === "community" ? normalizeCommunityName(publishDestAllowed.name) : "";
-    return allowedId === id;
-  }
-
-  // Publish uses the request started when the subspace was selected.
-  async function publishCommunityReady() {
-    if (publishEdit) return true;
-    const id = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
-    if (!id) return true;
-    const pending = publishAccessWait;
-    if (pending && pending.communityId === id) {
-      const ok = await pending;
-      const still = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
-      return Boolean(ok) && still === id;
-    }
-    return publishCommunityPermitted(id);
-  }
-
   function selectPublishDest(type, name, title) {
     if (publishEdit) return;
     closeDestMenu();
     const id = type === "community" ? normalizeCommunityName(name) : "";
     if (!id) {
       cancelPublishCommunityCheck();
-      publishDestAllowed = blogPublishDest();
       publishDest = blogPublishDest();
       paintPublishDest();
       renderDestMenu();
@@ -7538,7 +7483,6 @@ let CS77_FILTER_LOW_REP = 20;
     publishStash = null;
     publishDestRequest = null;
     publishPinnedCommunity = null;
-    publishDestAllowed = blogPublishDest();
     publishDest = blogPublishDest();
     setPublishDestNote("");
     publishTags = [];
@@ -7672,22 +7616,6 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (pageEl && pageEl.classList.contains("is-pending")) return;
-    if (publishSubmitLock) return;
-    if (!publishEdit && publishDest.type === "community" && publishDest.name) {
-      publishSubmitLock = true;
-      let allowed = false;
-      try {
-        allowed = await publishCommunityReady();
-      } finally {
-        publishSubmitLock = false;
-        releasePublishSubmit();
-      }
-      if (!allowed) {
-        if (publishDestNoteError && publishDestNote) setPublishStatus(publishDestNote, true);
-        return;
-      }
-      if (publishDest.type !== "community" || !normalizeCommunityName(publishDest.name)) return;
-    }
     const commentEdit = editingComment();
     const titleEl = $("#publishTitle");
     if (!commentEdit && titleEl) enforcePublishTitleLimit(titleEl);
@@ -7900,7 +7828,6 @@ let CS77_FILTER_LOW_REP = 20;
     }
     cancelPublishCommunityCheck();
     setPublishDestNote("");
-    releasePublishSubmit();
     const comment = !isRootPost(post);
     publishEdit = {
       author: post.author,
@@ -10941,7 +10868,6 @@ let CS77_FILTER_LOW_REP = 20;
       } else {
         if (typeof rawCommunity === "string" && rawCommunity.trim()) skippedCommunity = true;
         cancelPublishCommunityCheck();
-        publishDestAllowed = blogPublishDest();
         publishDest = blogPublishDest();
       }
       paintPublishDest();
@@ -11106,7 +11032,10 @@ let CS77_FILTER_LOW_REP = 20;
     ensureCommentCouncil(currentPost).then((denial) => {
       if (!denial || !target || !target.isConnected) return;
       if (communityNameOf(currentPost) !== id) return;
-      composerStatus(target, denial, true);
+      if (target.classList.contains("is-pending") || target.classList.contains("is-uploading")) return;
+      const status = target.querySelector(".composer-status");
+      if (status && status.classList.contains("is-error")) return;
+      composerStatus(target, denial, false);
     });
   }
 
@@ -11121,20 +11050,6 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (composer.getAttribute("data-edit-author")) {
       await submitCommentEdit(composer);
-      return;
-    }
-    if (composer.classList.contains("is-access-wait")) return;
-    const communityId = communityNameOf(currentPost);
-    composer.classList.add("is-access-wait");
-    let denial = "";
-    try {
-      denial = await ensureCommentCouncil(currentPost);
-    } finally {
-      composer.classList.remove("is-access-wait");
-    }
-    if (communityNameOf(currentPost) !== communityId) return;
-    if (denial) {
-      composerStatus(composer, denial, true);
       return;
     }
     const textarea = composer.querySelector(".composer-input");
