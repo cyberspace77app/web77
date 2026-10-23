@@ -3210,10 +3210,15 @@ let CS77_FILTER_LOW_REP = 20;
     return scrollTargetIntoView(el, behavior);
   }
 
-  function focusRootCommentComposer() {
+  function rootCommentComposerInput() {
+    if (!commentsAreShowing()) return null;
     const section = document.getElementById("comments");
-    const input =
-      section && section.querySelector(":scope > .comment-composer .composer-input");
+    if (!section) return null;
+    return section.querySelector(":scope > .comment-composer .composer-input");
+  }
+
+  function focusRootCommentComposer() {
+    const input = rootCommentComposerInput();
     if (!input) return false;
     input.focus({ preventScroll: true });
     return true;
@@ -4071,6 +4076,53 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // pointerdown runs before the FAB takes focus, so this still sees the comment box.
+  let publishFabCommentDown = false;
+  let publishFabTouchOpen = null;
+  let publishFabSuppressClick = false;
+
+  function publishFabPressIgnored(e) {
+    return !e || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+  }
+
+  function bindPublishFabCommentGate() {
+    const fab = $("#publishFab");
+    if (!fab) return;
+    fab.addEventListener("pointerdown", (e) => {
+      publishFabCommentDown = false;
+      publishFabTouchOpen = null;
+      if (publishFabPressIgnored(e) || !isMobileViewport()) return;
+      const input = rootCommentComposerInput();
+      if (!input || document.activeElement !== input) return;
+      publishFabCommentDown = true;
+      // A touch that dismisses the keyboard often never clicks the FAB.
+      // Hold the gesture and open publish on pointerup instead.
+      if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+      publishFabTouchOpen = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+      e.preventDefault();
+    });
+    fab.addEventListener("pointerup", (e) => {
+      const start = publishFabTouchOpen;
+      publishFabTouchOpen = null;
+      if (!start || e.pointerId !== start.pointerId) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (dx * dx + dy * dy > 100) return;
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      if (!hit || (hit !== fab && !fab.contains(hit))) return;
+      publishFabSuppressClick = true;
+      publishFabCommentDown = false;
+      navigate(appHref("/publish"));
+      setTimeout(() => {
+        publishFabSuppressClick = false;
+      }, 0);
+    });
+    fab.addEventListener("pointercancel", () => {
+      publishFabTouchOpen = null;
+      publishFabCommentDown = false;
+    });
+  }
+
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
@@ -4079,6 +4131,25 @@ let CS77_FILTER_LOW_REP = 20;
     const a = e.target.closest("a[href]");
     if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
     const href = a.getAttribute("href");
+    if (a.id === "publishFab") {
+      if (publishFabSuppressClick) {
+        publishFabSuppressClick = false;
+        e.preventDefault();
+        return;
+      }
+      const fromComment = publishFabCommentDown;
+      publishFabCommentDown = false;
+      // On a post, the first mobile press jumps to the new-comment box.
+      // A press while that box is focused opens the publish dialog.
+      if (!fromComment && isMobileViewport() && rootCommentComposerInput()) {
+        e.preventDefault();
+        scrollToComments();
+        focusRootCommentComposer();
+        return;
+      }
+    } else {
+      publishFabCommentDown = false;
+    }
     const commentFrag = hashFragment(href);
     if (
       parseCommentFragment(commentFrag) &&
@@ -16597,6 +16668,7 @@ let CS77_FILTER_LOW_REP = 20;
 
     const publishFab = $("#publishFab");
     if (publishFab) publishFab.setAttribute("href", appHref("/publish"));
+    bindPublishFabCommentGate();
     const publishOverlay = $("#publishOverlay");
     if (publishOverlay) {
       bindComposerMedia(publishOverlay);
