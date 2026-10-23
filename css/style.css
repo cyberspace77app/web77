@@ -6074,7 +6074,8 @@ min-height: 0;
 }
 
 .settings-form input,
-.settings-form textarea {
+.settings-form textarea,
+.settings-form select {
   display: block;
   width: 100%;
   padding: 0.8rem 0.95rem;
@@ -6106,9 +6107,35 @@ min-height: 0;
 }
 
 .settings-form input:focus,
-.settings-form textarea:focus {
+.settings-form textarea:focus,
+.settings-form select:focus {
   border-color: var(--red-bright);
   box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.settings-form .settings-check input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  min-width: 1.05rem;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--red);
+  flex: 0 0 auto;
+}
+
+.settings-check .settings-label {
+  margin: 0;
+  cursor: pointer;
+}
+
+.community-edit .empty-state .btn-primary {
+  margin-top: 1.15rem;
 }
 
 .settings-form input::placeholder {

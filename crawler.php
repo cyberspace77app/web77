@@ -159,6 +159,9 @@ function cs77_community_page(string $raw): string
     if ($page === "members" || $page === "roles") {
         return "members";
     }
+    if ($page === "edit") {
+        return "edit";
+    }
     return "";
 }
 
@@ -929,6 +932,9 @@ function cs77_community_title($info, string $name, string $page): string
     }
     if ($page === "members") {
         return "Members · " . $title . " — CyberSpace77";
+    }
+    if ($page === "edit") {
+        return "Edit · " . $title . " — CyberSpace77";
     }
     return $title . " — CyberSpace77";
 }

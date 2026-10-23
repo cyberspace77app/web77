@@ -2,8 +2,8 @@
 # Install the app in the root directory for dynamic urls to work
 # /@username
 # /@username/permlink
-# /subspace/121566  /subspace/121566/trending|hot|rules|members
-# /c/hive-121566  /c/hive-121566/latest|trending|hot|rules|members
+# /subspace/121566  /subspace/121566/trending|hot|rules|members|edit
+# /c/hive-121566  /c/hive-121566/latest|trending|hot|rules|members|edit
 # /121566 redirects to /subspace/121566
 # /trending  /hot  /created  /search  /search/spaces  /search/subspaces  /spaces  /subspaces  /subspaces/browse  /subspaces/newest  /welcome  /imprint  /settings  /settings/profile  /settings/nodes
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag

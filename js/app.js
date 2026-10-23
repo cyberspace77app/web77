@@ -95,6 +95,10 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsProfileDraft = null;
   let settingsProfileBaseline = null;
   let settingsBusy = false;
+  let communityEditDraft = null;
+  let communityEditBaseline = null;
+  let communityEditSettings = null;
+  let communityEditBusy = false;
   let settingsNodeToken = 0;
   let settingsNodeBusy = false;
   let currentViewKey = "";
@@ -3405,6 +3409,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "trending" || page === "hot") return page;
     if (page === "rules" || page === "about") return "rules";
     if (page === "members" || page === "roles") return "members";
+    if (page === "edit") return "edit";
     return "";
   }
 
@@ -5179,6 +5184,7 @@ let CS77_FILTER_LOW_REP = 20;
     resetNotifs();
     resetAccountState();
     clearSettingsProfileScratch();
+    clearCommunityEditScratch();
     renderSession();
     currentViewKey = "";
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
@@ -5507,6 +5513,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (method === "keychain") writeKeychainUser(username);
     else clearKeychainUser();
     closeLogin();
+    clearCommunityEditScratch();
     renderSession();
     currentViewKey = "";
     if (pendingPublish) {
@@ -14083,6 +14090,13 @@ let CS77_FILTER_LOW_REP = 20;
     communityState.info = null;
     communityState.subscribed = false;
     communityState.pending = false;
+    clearCommunityEditScratch();
+  }
+
+  function clearCommunityEditScratch() {
+    communityEditDraft = null;
+    communityEditBaseline = null;
+    communityEditSettings = null;
   }
 
   function communityTitleOf(info, name) {
@@ -14119,13 +14133,17 @@ let CS77_FILTER_LOW_REP = 20;
     return communityState.subscribed ? "Unsubscribe" : "Subscribe";
   }
 
-  function communityMoreHtml(name) {
+  function communityMoreHtml(name, info) {
     const id = normalizeCommunityName(name);
+    const edit = communityCanEdit(info)
+      ? `<a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(communityHref(id, "edit"))}">Edit</a>`
+      : "";
     return `
       <div class="profile-more">
         <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
         <div class="profile-more-menu" role="menu" hidden>
           <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
+          ${edit}
           <a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(id))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>
         </div>
       </div>`;
@@ -14171,7 +14189,7 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
             <div class="community-head-actions">
               <button type="button" class="btn-primary btn-compact community-sub-btn" data-community="${HiveMd.escapeHtml(name)}" data-subscribed="${communityState.subscribed ? "1" : "0"}"${communityState.pending ? " disabled" : ""}>${communitySubscribeLabel()}</button>
-              ${communityMoreHtml(name)}
+              ${communityMoreHtml(name, info)}
             </div>
           </div>
         </div>
@@ -14291,7 +14309,667 @@ let CS77_FILTER_LOW_REP = 20;
     const title = communityTitleOf(info, name);
     if (page === "rules") return "Rules · " + title + " — CyberSpace77";
     if (page === "members") return "Members · " + title + " — CyberSpace77";
+    if (page === "edit") return "Edit · " + title + " — CyberSpace77";
     return title + " — CyberSpace77";
+  }
+
+  // ISO 639-1 codes accepted by hivemind's updateProps lang field.
+  const COMMUNITY_LANGS = (
+    "ab,aa,af,ak,sq,am,ar,an,hy,as,av,ae,ay,az,bm,ba,eu,be,bn,bh,bi," +
+    "bs,br,bg,my,ca,ch,ce,ny,zh,cv,kw,co,cr,hr,cs,da,dv,nl,dz,en,eo," +
+    "et,ee,fo,fj,fi,fr,ff,gl,ka,de,el,gn,gu,ht,ha,he,hz,hi,ho,hu,ia," +
+    "id,ie,ga,ig,ik,io,is,it,iu,ja,jv,kl,kn,kr,ks,kk,km,ki,rw,ky,kv," +
+    "kg,ko,ku,kj,la,lb,lg,li,ln,lo,lt,lu,lv,gv,mk,mg,ms,ml,mt,mi,mr," +
+    "mh,mn,na,nv,nd,ne,ng,nb,nn,no,ii,nr,oc,oj,cu,om,or,os,pa,pi,fa," +
+    "pl,ps,pt,qu,rm,rn,ro,ru,sa,sc,sd,se,sm,sg,sr,gd,sn,si,sk,sl,so," +
+    "st,es,su,sw,ss,sv,ta,te,tg,th,ti,bo,tk,tl,tn,to,tr,ts,tt,tw,ty," +
+    "ug,uk,ur,uz,ve,vi,vo,wa,cy,wo,fy,xh,yi,yo,za"
+  ).split(",");
+
+  function noteCommunityEditCommunity(id) {
+    if (communityEditDraft && communityEditDraft.community !== id) communityEditDraft = null;
+    if (communityEditBaseline && communityEditBaseline.community !== id) {
+      communityEditBaseline = null;
+      communityEditSettings = null;
+    }
+  }
+
+  function communityViewerRole(info) {
+    const ctx = info && info.context;
+    if (ctx && typeof ctx.role === "string" && ctx.role.trim()) {
+      return ctx.role.trim().toLowerCase();
+    }
+    const user = observer();
+    if (!user || !info) return "";
+    const team = communityTeamRows(info);
+    for (let i = 0; i < team.length; i++) {
+      const name = String(team[i].name || "")
+        .replace(/^@/, "")
+        .toLowerCase();
+      if (name && name === user) return String(team[i].role || "").trim().toLowerCase();
+    }
+    return "";
+  }
+
+  // update_community_props allows owner and admin. Moderators cannot edit.
+  function communityCanEdit(info) {
+    if (!observer()) return false;
+    const role = communityViewerRole(info);
+    return role === "owner" || role === "admin";
+  }
+
+  function communityText(value) {
+    return typeof value === "string" ? value : "";
+  }
+
+  function communitySettingsObject(info) {
+    let raw = info && info.settings;
+    if (typeof raw === "string") {
+      const text = raw.trim();
+      if (!text) return {};
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        return {};
+      }
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const settings = {};
+    Object.keys(raw).forEach((key) => {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      settings[key] = raw[key];
+    });
+    return settings;
+  }
+
+  // Hivemind replaces the stored settings object. Avatar and cover stay inside it.
+  function communitySettingsForSave(base, avatarUrl, coverUrl) {
+    let settings = {};
+    if (base && typeof base === "object" && !Array.isArray(base)) {
+      try {
+        const cloned = JSON.parse(JSON.stringify(base));
+        if (cloned && typeof cloned === "object" && !Array.isArray(cloned)) settings = cloned;
+      } catch {
+        Object.keys(base).forEach((key) => {
+          if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+          if (base[key] !== undefined) settings[key] = base[key];
+        });
+      }
+    }
+    settings.avatar_url = avatarUrl;
+    settings.cover_url = coverUrl;
+    return settings;
+  }
+
+  function communityHttpUrl(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (text.length >= 1024) return null;
+    if (text.slice(0, 7) !== "http://" && text.slice(0, 8) !== "https://") return null;
+    return text;
+  }
+
+  function communityPictureSrc(url) {
+    const text = communityHttpUrl(url);
+    if (!text) return "";
+    return HiveMd.proxyImage(text, 960);
+  }
+
+  function communityEditFieldsFromInfo(info) {
+    const settings = communitySettingsObject(info);
+    const avatar = settings.avatar_url;
+    const cover = settings.cover_url;
+    return {
+      title: communityText(info && info.title),
+      about: communityText(info && info.about),
+      avatar_url: typeof avatar === "string" ? avatar : "",
+      cover_url: typeof cover === "string" ? cover : "",
+      description: communityText(info && info.description),
+      flag_text: communityText(info && info.flag_text),
+      lang: communityText(info && info.lang).trim().toLowerCase(),
+      nsfw: Boolean(info && info.is_nsfw),
+    };
+  }
+
+  function communityEditFieldsFor(info) {
+    const id = normalizeCommunityName((info && info.name) || communityState.name);
+    const user = observer();
+    if (
+      !communityEditBaseline ||
+      communityEditBaseline.community !== id ||
+      communityEditBaseline.user !== user
+    ) {
+      communityEditBaseline = Object.assign({ community: id, user }, communityEditFieldsFromInfo(info));
+      communityEditSettings = { community: id, settings: communitySettingsObject(info) };
+    }
+    if (
+      communityEditDraft &&
+      communityEditDraft.community === id &&
+      communityEditDraft.user === user
+    ) {
+      return communityEditDraft;
+    }
+    return communityEditBaseline;
+  }
+
+  function communityLangOptionsHtml(selected) {
+    const current = String(selected || "").trim().toLowerCase();
+    const known = COMMUNITY_LANGS.indexOf(current) !== -1;
+    let display = null;
+    try {
+      display = new Intl.DisplayNames(["en"], { type: "language" });
+    } catch {
+      display = null;
+    }
+    const rows = COMMUNITY_LANGS.map((code) => {
+      let name = code;
+      if (display) {
+        try {
+          const label = display.of(code);
+          if (label && label.toLowerCase() !== code) name = label;
+        } catch {
+          name = code;
+        }
+      }
+      return { code, name };
+    });
+    rows.sort((a, b) => a.name.localeCompare(b.name, "en") || a.code.localeCompare(b.code));
+    const esc = HiveMd.escapeHtml;
+    let html = "";
+    if (!known) {
+      html += `<option value=""${current ? "" : " selected"}>Choose</option>`;
+      if (current) html += `<option value="${esc(current)}" selected>${esc(current)}</option>`;
+    }
+    html += rows
+      .map((row) => {
+        const selectedAttr = row.code === current ? " selected" : "";
+        return `<option value="${esc(row.code)}"${selectedAttr}>${esc(row.name)} (${esc(row.code)})</option>`;
+      })
+      .join("");
+    return html;
+  }
+
+  function communityEditFormHtml(fields) {
+    const esc = HiveMd.escapeHtml;
+    const avatarSrc = communityPictureSrc(fields.avatar_url) || AVATAR_DEFAULT_LARGE;
+    const coverSrc = communityPictureSrc(fields.cover_url);
+    return `
+      <div class="community-panel community-edit">
+        <form class="settings-form" id="communityEditForm" autocomplete="off" novalidate>
+          <div class="settings-field">
+            <label class="settings-label" for="communityTitle">Title</label>
+            <input id="communityTitle" name="title" type="text" maxlength="20" autocomplete="off" value="${esc(fields.title || "")}">
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityAbout">About</label>
+            <textarea id="communityAbout" class="settings-about" name="about" rows="3" maxlength="120">${esc(fields.about || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityAvatar">Subspace picture</label>
+            <div class="settings-media">
+              <img id="communityAvatarPreview" class="settings-avatar-preview" src="${esc(avatarSrc)}" alt="" width="72" height="72">
+              <div class="settings-media-main">
+                <input id="communityAvatar" name="avatar_url" type="text" inputmode="url" autocomplete="off" maxlength="1023" placeholder="https://" value="${esc(fields.avatar_url || "")}">
+                <div class="settings-media-actions">
+                  <button type="button" class="settings-upload" id="communityAvatarUpload">Upload</button>
+                  <input id="communityAvatarFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityCover">Cover picture</label>
+            <p class="settings-note">Used in other frontends.</p>
+            <img id="communityCoverPreview" class="settings-cover-preview" alt="" ${coverSrc ? `src="${esc(coverSrc)}"` : "hidden"}>
+            <input id="communityCover" name="cover_url" type="text" inputmode="url" autocomplete="off" maxlength="1023" placeholder="https://" value="${esc(fields.cover_url || "")}">
+            <div class="settings-media-actions">
+              <button type="button" class="settings-upload" id="communityCoverUpload">Upload</button>
+              <input id="communityCoverFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityDescription">Description</label>
+            <textarea id="communityDescription" class="settings-about" name="description" rows="8" maxlength="1000">${esc(fields.description || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityRules">Rules</label>
+            <textarea id="communityRules" class="settings-about" name="flag_text" rows="8" maxlength="1000">${esc(fields.flag_text || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityLang">Language</label>
+            <select id="communityLang" name="lang">${communityLangOptionsHtml(fields.lang)}</select>
+          </div>
+          <div class="settings-field">
+            <div class="settings-check">
+              <input id="communityNsfw" name="is_nsfw" type="checkbox"${fields.nsfw ? " checked" : ""}>
+              <label class="settings-label" for="communityNsfw">NSFW</label>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button type="submit" class="btn-primary" id="communityEditSave">Save</button>
+            <button type="button" class="btn-ghost" id="communityEditReset">Reset</button>
+          </div>
+          <p class="settings-status" id="communityEditStatus" role="status"></p>
+        </form>
+      </div>
+    `;
+  }
+
+  function communityEditGuestHtml() {
+    return `
+      <div class="community-panel community-edit">
+        <div class="panel empty-state">
+          <h2>Log in to edit this subspace</h2>
+          <p>Title, about, and pictures are stored on Hive.</p>
+          <button type="button" class="btn-primary" id="communityEditLogin">Login</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function communityEditDeniedHtml() {
+    return `
+      <div class="community-panel community-edit">
+        <div class="panel empty-state">
+          <h2>Only the owner and admins can edit this subspace</h2>
+          <p>An owner or an admin can change it.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  function communityEditBodyHtml(info) {
+    if (!observer()) return communityEditGuestHtml();
+    if (!communityCanEdit(info)) return communityEditDeniedHtml();
+    return communityEditFormHtml(communityEditFieldsFor(info));
+  }
+
+  function readCommunityEditFields() {
+    if (!$("#communityEditForm")) return null;
+    return {
+      title: ($("#communityTitle") && $("#communityTitle").value) || "",
+      about: ($("#communityAbout") && $("#communityAbout").value) || "",
+      avatar_url: ($("#communityAvatar") && $("#communityAvatar").value) || "",
+      cover_url: ($("#communityCover") && $("#communityCover").value) || "",
+      description: ($("#communityDescription") && $("#communityDescription").value) || "",
+      flag_text: ($("#communityRules") && $("#communityRules").value) || "",
+      lang: ($("#communityLang") && $("#communityLang").value) || "",
+      nsfw: Boolean($("#communityNsfw") && $("#communityNsfw").checked),
+    };
+  }
+
+  function rememberCommunityEditDraft() {
+    const user = observer();
+    const fields = readCommunityEditFields();
+    if (!user || !fields || !communityState.name) return;
+    communityEditDraft = Object.assign({ community: communityState.name, user }, fields);
+  }
+
+  function writeCommunityEditFields(fields) {
+    const set = (id, value) => {
+      const el = $(id);
+      if (el) el.value = value;
+    };
+    set("#communityTitle", fields.title || "");
+    set("#communityAbout", fields.about || "");
+    set("#communityAvatar", fields.avatar_url || "");
+    set("#communityCover", fields.cover_url || "");
+    set("#communityDescription", fields.description || "");
+    set("#communityRules", fields.flag_text || "");
+    set("#communityLang", fields.lang || "");
+    const nsfw = $("#communityNsfw");
+    if (nsfw) nsfw.checked = Boolean(fields.nsfw);
+    paintCommunityPicture("avatar", fields.avatar_url || "");
+    paintCommunityPicture("cover", fields.cover_url || "");
+  }
+
+  function setCommunityEditStatus(message, isError) {
+    const el = $("#communityEditStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setCommunityEditLocked(locked) {
+    ["#communityEditSave", "#communityEditReset", "#communityAvatarUpload", "#communityCoverUpload"].forEach(
+      (id) => {
+        const el = $(id);
+        if (el) el.disabled = locked;
+      }
+    );
+  }
+
+  function paintCommunityPicture(kind, url) {
+    const src = communityPictureSrc(url);
+    if (kind === "cover") {
+      const img = $("#communityCoverPreview");
+      if (!img) return;
+      if (!src) {
+        img.hidden = true;
+        img.removeAttribute("src");
+        return;
+      }
+      img.hidden = false;
+      img.src = src;
+      return;
+    }
+    const img = $("#communityAvatarPreview");
+    if (!img) return;
+    img.hidden = false;
+    img.src = src || AVATAR_DEFAULT_LARGE;
+  }
+
+  function communityEditStill(name) {
+    const route = parseRoute();
+    return Boolean(
+      route &&
+        route.name === "community" &&
+        route.page === "edit" &&
+        normalizeCommunityName(route.community) === name &&
+        communityState.name === name
+    );
+  }
+
+  function bindCommunityPicture(kind) {
+    const cover = kind === "cover";
+    const input = $(cover ? "#communityCover" : "#communityAvatar");
+    const file = $(cover ? "#communityCoverFile" : "#communityAvatarFile");
+    const button = $(cover ? "#communityCoverUpload" : "#communityAvatarUpload");
+    const preview = $(cover ? "#communityCoverPreview" : "#communityAvatarPreview");
+    if (button && file) {
+      button.addEventListener("click", () => {
+        if (!communityEditBusy) file.click();
+      });
+    }
+    if (file) {
+      file.addEventListener("change", () => {
+        const picked = file.files && file.files[0];
+        file.value = "";
+        if (picked) uploadCommunityPicture(kind, picked);
+      });
+    }
+    if (input) {
+      input.addEventListener("input", () => {
+        paintCommunityPicture(kind, input.value);
+        rememberCommunityEditDraft();
+      });
+    }
+    if (preview) {
+      preview.addEventListener("error", () => {
+        const raw = communityHttpUrl(input && input.value) || "";
+        const current = preview.getAttribute("src") || "";
+        if (raw && current !== raw) {
+          preview.hidden = false;
+          preview.src = raw;
+          return;
+        }
+        if (cover) {
+          preview.hidden = true;
+          preview.removeAttribute("src");
+          return;
+        }
+        if (current !== AVATAR_DEFAULT_LARGE) preview.src = AVATAR_DEFAULT_LARGE;
+      });
+    }
+  }
+
+  function bindCommunityEdit() {
+    const login = $("#communityEditLogin");
+    if (login) login.addEventListener("click", openLogin);
+    const form = $("#communityEditForm");
+    if (!form) return;
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      saveCommunityEdit();
+    });
+    form.addEventListener("input", (e) => {
+      const target = e.target;
+      if (!target || target.id === "communityAvatar" || target.id === "communityCover") return;
+      rememberCommunityEditDraft();
+    });
+    form.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!target || target.id === "communityAvatar" || target.id === "communityCover") return;
+      rememberCommunityEditDraft();
+    });
+    bindCommunityPicture("avatar");
+    bindCommunityPicture("cover");
+    const reset = $("#communityEditReset");
+    if (reset) {
+      reset.addEventListener("click", () => {
+        resetCommunityEdit();
+      });
+    }
+  }
+
+  function resetCommunityEdit() {
+    const user = observer();
+    const base = communityEditBaseline;
+    if (communityEditBusy || !user || !base || base.user !== user || base.community !== communityState.name) return;
+    writeCommunityEditFields(base);
+    communityEditDraft = Object.assign({}, base);
+    setCommunityEditStatus("", false);
+  }
+
+  function preparedCommunityEditFields(raw) {
+    return {
+      title: String((raw && raw.title) || "").trim(),
+      about: String((raw && raw.about) || "").trim(),
+      avatar_url: String((raw && raw.avatar_url) || "").trim(),
+      cover_url: String((raw && raw.cover_url) || "").trim(),
+      description: String((raw && raw.description) || "").trim(),
+      flag_text: String((raw && raw.flag_text) || "").trim(),
+      lang: String((raw && raw.lang) || "").trim().toLowerCase(),
+      nsfw: Boolean(raw && raw.nsfw),
+    };
+  }
+
+  function communityEditError(fields) {
+    if (fields.title.length < 3 || fields.title.length > 20) return "Title must be 3 to 20 characters.";
+    if (fields.title[0] === "@" || fields.title[0] === "#") return "Title cannot start with @ or #.";
+    if (fields.about.length > 120) return "About must be 120 characters or fewer.";
+    if (fields.description.length > 1000) return "Description must be 1000 characters or fewer.";
+    if (fields.flag_text.length > 1000) return "Rules must be 1000 characters or fewer.";
+    if (COMMUNITY_LANGS.indexOf(fields.lang) === -1) return "Choose a language.";
+    if (communityHttpUrl(fields.avatar_url) === null) return "Subspace picture must be an http or https link.";
+    if (communityHttpUrl(fields.cover_url) === null) return "Cover picture must be an http or https link.";
+    return "";
+  }
+
+  async function uploadCommunityPicture(kind, file) {
+    const user = observer();
+    const name = communityState.name;
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (communityEditBusy) return;
+    if (!isImageFile(file)) {
+      setCommunityEditStatus("Choose an image file (png, jpg, gif, webp).", true);
+      return;
+    }
+    if (!hasSigner(user)) {
+      setCommunityEditStatus(signerNeededMessage(), true);
+      return;
+    }
+    communityEditBusy = true;
+    setCommunityEditLocked(true);
+    setCommunityEditStatus(signingLabel("image"), false);
+    try {
+      const url = await uploadHiveImage(file, user);
+      if (!communityEditStill(name)) return;
+      const input = $(kind === "cover" ? "#communityCover" : "#communityAvatar");
+      if (input) {
+        input.value = url;
+        paintCommunityPicture(kind, url);
+        rememberCommunityEditDraft();
+      }
+      setCommunityEditStatus("Image uploaded.", false);
+    } catch (err) {
+      if (communityEditStill(name)) {
+        setCommunityEditStatus((err && err.message) || "Image upload failed.", true);
+      }
+    } finally {
+      communityEditBusy = false;
+      if (communityEditStill(name)) setCommunityEditLocked(false);
+    }
+  }
+
+  function paintCommunityEditBanner(fields) {
+    const banner = view && view.querySelector(".community-banner");
+    if (!banner) return;
+    const h1 = banner.querySelector("h1");
+    if (h1) h1.textContent = fields.title || communityState.name;
+    let aboutEl = banner.querySelector(".profile-about");
+    if (fields.about) {
+      if (!aboutEl) {
+        aboutEl = document.createElement("p");
+        aboutEl.className = "profile-about";
+        const handle = banner.querySelector(".profile-handle");
+        if (handle) handle.insertAdjacentElement("afterend", aboutEl);
+      }
+      if (aboutEl) aboutEl.textContent = fields.about;
+    } else if (aboutEl) {
+      aboutEl.remove();
+    }
+    const stats = banner.querySelector(".profile-stats");
+    if (!stats) return;
+    let nsfw = stats.querySelector(".community-nsfw");
+    if (fields.nsfw) {
+      if (!nsfw) {
+        nsfw = document.createElement("span");
+        nsfw.className = "community-nsfw";
+        nsfw.textContent = "NSFW";
+        stats.appendChild(nsfw);
+      }
+    } else if (nsfw) {
+      nsfw.remove();
+    }
+  }
+
+  function applySavedCommunityEdit(fields, settings) {
+    const info = communityState.info;
+    if (!info) return;
+    info.title = fields.title;
+    info.about = fields.about;
+    info.lang = fields.lang;
+    info.is_nsfw = Boolean(fields.nsfw);
+    info.description = fields.description;
+    info.flag_text = fields.flag_text;
+    info.settings = settings;
+    communityEditSettings = { community: communityState.name, settings: settings };
+    const saved = {
+      community: communityState.name,
+      user: observer(),
+      title: fields.title,
+      about: fields.about,
+      avatar_url: fields.avatar_url,
+      cover_url: fields.cover_url,
+      description: fields.description,
+      flag_text: fields.flag_text,
+      lang: fields.lang,
+      nsfw: Boolean(fields.nsfw),
+    };
+    communityEditBaseline = saved;
+    communityEditDraft = Object.assign({}, saved);
+    paintCommunityEditBanner(fields);
+    setCommunityMeta(communityState.name, "edit", info);
+  }
+
+  async function saveCommunityEdit() {
+    if (communityEditBusy) return;
+    const user = observer();
+    const name = normalizeCommunityName(communityState.name);
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!name || !communityCanEdit(communityState.info)) return;
+    const raw = readCommunityEditFields();
+    if (!raw) return;
+    const fields = preparedCommunityEditFields(raw);
+    const problem = communityEditError(fields);
+    if (problem) {
+      setCommunityEditStatus(problem, true);
+      return;
+    }
+    fields.avatar_url = communityHttpUrl(fields.avatar_url) || "";
+    fields.cover_url = communityHttpUrl(fields.cover_url) || "";
+    const settings = communitySettingsForSave(
+      communityEditSettings && communityEditSettings.community === name
+        ? communityEditSettings.settings
+        : communitySettingsObject(communityState.info),
+      fields.avatar_url,
+      fields.cover_url
+    );
+    const payload = [
+      "updateProps",
+      {
+        community: name,
+        props: {
+          title: fields.title,
+          about: fields.about,
+          lang: fields.lang,
+          is_nsfw: fields.nsfw,
+          description: fields.description,
+          flag_text: fields.flag_text,
+          settings: settings,
+        },
+      },
+    ];
+    let json = "";
+    try {
+      json = JSON.stringify(payload);
+    } catch {
+      setCommunityEditStatus("Could not prepare these settings.", true);
+      return;
+    }
+    if (new TextEncoder().encode(json).length > 8192) {
+      setCommunityEditStatus("These settings are too long to save.", true);
+      return;
+    }
+    writeCommunityEditFields(fields);
+    rememberCommunityEditDraft();
+    if (!hasSigner(user)) {
+      setCommunityEditStatus(signerNeededMessage(), true);
+      return;
+    }
+    if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+      setCommunityEditStatus("Could not save this subspace.", true);
+      return;
+    }
+    communityEditBusy = true;
+    setCommunityEditLocked(true);
+    setCommunityEditStatus("Saving…", false);
+    try {
+      const queued = ChainQueue.enqueue({
+        username: user,
+        key: "Posting",
+        operations: [
+          [
+            "custom_json",
+            {
+              required_auths: [],
+              required_posting_auths: [user],
+              id: "community",
+              json: json,
+            },
+          ],
+        ],
+        meta: { type: "community", action: "updateProps", community: name },
+      });
+      await queued.promise;
+      if (communityState.name !== name || observer() !== user) return;
+      applySavedCommunityEdit(fields, settings);
+      if (communityEditStill(name)) setCommunityEditStatus("Saved.", false);
+    } catch (err) {
+      if (communityEditStill(name)) {
+        setCommunityEditStatus((err && err.message) || "Could not save this subspace.", true);
+      }
+    } finally {
+      communityEditBusy = false;
+      if (communityEditStill(name)) setCommunityEditLocked(false);
+    }
   }
 
   function toggleCommunitySubscription() {
@@ -14444,6 +15122,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function renderCommunity(name, page) {
     const id = normalizeCommunityName(name);
     const tab = normalizeCommunityPage(page) || "latest";
+    noteCommunityEditCommunity(id);
     const known = communityState.name === id ? communityState.info : null;
     setCommunityMeta(id, tab, known);
     view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading subspace…</div>`;
@@ -14472,6 +15151,12 @@ let CS77_FILTER_LOW_REP = 20;
       if (tab === "members") {
         view.innerHTML = chrome + `<div class="community-panel" id="communityMembers"></div>`;
         await renderCommunityMembers(info);
+        return;
+      }
+
+      if (tab === "edit") {
+        view.innerHTML = chrome + communityEditBodyHtml(info);
+        bindCommunityEdit();
         return;
       }
 
