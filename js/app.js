@@ -83,6 +83,14 @@ let CS77_FILTER_LOW_REP = 20;
   let pendingCommentsScroll = false;
   let pendingPublish = false;
   let publishDest = { type: "blog", name: "", title: "My cyberspace" };
+  // Last destination this account is allowed to publish to. A subspace stays
+  // here only after bridge.get_community says the account can post there.
+  let publishDestAllowed = { type: "blog", name: "", title: "My cyberspace" };
+  let publishDestNote = "";
+  let publishDestNoteError = false;
+  let publishAccessSeq = 0;
+  let publishAccessWait = null;
+  let publishSubmitLock = false;
   // Set by the subspace ··· menu. Applied once the publish dialog opens.
   let publishDestRequest = null;
   // Community chosen from that menu, kept in Publish in even when unsubscribed.
@@ -5882,6 +5890,11 @@ let CS77_FILTER_LOW_REP = 20;
           state.dest.title ||
           (state.dest.type === "community" ? state.dest.name : "My cyberspace"),
       };
+      if (!publishEdit && publishDest.type !== "community") {
+        cancelPublishCommunityCheck();
+        publishDestAllowed = blogPublishDest();
+        setPublishDestNote("");
+      }
     }
     const title = $("#publishTitle");
     const body = $("#publishBody");
@@ -6063,17 +6076,177 @@ let CS77_FILTER_LOW_REP = 20;
     if (open) loadPublishSubs();
   }
 
-  function selectPublishDest(type, name, title) {
-    if (publishEdit) return;
-    publishDest = {
-      type: type === "community" && name ? "community" : "blog",
-      name: type === "community" ? name : "",
-      title: title || (type === "community" ? name : "My cyberspace"),
-    };
+  function blogPublishDest() {
+    return { type: "blog", name: "", title: "My cyberspace" };
+  }
+
+  function copyPublishDest(dest) {
+    const name = dest && dest.type === "community" ? normalizeCommunityName(dest.name) : "";
+    if (!name) return blogPublishDest();
+    const label = String((dest && dest.title) || "").trim() || name;
+    return { type: "community", name: name, title: label };
+  }
+
+  function cancelPublishCommunityCheck() {
+    publishAccessSeq += 1;
+    publishAccessWait = null;
+  }
+
+  function releasePublishSubmit() {
+    if (publishSubmitLock) return;
+    const pageEl = $("#publishPage");
+    const btn = $("#publishSubmit");
+    if (btn && !(pageEl && pageEl.classList.contains("is-pending"))) btn.disabled = false;
+  }
+
+  function paintPublishDestNote() {
+    const note = $("#publishDestNote");
+    if (!note) return;
+    const show = Boolean(publishDestNote) && !publishEdit;
+    note.hidden = !show;
+    note.textContent = show ? publishDestNote : "";
+    note.classList.toggle("is-error", show && publishDestNoteError);
+  }
+
+  function setPublishDestNote(message, isError) {
+    publishDestNote = String(message || "");
+    publishDestNoteError = Boolean(publishDestNote && isError);
+    paintPublishDestNote();
+  }
+
+  // The subspace stays selected. The error sits under it. The status line stays clear until Publish.
+  function holdPublishCommunity(id, title, message, demote) {
+    const allowedId =
+      publishDestAllowed.type === "community" ? normalizeCommunityName(publishDestAllowed.name) : "";
+    if (demote && allowedId && allowedId === id) publishDestAllowed = blogPublishDest();
+    const label = String(title || "").trim() || id;
+    publishDest = { type: "community", name: id, title: label };
+    notePublishCommunityTitle(id, label);
     paintPublishDest();
     renderDestMenu();
-    closeDestMenu();
     schedulePublishDraftSave();
+    setPublishStatus("");
+    setPublishDestNote(message, true);
+  }
+
+  // Topic posts are open. Journal and council posts need a member role or higher.
+  // One request per selection. Publish waits for it and does not send another.
+  function ensurePublishCommunity(name, title) {
+    const id = normalizeCommunityName(name);
+    const user = observer();
+    const seq = ++publishAccessSeq;
+    if (!id || !user || publishEdit) {
+      publishAccessWait = null;
+      return Promise.resolve(false);
+    }
+    const fallbackTitle = String(title || "").trim() || id;
+    // The rights check stays silent. A refusal paints the error note when the call returns.
+    setPublishDestNote("");
+    setPublishStatus("");
+    const wait = HiveApi.getCommunity(id, user)
+      .then((info) => {
+        if (seq !== publishAccessSeq) return false;
+        if (observer() !== user) return false;
+        if (!info || !info.name) {
+          holdPublishCommunity(
+            id,
+            fallbackTitle,
+            "Could not check whether you can post in " + fallbackTitle + ".",
+            true
+          );
+          return false;
+        }
+        const nextTitle = String(info.title || "").trim() || fallbackTitle;
+        if (!communityAllowsPost(info)) {
+          holdPublishCommunity(id, nextTitle, communityPostDeniedMessage(info, nextTitle), true);
+          return false;
+        }
+        publishDestAllowed = { type: "community", name: id, title: nextTitle };
+        publishDest = { type: "community", name: id, title: nextTitle };
+        notePublishCommunityTitle(id, nextTitle);
+        paintPublishDest();
+        renderDestMenu();
+        schedulePublishDraftSave();
+        setPublishDestNote("");
+        setPublishStatus("");
+        return true;
+      })
+      .catch(() => {
+        if (seq !== publishAccessSeq) return false;
+        holdPublishCommunity(
+          id,
+          fallbackTitle,
+          "Could not check whether you can post in " + fallbackTitle + ".",
+          false
+        );
+        return false;
+      })
+      .finally(() => {
+        if (seq !== publishAccessSeq) return;
+        publishAccessWait = null;
+      });
+    wait.communityId = id;
+    publishAccessWait = wait;
+    return wait;
+  }
+
+  function syncPublishCommunityAccess() {
+    if (publishEdit) return;
+    const id = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
+    if (!id) {
+      cancelPublishCommunityCheck();
+      publishDestAllowed = blogPublishDest();
+      publishDest = blogPublishDest();
+      paintPublishDest();
+      setPublishDestNote("");
+      return;
+    }
+    ensurePublishCommunity(id, publishDest.title);
+  }
+
+  function publishCommunityPermitted(id) {
+    const selected = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
+    if (selected !== id) return false;
+    if (publishDestNoteError) return false;
+    const allowedId =
+      publishDestAllowed.type === "community" ? normalizeCommunityName(publishDestAllowed.name) : "";
+    return allowedId === id;
+  }
+
+  // Publish uses the request started when the subspace was selected.
+  async function publishCommunityReady() {
+    if (publishEdit) return true;
+    const id = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
+    if (!id) return true;
+    const pending = publishAccessWait;
+    if (pending && pending.communityId === id) {
+      const ok = await pending;
+      const still = publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
+      return Boolean(ok) && still === id;
+    }
+    return publishCommunityPermitted(id);
+  }
+
+  function selectPublishDest(type, name, title) {
+    if (publishEdit) return;
+    closeDestMenu();
+    const id = type === "community" ? normalizeCommunityName(name) : "";
+    if (!id) {
+      cancelPublishCommunityCheck();
+      publishDestAllowed = blogPublishDest();
+      publishDest = blogPublishDest();
+      paintPublishDest();
+      renderDestMenu();
+      schedulePublishDraftSave();
+      setPublishStatus("");
+      setPublishDestNote("");
+      return;
+    }
+    const pendingTitle = String(title || "").trim() || id;
+    publishDest = { type: "community", name: id, title: pendingTitle };
+    paintPublishDest();
+    renderDestMenu();
+    ensurePublishCommunity(id, pendingTitle);
   }
 
   function paintPublishTags() {
@@ -7352,11 +7525,14 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function resetPublishForm() {
+    cancelPublishCommunityCheck();
     publishEdit = null;
     publishStash = null;
     publishDestRequest = null;
     publishPinnedCommunity = null;
-    publishDest = { type: "blog", name: "", title: "My cyberspace" };
+    publishDestAllowed = blogPublishDest();
+    publishDest = blogPublishDest();
+    setPublishDestNote("");
     publishTags = [];
     publishTitleDraft = "";
     publishBodyDraft = "";
@@ -7470,6 +7646,7 @@ let CS77_FILTER_LOW_REP = 20;
     loadPublishSubs();
     startPublishDraftAutosave();
     focusPublishField();
+    syncPublishCommunityAccess();
   }
 
   async function submitPublish() {
@@ -7487,6 +7664,22 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (pageEl && pageEl.classList.contains("is-pending")) return;
+    if (publishSubmitLock) return;
+    if (!publishEdit && publishDest.type === "community" && publishDest.name) {
+      publishSubmitLock = true;
+      let allowed = false;
+      try {
+        allowed = await publishCommunityReady();
+      } finally {
+        publishSubmitLock = false;
+        releasePublishSubmit();
+      }
+      if (!allowed) {
+        if (publishDestNoteError && publishDestNote) setPublishStatus(publishDestNote, true);
+        return;
+      }
+      if (publishDest.type !== "community" || !normalizeCommunityName(publishDest.name)) return;
+    }
     const commentEdit = editingComment();
     const titleEl = $("#publishTitle");
     if (!commentEdit && titleEl) enforcePublishTitleLimit(titleEl);
@@ -7697,6 +7890,9 @@ let CS77_FILTER_LOW_REP = 20;
       publishStash = snapshotPublishForm();
       stopPublishDraftAutosave();
     }
+    cancelPublishCommunityCheck();
+    setPublishDestNote("");
+    releasePublishSubmit();
     const comment = !isRootPost(post);
     publishEdit = {
       author: post.author,
@@ -10718,20 +10914,26 @@ let CS77_FILTER_LOW_REP = 20;
     if (body) body.value = post;
     publishBodySel = null;
     let skippedCommunity = false;
+    let loadedCommunity = "";
+    let loadedCommunityTitle = "";
     if (!publishEdit) {
       const rawCommunity = data.community;
       const community =
         typeof rawCommunity === "string" ? normalizeCommunityName(rawCommunity) : "";
       if (community) {
         const found = publishSubs.find((c) => normalizeCommunityName(c.name) === community);
+        loadedCommunity = found ? normalizeCommunityName(found.name) : community;
+        loadedCommunityTitle = (found && found.title) || loadedCommunity;
         publishDest = {
           type: "community",
-          name: found ? found.name : community,
-          title: (found && found.title) || community,
+          name: loadedCommunity,
+          title: loadedCommunityTitle,
         };
       } else {
         if (typeof rawCommunity === "string" && rawCommunity.trim()) skippedCommunity = true;
-        publishDest = { type: "blog", name: "", title: "My cyberspace" };
+        cancelPublishCommunityCheck();
+        publishDestAllowed = blogPublishDest();
+        publishDest = blogPublishDest();
       }
       paintPublishDest();
       renderDestMenu();
@@ -10742,6 +10944,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (!comment) {
       fitPublishTitle();
       requestAnimationFrame(() => fitPublishTitle());
+    }
+    if (loadedCommunity) {
+      ensurePublishCommunity(loadedCommunity, loadedCommunityTitle).then((ok) => {
+        if (ok) setPublishStatus("Post loaded.");
+      });
+      return;
     }
     setPublishStatus(
       skippedCommunity
@@ -14356,6 +14564,30 @@ let CS77_FILTER_LOW_REP = 20;
     if (!observer()) return false;
     const role = communityViewerRole(info);
     return role === "owner" || role === "admin";
+  }
+
+  // Topic (type_id 1): anyone except a muted account. Journal (2) and council (3):
+  // member, mod, admin, or owner. Guests are subscribed or not; they still cannot post.
+  function communityAllowsPost(info) {
+    if (!info || !observer()) return false;
+    const typeId = Number(info.type_id);
+    const role = communityViewerRole(info);
+    if (role === "muted") return false;
+    if (typeId === 1) return true;
+    if (typeId === 2 || typeId === 3) {
+      return role === "member" || role === "mod" || role === "admin" || role === "owner";
+    }
+    return false;
+  }
+
+  function communityPostDeniedMessage(info, fallbackTitle) {
+    const title = String(
+      (info && info.title) || fallbackTitle || (info && info.name) || "this subspace"
+    ).trim();
+    if (communityViewerRole(info) === "muted") return "You are muted in " + title + ".";
+    const typeId = Number(info && info.type_id);
+    if (typeId === 2 || typeId === 3) return "Only members can post in " + title + ".";
+    return "You cannot post in " + title + ".";
   }
 
   function communityText(value) {

@@ -4459,8 +4459,11 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .publish-dest {
-  position: relative;
   margin-bottom: 1rem;
+}
+
+.publish-dest-picker {
+  position: relative;
 }
 
 .publish-dest-label {
@@ -4561,6 +4564,18 @@ body:has(#publishOverlay:not([hidden])) {
 .publish-dest-option.is-selected {
   color: var(--yellow);
   background: rgba(227, 19, 55, 0.12);
+}
+
+.publish-dest-note {
+  margin: 0.45rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--gray);
+}
+
+.publish-dest-note.is-error {
+  color: var(--red-bright);
 }
 
 .publish-card .comment-composer {
