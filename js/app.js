@@ -83,6 +83,10 @@ let CS77_FILTER_LOW_REP = 20;
   let pendingCommentsScroll = false;
   let pendingPublish = false;
   let publishDest = { type: "blog", name: "", title: "My cyberspace" };
+  // Set by the subspace ··· menu. Applied once the publish dialog opens.
+  let publishDestRequest = null;
+  // Community chosen from that menu, kept in Publish in even when unsubscribed.
+  let publishPinnedCommunity = null;
   let publishTags = [];
   let publishSubs = [];
   let publishSubsUser = "";
@@ -5936,16 +5940,60 @@ let CS77_FILTER_LOW_REP = 20;
       </button>`;
   }
 
+  function notePublishCommunityTitle(id, title) {
+    const next = String(title || "").trim();
+    if (!id || !next) return;
+    if (publishDest.type === "community" && normalizeCommunityName(publishDest.name) === id) {
+      if (publishDest.title !== next || publishDest.name !== id) {
+        publishDest = { type: "community", name: id, title: next };
+        paintPublishDest();
+      }
+    }
+    if (
+      publishPinnedCommunity &&
+      normalizeCommunityName(publishPinnedCommunity.name) === id &&
+      publishPinnedCommunity.title !== next
+    ) {
+      publishPinnedCommunity = { name: id, title: next };
+    }
+  }
+
   function renderDestMenu() {
     const menu = $("#publishDestMenu");
     const user = observer();
     if (!menu) return;
+    const selectedName =
+      publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
+    publishSubs.forEach((c) => {
+      const id = normalizeCommunityName(c.name);
+      const pinnedId = publishPinnedCommunity
+        ? normalizeCommunityName(publishPinnedCommunity.name)
+        : "";
+      if (id && c.title && (id === selectedName || id === pinnedId)) {
+        notePublishCommunityTitle(id, c.title);
+      }
+    });
     const blogSelected = publishDest.type !== "community";
     const parts = [destOptionHtml("", "My cyberspace", user, blogSelected)];
+    const seen = new Set();
     publishSubs.forEach((c) => {
-      const selected = publishDest.type === "community" && publishDest.name === c.name;
+      const id = normalizeCommunityName(c.name);
+      if (id) seen.add(id);
+      const selected = Boolean(selectedName) && id === selectedName;
       parts.push(destOptionHtml(c.name, c.title || c.name, c.name, selected));
     });
+    const extras = [];
+    function pushExtra(name, title) {
+      const id = normalizeCommunityName(name);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      extras.push(destOptionHtml(id, title || id, id, selectedName === id));
+    }
+    if (publishPinnedCommunity) {
+      pushExtra(publishPinnedCommunity.name, publishPinnedCommunity.title);
+    }
+    if (selectedName) pushExtra(publishDest.name, publishDest.title);
+    if (extras.length) parts.splice(1, 0, extras.join(""));
     menu.innerHTML = parts.join("");
   }
 
@@ -5963,7 +6011,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const menu = $("#publishDestMenu");
     if (menu && !publishSubs.length) {
-      menu.innerHTML = `<p class="publish-dest-empty">Loading communities…</p>`;
+      const pinned =
+        publishPinnedCommunity ||
+        (publishDest.type === "community" && publishDest.name);
+      if (pinned) renderDestMenu();
+      else menu.innerHTML = `<p class="publish-dest-empty">Loading communities…</p>`;
     }
     try {
       const list = await HiveApi.listAllSubscriptions(user);
@@ -7275,9 +7327,28 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  function applyPublishDestRequest() {
+    const req = publishDestRequest;
+    publishDestRequest = null;
+    if (!req) {
+      publishPinnedCommunity = null;
+      return;
+    }
+    const name = normalizeCommunityName(req.name);
+    if (!name || publishEdit) {
+      publishPinnedCommunity = null;
+      return;
+    }
+    const title = String(req.title || "").trim() || name;
+    publishPinnedCommunity = { name, title };
+    publishDest = { type: "community", name, title };
+  }
+
   function resetPublishForm() {
     publishEdit = null;
     publishStash = null;
+    publishDestRequest = null;
+    publishPinnedCommunity = null;
     publishDest = { type: "blog", name: "", title: "My cyberspace" };
     publishTags = [];
     publishTitleDraft = "";
@@ -7380,6 +7451,7 @@ let CS77_FILTER_LOW_REP = 20;
       hydratePublishDraftFromStorage();
       collapsePublishAdvanced();
     }
+    applyPublishDestRequest();
     ov.hidden = false;
     paintPublishChrome();
     fitPublishTitle();
@@ -14047,6 +14119,35 @@ let CS77_FILTER_LOW_REP = 20;
     return communityState.subscribed ? "Unsubscribe" : "Subscribe";
   }
 
+  function communityMoreHtml(name) {
+    const id = normalizeCommunityName(name);
+    return `
+      <div class="profile-more">
+        <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
+        <div class="profile-more-menu" role="menu" hidden>
+          <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
+          <a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(id))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>
+        </div>
+      </div>`;
+  }
+
+  function openCommunityPublish() {
+    const name = normalizeCommunityName(communityState.name);
+    if (!name) return;
+    const title = communityTitleOf(communityState.info, name) || name;
+    publishDestRequest = { name, title };
+    if (!observer()) {
+      pendingPublish = true;
+      openLogin();
+      return;
+    }
+    if (parseRoute().name === "publish") {
+      openPublishOverlay();
+      return;
+    }
+    navigate(appHref("/publish"));
+  }
+
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
@@ -14070,6 +14171,7 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
             <div class="community-head-actions">
               <button type="button" class="btn-primary btn-compact community-sub-btn" data-community="${HiveMd.escapeHtml(name)}" data-subscribed="${communityState.subscribed ? "1" : "0"}"${communityState.pending ? " disabled" : ""}>${communitySubscribeLabel()}</button>
+              ${communityMoreHtml(name)}
             </div>
           </div>
         </div>
@@ -15625,7 +15727,12 @@ let CS77_FILTER_LOW_REP = 20;
     // A post opened from the feed stays up under the publish dialog. Closing
     // the dialog returns to that post instead of the feed underneath.
     const keepPost = r.name === "publish" && postLayer.open;
-    if (r.name !== "community") resetCommunityState();
+    // Publish opens over the subspace page. Keep subscribe state for when it closes.
+    const keepCommunity =
+      r.name === "publish" &&
+      currentViewKey.startsWith("community:") &&
+      !currentViewKey.startsWith("communities:");
+    if (r.name !== "community" && !keepCommunity) resetCommunityState();
     if (r.name !== "profile") resetProfileState();
     if (r.name !== "settings") clearSettingsProfileScratch();
     if (r.name !== "publish") {
@@ -16334,6 +16441,13 @@ let CS77_FILTER_LOW_REP = 20;
           e.preventDefault();
           closeProfileMore();
           toggleProfileMute();
+          return;
+        }
+        const writeBtn = profileMoreEl.closest(".community-write-btn");
+        if (writeBtn) {
+          e.preventDefault();
+          closeProfileMore();
+          openCommunityPublish();
           return;
         }
         if (profileMoreEl.closest(".profile-more-item")) closeProfileMore();
