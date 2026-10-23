@@ -91,6 +91,14 @@ let CS77_FILTER_LOW_REP = 20;
   let publishAccessSeq = 0;
   let publishAccessWait = null;
   let publishSubmitLock = false;
+  // Silent council comment check. Starts when the box is focused or Reply is
+  // clicked. Comment waits for this request and does not send another.
+  let commentAccessSeq = 0;
+  let commentAccessWait = null;
+  let commentAccessCommunity = "";
+  let commentAccessUser = "";
+  let commentAccessMessage = "";
+  let commentAccessSettled = false;
   // Set by the subspace ··· menu. Applied once the publish dialog opens.
   let publishDestRequest = null;
   // Community chosen from that menu, kept in Publish in even when unsubscribed.
@@ -10501,6 +10509,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
     slot.hidden = false;
     btn.classList.add("is-open");
+    beginCommentCouncilCheck(slot.querySelector(".comment-composer"));
     const ta = slot.querySelector("textarea");
     if (ta) ta.focus();
   }
@@ -11032,6 +11041,75 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // Council comments need member, mod, admin, or owner. Topic and journal stay open.
+  function commentCouncilDenial(info, fallbackTitle) {
+    const title = String((info && info.title) || fallbackTitle || "this subspace").trim();
+    if (!info || !info.name || Number(info.type_id) !== 3) return "";
+    const role = communityViewerRole(info);
+    if (role === "muted") return "You are muted in " + title + ".";
+    if (role === "member" || role === "mod" || role === "admin" || role === "owner") return "";
+    return "Only members can comment in " + title + ".";
+  }
+
+  function commentAccessComposer(target) {
+    const el = eventElement(target);
+    if (!el) return null;
+    const composer = el.closest(".comment-composer");
+    if (!composer || composer.getAttribute("data-edit-author") || composer.id === "publishComposer") return null;
+    const section = document.getElementById("comments");
+    if (!section || !section.contains(composer)) return null;
+    return composer;
+  }
+
+  // One request per subspace. Focus, activation, and Reply share it.
+  function ensureCommentCouncil(post) {
+    const id = communityNameOf(post);
+    const user = observer();
+    if (!id || !user) return Promise.resolve("");
+    if (
+      commentAccessCommunity === id &&
+      commentAccessUser === user &&
+      (commentAccessWait || commentAccessSettled)
+    ) {
+      return commentAccessWait || Promise.resolve(commentAccessMessage);
+    }
+    const seq = ++commentAccessSeq;
+    const fallbackTitle = (post && (post.community_title || post.community)) || id;
+    commentAccessCommunity = id;
+    commentAccessUser = user;
+    commentAccessMessage = "";
+    commentAccessSettled = false;
+    const wait = HiveApi.getCommunity(id, user)
+      .then((info) => {
+        if (seq !== commentAccessSeq || observer() !== user) return "";
+        commentAccessMessage = commentCouncilDenial(info, fallbackTitle);
+        commentAccessSettled = true;
+        return commentAccessMessage;
+      })
+      .catch(() => {
+        if (seq !== commentAccessSeq) return "";
+        commentAccessMessage = "";
+        commentAccessSettled = true;
+        return "";
+      })
+      .finally(() => {
+        if (seq !== commentAccessSeq) return;
+        commentAccessWait = null;
+      });
+    commentAccessWait = wait;
+    return wait;
+  }
+
+  function beginCommentCouncilCheck(composer) {
+    const id = communityNameOf(currentPost);
+    const target = composer && composer.nodeType === 1 ? composer : null;
+    ensureCommentCouncil(currentPost).then((denial) => {
+      if (!denial || !target || !target.isConnected) return;
+      if (communityNameOf(currentPost) !== id) return;
+      composerStatus(target, denial, true);
+    });
+  }
+
   async function submitComment(composer) {
     const user = observer();
     if (!user) {
@@ -11043,6 +11121,20 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (composer.getAttribute("data-edit-author")) {
       await submitCommentEdit(composer);
+      return;
+    }
+    if (composer.classList.contains("is-access-wait")) return;
+    const communityId = communityNameOf(currentPost);
+    composer.classList.add("is-access-wait");
+    let denial = "";
+    try {
+      denial = await ensureCommentCouncil(currentPost);
+    } finally {
+      composer.classList.remove("is-access-wait");
+    }
+    if (communityNameOf(currentPost) !== communityId) return;
+    if (denial) {
+      composerStatus(composer, denial, true);
       return;
     }
     const textarea = composer.querySelector(".composer-input");
@@ -17539,6 +17631,21 @@ let CS77_FILTER_LOW_REP = 20;
       const files = input.files ? Array.from(input.files) : [];
       input.value = "";
       if (composer && files.length) uploadImagesToComposer(composer, files);
+    });
+
+    document.addEventListener("pointerdown", (e) => {
+      const input = eventElement(e.target);
+      if (!input || !input.closest(".composer-input")) return;
+      const composer = commentAccessComposer(input);
+      if (!composer) return;
+      beginCommentCouncilCheck(composer);
+    });
+    document.addEventListener("focusin", (e) => {
+      const input = eventElement(e.target);
+      if (!input || !input.closest(".composer-input")) return;
+      const composer = commentAccessComposer(input);
+      if (!composer) return;
+      beginCommentCouncilCheck(composer);
     });
 
     document.addEventListener("keydown", (e) => {
