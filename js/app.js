@@ -9331,17 +9331,21 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
+  function communityCountText(count) {
+    const n = Number(count);
+    const whole = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    try {
+      return whole.toLocaleString("en-US");
+    } catch {
+      return String(whole);
+    }
+  }
+
   function communitySubscriberLabel(count) {
     const n = Number(count);
     if (!Number.isFinite(n) || n < 0) return "";
     const whole = Math.floor(n);
-    let text = String(whole);
-    try {
-      text = whole.toLocaleString("en-US");
-    } catch {
-      text = String(whole);
-    }
-    return text + (whole === 1 ? " subscriber" : " subscribers");
+    return communityCountText(whole) + (whole === 1 ? " subscriber" : " subscribers");
   }
 
   function communityDirRowHtml(row, mode) {
@@ -14617,8 +14621,6 @@ let CS77_FILTER_LOW_REP = 20;
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
     const about = communityAboutText(info);
-    const subscribers = Number((info && info.subscribers) || 0);
-    const authors = Number((info && info.num_authors) || 0);
     const href = HiveMd.escapeHtml(communityHref(name));
     return `
       <div class="profile-banner community-banner">
@@ -14629,8 +14631,8 @@ let CS77_FILTER_LOW_REP = 20;
             <p class="profile-handle"><a href="${href}">${HiveMd.escapeHtml(name)}</a></p>
             ${about ? `<p class="profile-about">${HiveMd.escapeHtml(about)}</p>` : ""}
             <div class="profile-stats">
-              <span class="community-sub-count">${subscribers} subscribers</span>
-              <span>${authors} authors</span>
+              <span class="community-sub-count">${communityCountText(info && info.subscribers)} subscribers</span>
+              <span>${communityCountText(info && info.num_authors)} authors</span>
               ${communityStatMarksHtml(info)}
             </div>
             <div class="community-head-actions">
@@ -14653,7 +14655,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const count = view.querySelector(".community-sub-count");
     if (count && communityState.info) {
-      count.textContent = Number(communityState.info.subscribers || 0) + " subscribers";
+      count.textContent = communityCountText(communityState.info.subscribers) + " subscribers";
     }
   }
 
