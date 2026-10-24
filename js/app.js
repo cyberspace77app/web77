@@ -14677,16 +14677,21 @@ let CS77_FILTER_LOW_REP = 20;
     return `<section><h2>${title}</h2>${bodyHtml}</section>`;
   }
 
-  // Hivemind settings.cover_url wins. Older subspaces only store the picture
-  // on the account profile, the same fallback the edit form uses.
+  // Ecency and PeakD paint a subspace cover from the account profile
+  // (images.hive.blog and images.ecency.com /u/<name>/cover). A stored
+  // hivemind settings.cover_url is only a fallback when the profile has none.
   function communityCoverUrl(info, metadata) {
-    const settings = communitySettingsObject(info);
-    let cover = typeof settings.cover_url === "string" ? settings.cover_url.trim() : "";
     const profile = metadata && metadata.profile;
-    if (!cover && profile && typeof profile.cover_image === "string") {
-      cover = profile.cover_image.trim();
-    }
-    return communityHttpUrl(cover) || "";
+    return communityAccountPicture(profile, "cover_image", communitySettingsObject(info), "cover_url");
+  }
+
+  function communityAccountPicture(profile, profileKey, settings, settingsKey) {
+    const fromProfile = communityHttpUrl(
+      profile && typeof profile[profileKey] === "string" ? profile[profileKey] : ""
+    );
+    if (fromProfile) return fromProfile;
+    const raw = settings && settings[settingsKey];
+    return communityHttpUrl(typeof raw === "string" ? raw : "") || "";
   }
 
   function communityAboutCoverHtml(url) {
@@ -15099,6 +15104,7 @@ let CS77_FILTER_LOW_REP = 20;
     const extra = copyJsonKeys(profile, {
       profile_image: true,
       cover_image: true,
+      version: true,
       beneficiary: true,
       preferred_tags: true,
     });
@@ -15167,25 +15173,43 @@ let CS77_FILTER_LOW_REP = 20;
     return {};
   }
 
-  // Hivemind replaces the stored settings object. Pictures always come from
-  // the form. Preferred spaces come from the form when the subspace account
-  // loaded, and stay as stored otherwise. Other keys stay as stored.
+  function communityStoredPicture(stored, key) {
+    const value = stored && stored[key];
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  // Hivemind replaces the stored settings object. Subspace and cover pictures
+  // belong on the account profile, so avatar_url and cover_url are rewritten
+  // only when that subspace already stored them. Preferred spaces come from
+  // the form when the subspace account loaded, and stay as stored otherwise.
   function communitySettingsPayload(fields, options) {
     const stored = (options && options.stored) || {};
     const settings = copyJsonKeys(stored, {
-      avatar_url: true,
-      cover_url: true,
       preferred_tags: true,
     });
-    settings.avatar_url = fields.avatar_url;
-    settings.cover_url = fields.cover_url;
+    let changed = false;
+    [
+      ["avatar_url", fields.avatar_url],
+      ["cover_url", fields.cover_url],
+    ].forEach((pair) => {
+      const current = communityStoredPicture(stored, pair[0]);
+      if (!current) return;
+      // An empty settings object is rejected by hivemind, so a cleared
+      // picture stays as an empty string instead of dropping the last key.
+      settings[pair[0]] = pair[1] || "";
+      if (current !== (pair[1] || "")) changed = true;
+    });
     if (options && options.tagsFromForm) {
+      const previous = Array.isArray(stored.preferred_tags) ? stored.preferred_tags : [];
+      if (!communitySameTags(previous, fields.tags || [])) changed = true;
       if (fields.tags && fields.tags.length) settings.preferred_tags = fields.tags.slice();
       else delete settings.preferred_tags;
     } else if (Array.isArray(stored.preferred_tags)) {
       settings.preferred_tags = stored.preferred_tags.slice();
     }
-    return settings;
+    // Hivemind rejects an empty settings object. A cleared tag list is [].
+    if (changed && !Object.keys(settings).length) settings.preferred_tags = [];
+    return { settings: settings, changed: changed };
   }
 
   function communityHttpUrl(value) {
@@ -15297,10 +15321,8 @@ let CS77_FILTER_LOW_REP = 20;
     const metadata = ready ? communityEditOwner.metadata : null;
     const posting = ready && communityEditOwner.posting ? communityEditOwner.posting : null;
     const profile = metadata && metadata.profile;
-    let avatar = typeof settings.avatar_url === "string" ? settings.avatar_url : "";
-    let cover = typeof settings.cover_url === "string" ? settings.cover_url : "";
-    if (!avatar && profile && typeof profile.profile_image === "string") avatar = profile.profile_image;
-    if (!cover && profile && typeof profile.cover_image === "string") cover = profile.cover_image;
+    const avatar = communityAccountPicture(profile, "profile_image", settings, "avatar_url");
+    const cover = communityAccountPicture(profile, "cover_image", settings, "cover_url");
     const beneficiary = metadata ? communityBeneficiaryFields(metadata) : { beneficiary_account: "", beneficiary_percent: "" };
     return {
       title: communityText(info && info.title),
@@ -15440,6 +15462,7 @@ let CS77_FILTER_LOW_REP = 20;
           <p class="settings-note" id="communityOwnerNote">Posting key of ${account} required</p>
           <div class="settings-field">
             <label class="settings-label" for="communityAvatar">Subspace picture</label>
+            <p class="settings-note">Profile picture of this subspace account.</p>
             <div class="settings-media">
               <img id="communityAvatarPreview" class="settings-avatar-preview" src="${esc(avatarSrc)}" alt="" width="72" height="72">
               <div class="settings-media-main">
@@ -15453,7 +15476,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
           <div class="settings-field">
             <label class="settings-label" for="communityCover">Cover picture</label>
-            <p class="settings-note">Used on the about page.</p>
+            <p class="settings-note">Profile cover of this subspace account. Shown on the about page.</p>
             <img id="communityCoverPreview" class="settings-cover-preview" alt="" ${coverSrc ? `src="${esc(coverSrc)}"` : "hidden"}>
             <input id="communityCover" name="cover_url" type="text" inputmode="url" autocomplete="off" maxlength="1023" placeholder="https://" value="${esc(fields.cover_url || "")}">
             <div class="settings-media-actions">
@@ -15923,8 +15946,19 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
+  // images.hive.blog and images.ecency.com ignore posting_json_metadata
+  // until profile.version is set, then they serve profile_image and cover_image.
+  function communityProfileNeedsVersion() {
+    if (!communityOwnerReady(communityState.name)) return false;
+    const posting = communityEditOwner.posting;
+    const profile = posting && posting.profile;
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) return false;
+    return !profile.version;
+  }
+
   function communityOwnerChanged(fields, base, ownerReady) {
     if (fields.avatar_url !== base.avatar_url || fields.cover_url !== base.cover_url) return true;
+    if (communityProfileNeedsVersion()) return true;
     if (!ownerReady) return false;
     return (
       fields.beneficiary_account !== (base.beneficiary_account || "") ||
@@ -15948,11 +15982,28 @@ let CS77_FILTER_LOW_REP = 20;
       paintCommunityEditBanner(fields, false);
       setCommunityMeta(communityState.name, "edit", info);
     }
+    const storedBefore = communityStoredSettings(communityState.name);
+    const ownerReadyNow = communityOwnerReady(communityState.name);
     if (which.settings) {
       info.settings = which.settings;
       communityEditSettings = { community: communityState.name, settings: which.settings };
     }
     if (which.owner && which.avatarChanged) paintCommunityEditBanner(fields, true);
+    if (which.owner && communityEditOwner && communityEditOwner.community === communityState.name) {
+      const posting =
+        communityEditOwner.posting && typeof communityEditOwner.posting === "object" && !Array.isArray(communityEditOwner.posting)
+          ? communityEditOwner.posting
+          : {};
+      if (!posting.profile || typeof posting.profile !== "object" || Array.isArray(posting.profile)) {
+        posting.profile = {};
+      }
+      posting.profile.version = 2;
+      if (fields.avatar_url) posting.profile.profile_image = fields.avatar_url;
+      else if (ownerReadyNow || communityStoredPicture(storedBefore, "avatar_url")) delete posting.profile.profile_image;
+      if (fields.cover_url) posting.profile.cover_image = fields.cover_url;
+      else if (ownerReadyNow || communityStoredPicture(storedBefore, "cover_url")) delete posting.profile.cover_image;
+      communityEditOwner.posting = posting;
+    }
     const patch = {};
     if (which.admin) {
       patch.title = fields.title;
@@ -15985,11 +16036,15 @@ let CS77_FILTER_LOW_REP = 20;
   // Beneficiary matches Ecency: posting_json_metadata.profile.beneficiary
   // is {account, weight} with weight in basis points. Preferred spaces have
   // no Ecency or PeakD field, so they are stored as profile.preferred_tags
-  // and copied into hivemind settings. Pictures stay in settings and are
-  // also written to profile_image / cover_image for PeakD. When the account
-  // loaded, the owner custom JSON is the rest of posting_json_metadata.
-  // When it did not, the fetched posting metadata is kept and only pictures change.
-  function communityOwnerMetadata(baseMeta, fields, ownerReady) {
+  // and copied into hivemind settings. The subspace picture and cover are the
+  // account profile_image and cover_image. Ecency's updateProfile and PeakD
+  // both set profile.version to 2 so the image servers use that profile.
+  // When the account loaded, the owner custom JSON is the rest of
+  // posting_json_metadata, and an empty picture field clears that image.
+  // When it did not, posting metadata is kept. An empty field clears an image
+  // only when hivemind already showed that URL in the form. A picture that
+  // stayed on the account and was never shown is left in place.
+  function communityOwnerMetadata(baseMeta, fields, ownerReady, stored) {
     const source = ownerReady ? parseCommunityCustom(fields.owner_custom, "Owner") : baseMeta;
     const meta = communityCloneObject(source);
     if (ownerReady) {
@@ -15997,6 +16052,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (meta.profile && typeof meta.profile === "object" && !Array.isArray(meta.profile)) {
         delete meta.profile.profile_image;
         delete meta.profile.cover_image;
+        delete meta.profile.version;
         delete meta.profile.beneficiary;
         delete meta.profile.preferred_tags;
       }
@@ -16006,9 +16062,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const profile = meta.profile;
     if (fields.avatar_url) profile.profile_image = fields.avatar_url;
-    else delete profile.profile_image;
+    else if (ownerReady || communityStoredPicture(stored, "avatar_url")) delete profile.profile_image;
     if (fields.cover_url) profile.cover_image = fields.cover_url;
-    else delete profile.cover_image;
+    else if (ownerReady || communityStoredPicture(stored, "cover_url")) delete profile.cover_image;
+    profile.version = 2;
     if (ownerReady) {
       if (fields.beneficiary_account) {
         profile.beneficiary = {
@@ -16033,14 +16090,17 @@ let CS77_FILTER_LOW_REP = 20;
     }
     // Rebuild settings from the stored object instead of a fresh get_community.
     // Hivemind may not have reindexed an admin save from earlier in this submit.
-    const settings = communitySettingsPayload(fields, {
+    const stored = communityStoredSettings(name);
+    const prepared = communitySettingsPayload(fields, {
       tagsFromForm: ownerReady,
-      stored: communityStoredSettings(name),
+      stored: stored,
     });
+    const settings = prepared.settings;
     const metadata = communityOwnerMetadata(
       ownerReady ? null : communityPostingMetadata(account),
       fields,
-      ownerReady
+      ownerReady,
+      stored
     );
     let propsJson = "";
     let metaJson = "";
@@ -16050,31 +16110,37 @@ let CS77_FILTER_LOW_REP = 20;
     } catch {
       throw new Error("Could not prepare these settings.");
     }
-    if (new TextEncoder().encode(propsJson).length > 8192 || metaJson.length > SETTINGS_METADATA_MAX) {
+    if (
+      (prepared.changed && new TextEncoder().encode(propsJson).length > 8192) ||
+      metaJson.length > SETTINGS_METADATA_MAX
+    ) {
       throw new Error("These settings are too long to save.");
     }
+    const operations = [];
+    if (prepared.changed) {
+      operations.push([
+        "custom_json",
+        {
+          required_auths: [],
+          required_posting_auths: [name],
+          id: "community",
+          json: propsJson,
+        },
+      ]);
+    }
+    operations.push([
+      "account_update2",
+      {
+        account: name,
+        json_metadata: "",
+        posting_json_metadata: metaJson,
+        extensions: [],
+      },
+    ]);
     return {
       settings: settings,
-      operations: [
-        [
-          "custom_json",
-          {
-            required_auths: [],
-            required_posting_auths: [name],
-            id: "community",
-            json: propsJson,
-          },
-        ],
-        [
-          "account_update2",
-          {
-            account: name,
-            json_metadata: "",
-            posting_json_metadata: metaJson,
-            extensions: [],
-          },
-        ],
-      ],
+      settingsChanged: prepared.changed,
+      operations: operations,
     };
   }
 
@@ -16130,8 +16196,9 @@ let CS77_FILTER_LOW_REP = 20;
           opts.lead || "Use hive keychain (recommended) or enter the posting key of this subspace account.";
       }
       el.hidden = false;
-      const key = $("#ownerSignKey");
-      if (key) key.focus();
+      // Desktop focus stays on the account so the subspace name is the emphasis.
+      // Mobile leaves the inputs unfocused so the keyboard stays closed.
+      if (!isMobileViewport()) user.focus();
       ownerSignSession = {
         name,
         operations,
@@ -16326,7 +16393,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (communityState.name !== name || observer() !== user) return;
       applyCommunityEditPart(fields, {
         owner: true,
-        settings: ownerOps.settings,
+        settings: ownerOps.settingsChanged ? ownerOps.settings : null,
         avatarChanged: fields.avatar_url !== (base.avatar_url || ""),
       });
       if (communityEditStill(name)) setCommunityEditStatus("Saved.", false);
@@ -17822,6 +17889,8 @@ let CS77_FILTER_LOW_REP = 20;
     const extra = {};
     Object.keys(profile).forEach((key) => {
       if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      // Image servers use profile.version. The save sets it, so Custom does not.
+      if (key === "version") return;
       if (PROFILE_FIELDS.indexOf(key) !== -1 && (profile[key] == null || typeof profile[key] === "string")) {
         return;
       }
@@ -17862,6 +17931,8 @@ let CS77_FILTER_LOW_REP = 20;
     return fields;
   }
 
+  // images.hive.blog and images.ecency.com ignore posting_json_metadata
+  // until profile.version is set. Ecency writes 2 on every profile update.
   function composeProfileMetadata(fields, custom) {
     const meta = copyJsonKeys(custom, { profile: true });
     const src =
@@ -17871,6 +17942,7 @@ let CS77_FILTER_LOW_REP = 20;
     const profile = {};
     Object.keys(src).forEach((key) => {
       if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      if (key === "version") return;
       if (PROFILE_FIELDS.indexOf(key) !== -1 && (src[key] == null || typeof src[key] === "string")) return;
       profile[key] = src[key];
     });
@@ -17878,6 +17950,7 @@ let CS77_FILTER_LOW_REP = 20;
       const text = String(fields[key] == null ? "" : fields[key]).trim();
       if (text) profile[key] = text;
     });
+    profile.version = 2;
     meta.profile = profile;
     return meta;
   }
