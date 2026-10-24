@@ -3744,8 +3744,6 @@ a.tag:hover {
 
 .community-nsfw {
   color: var(--red-bright);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .community-nav,
@@ -3757,11 +3755,15 @@ a.tag:hover {
   padding-bottom: 1rem;
 }
 
-.community-rules section {
+.community-about section {
   margin-bottom: 2.25rem;
 }
 
-.community-rules h2,
+.community-about .tags {
+  margin-bottom: 0;
+}
+
+.community-about h2,
 .community-panel h2 {
   font-family: var(--font-display);
   font-size: 0.68rem;

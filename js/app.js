@@ -14537,8 +14537,8 @@ let CS77_FILTER_LOW_REP = 20;
       <div class="profile-more">
         <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
         <div class="profile-more-menu" role="menu" hidden>
-          <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
           ${edit}
+          <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
           <a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(id))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>
         </div>
       </div>`;
@@ -14561,13 +14561,58 @@ let CS77_FILTER_LOW_REP = 20;
     navigate(appHref("/publish"));
   }
 
+  function communityKindLabel(typeId) {
+    const id = communityTypeId(typeId);
+    if (id === 2) return "journal";
+    if (id === 3) return "council";
+    return "";
+  }
+
+  function communityStatMarksHtml(info) {
+    const nsfw = Boolean(info && info.is_nsfw);
+    const kind = communityKindLabel(info && info.type_id);
+    return (
+      (nsfw ? `<span class="community-nsfw">nsfw</span>` : "") +
+      (kind ? `<span class="community-kind">${kind}</span>` : "")
+    );
+  }
+
+  // Keep nsfw before journal or council. Topic communities show neither word.
+  function placeCommunityStatMarks(stats, info) {
+    if (!stats) return;
+    let nsfw = stats.querySelector(".community-nsfw");
+    let kind = stats.querySelector(".community-kind");
+    if (info && info.is_nsfw) {
+      if (!nsfw) {
+        nsfw = document.createElement("span");
+        nsfw.className = "community-nsfw";
+        nsfw.textContent = "nsfw";
+      }
+    } else if (nsfw) {
+      nsfw.remove();
+      nsfw = null;
+    }
+    const label = communityKindLabel(info && info.type_id);
+    if (label) {
+      if (!kind) {
+        kind = document.createElement("span");
+        kind.className = "community-kind";
+      }
+      kind.textContent = label;
+    } else if (kind) {
+      kind.remove();
+      kind = null;
+    }
+    if (nsfw) stats.appendChild(nsfw);
+    if (kind) stats.appendChild(kind);
+  }
+
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
     const about = communityAboutText(info);
     const subscribers = Number((info && info.subscribers) || 0);
     const authors = Number((info && info.num_authors) || 0);
-    const nsfw = Boolean(info && info.is_nsfw);
     const href = HiveMd.escapeHtml(communityHref(name));
     return `
       <div class="profile-banner community-banner">
@@ -14580,7 +14625,7 @@ let CS77_FILTER_LOW_REP = 20;
             <div class="profile-stats">
               <span class="community-sub-count">${subscribers} subscribers</span>
               <span>${authors} authors</span>
-              ${nsfw ? `<span class="community-nsfw">NSFW</span>` : ""}
+              ${communityStatMarksHtml(info)}
             </div>
             <div class="community-head-actions">
               <button type="button" class="btn-primary btn-compact community-sub-btn" data-community="${HiveMd.escapeHtml(name)}" data-subscribed="${communityState.subscribed ? "1" : "0"}"${communityState.pending ? " disabled" : ""}>${communitySubscribeLabel()}</button>
@@ -14606,10 +14651,86 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function communityRulesHtml(info) {
+  function communityLangLabel(code) {
+    const current = String(code || "").trim().toLowerCase();
+    if (!current) return "";
+    for (let i = 0; i < COMMUNITY_LANG_OPTIONS.length; i++) {
+      if (COMMUNITY_LANG_OPTIONS[i][0] === current) return COMMUNITY_LANG_OPTIONS[i][1];
+    }
+    return current;
+  }
+
+  function communityAboutSection(title, bodyHtml) {
+    return `<section><h2>${title}</h2>${bodyHtml}</section>`;
+  }
+
+  // Description and rules come from the community. Language does too.
+  // Beneficiary and preferred spaces live on the subspace account, with
+  // preferred spaces also copied into hivemind settings.
+  async function communityAboutExtras(name, info) {
+    const id = normalizeCommunityName(name);
+    const settings = communitySettingsObject(info);
+    let metadata = null;
+    try {
+      const rows = await HiveApi.getAccounts([id]);
+      const account = rows && rows[0];
+      if (account && normalizeCommunityName(account.name) === id) {
+        metadata = metadataFromAccount(account);
+      }
+    } catch {
+      metadata = null;
+    }
+    return {
+      beneficiary: metadata
+        ? communityBeneficiaryFields(metadata)
+        : { beneficiary_account: "", beneficiary_percent: "" },
+      tags: communityPreferredTags(metadata, settings),
+    };
+  }
+
+  function communityAboutHtml(info, extras) {
     const description = String((info && info.description) || "").trim();
     const rules = String((info && info.flag_text) || "").trim();
-    if (!description && !rules) {
+    const language = communityLangLabel(info && info.lang);
+    const beneficiary = (extras && extras.beneficiary) || {};
+    const account = beneficiary.beneficiary_account || "";
+    const percent = beneficiary.beneficiary_percent || "";
+    const tags = (extras && extras.tags) || [];
+    const sections = [];
+    if (description) {
+      sections.push(
+        communityAboutSection("About", `<div class="post-body">${HiveMd.renderMarkdown(description)}</div>`)
+      );
+    }
+    if (rules) {
+      sections.push(
+        communityAboutSection("Rules", `<div class="post-body">${HiveMd.renderMarkdown(rules)}</div>`)
+      );
+    }
+    if (language) {
+      sections.push(
+        communityAboutSection(
+          "Language",
+          `<div class="post-body"><p>${HiveMd.escapeHtml(language)}</p></div>`
+        )
+      );
+    }
+    if (account) {
+      const href = HiveMd.escapeHtml(profilePath(account));
+      const reward = percent ? " " + HiveMd.escapeHtml(percent) + "%" : "";
+      sections.push(
+        communityAboutSection(
+          "Required Beneficiary",
+          `<div class="post-body"><p><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a>${reward}</p></div>`
+        )
+      );
+    }
+    if (tags.length) {
+      sections.push(
+        communityAboutSection("Preferred spaces", `<div class="tags">${tags.map(tagChipHtml).join("")}</div>`)
+      );
+    }
+    if (!sections.length) {
       return `
         <div class="community-panel">
           <div class="panel empty-state">
@@ -14619,26 +14740,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
       `;
     }
-    return `
-      <div class="community-panel community-rules">
-        ${
-          description
-            ? `<section>
-                <h2>About</h2>
-                <div class="post-body">${HiveMd.renderMarkdown(description)}</div>
-              </section>`
-            : ""
-        }
-        ${
-          rules
-            ? `<section>
-                <h2>Rules</h2>
-                <div class="post-body">${HiveMd.renderMarkdown(rules)}</div>
-              </section>`
-            : ""
-        }
-      </div>
-    `;
+    return `<div class="community-panel community-about">${sections.join("")}</div>`;
   }
 
   function communityMemberHtml(row, opts) {
@@ -15746,20 +15848,10 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (aboutEl) {
       aboutEl.remove();
     }
-    const stats = banner.querySelector(".profile-stats");
-    if (stats) {
-      let nsfw = stats.querySelector(".community-nsfw");
-      if (fields.nsfw) {
-        if (!nsfw) {
-          nsfw = document.createElement("span");
-          nsfw.className = "community-nsfw";
-          nsfw.textContent = "NSFW";
-          stats.appendChild(nsfw);
-        }
-      } else if (nsfw) {
-        nsfw.remove();
-      }
-    }
+    placeCommunityStatMarks(banner.querySelector(".profile-stats"), {
+      is_nsfw: fields.nsfw,
+      type_id: fields.type_id,
+    });
     if (bustAvatar) {
       const img = banner.querySelector(".avatar");
       if (img) {
@@ -17290,7 +17382,18 @@ let CS77_FILTER_LOW_REP = 20;
       const chrome = communityBannerHtml(info) + communityNavHtml(communityState.name, tab);
 
       if (tab === "about") {
-        view.innerHTML = chrome + communityRulesHtml(info);
+        const extras = await communityAboutExtras(communityState.name, info);
+        if (communityState.name !== id) return;
+        const routeNow = parseRoute();
+        if (
+          !routeNow ||
+          routeNow.name !== "community" ||
+          normalizeCommunityPage(routeNow.page) !== "about" ||
+          normalizeCommunityName(routeNow.community) !== id
+        ) {
+          return;
+        }
+        view.innerHTML = chrome + communityAboutHtml(info, extras);
         return;
       }
 
