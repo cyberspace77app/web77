@@ -14760,11 +14760,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (account) {
       const href = HiveMd.escapeHtml(profilePath(account));
-      const reward = percent ? " " + HiveMd.escapeHtml(percent) + "%" : "";
+      const reward = HiveMd.escapeHtml(percent) + "%";
       sections.push(
         communityAboutSection(
-          "Required Beneficiary",
-          `<div class="post-body"><p><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a>${reward}</p></div>`
+          "Beneficiary",
+          `<table class="community-about-beneficiary"><tbody><tr><td><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a></td><td>${reward}</td></tr></tbody></table>`
         )
       );
     }
