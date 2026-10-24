@@ -14806,6 +14806,7 @@ let CS77_FILTER_LOW_REP = 20;
     const canChange = manage && communityCanChangeRole(viewerRole, viewer, name, role, community);
     const canTitle = manage && communityCanEditTitle(viewerRole, viewer, name, role, community);
     const canApprove = manage && section === "subscriber" && typeId === 3 && role === "guest";
+    const showActions = manage || Boolean(opts && opts.actionsColumn);
     const safeName = HiveMd.escapeHtml(name);
     const safeTitle = HiveMd.escapeHtml(title);
     const safeRole = HiveMd.escapeHtml(role);
@@ -14828,7 +14829,7 @@ let CS77_FILTER_LOW_REP = 20;
       : title
         ? safeTitle
         : "";
-    const actionCell = manage
+    const actionCell = showActions
       ? `<td class="community-member-actions">${
           actions.length ? `<div class="community-member-actions-inner">${actions.join("")}</div>` : ""
         }</td>`
@@ -16457,9 +16458,12 @@ let CS77_FILTER_LOW_REP = 20;
     const account = normalizeLoginUser(target);
     const actor = normalizeLoginUser(viewer);
     const community = normalizeLoginUser(communityName);
-    if (!account || !actor || account === actor) return false;
+    if (!account || !actor) return false;
     if (community && account === community) return false;
     if (communityRoleRank(targetRole) >= 8) return false;
+    // An admin can demote or remove themself. Hivemind only accepts that from a
+    // higher rank, so the subspace account signs it.
+    if (account === actor) return viewerRole === "admin" && communityNormalizeRole(targetRole) === "admin";
     const targetRank = communityRoleRank(targetRole);
     const viewerRank = communityRoleRank(viewerRole);
     if (targetRank > viewerRank) return false;
@@ -16478,6 +16482,8 @@ let CS77_FILTER_LOW_REP = 20;
     return communityCanChangeRole(viewerRole, actor, account, targetRole, community);
   }
 
+  // Assigning admin, or changing an admin (including the signed-in admin),
+  // is signed by the subspace account.
   function communityRoleNeedsOwner(viewerRole, currentRole, nextRole) {
     if (viewerRole === "owner") return false;
     const next = communityNormalizeRole(nextRole);
@@ -16707,6 +16713,64 @@ let CS77_FILTER_LOW_REP = 20;
     communitySyncPeopleSections();
   }
 
+  // After the signed-in admin changes their own role, the members page and the
+  // Edit item follow the new rank. The action column stays so the table does not shift.
+  function communityApplyViewerRole(role) {
+    const next = communityNormalizeRole(role);
+    const info = communityState.info;
+    if (info) {
+      if (!info.context || typeof info.context !== "object") info.context = {};
+      info.context.role = next;
+    }
+    const ctx = communityMemberContext;
+    if (ctx) {
+      ctx.viewerRole = next;
+      ctx.manage = next === "owner" || next === "admin" || next === "mod";
+    }
+    closeProfileMore();
+    const more = view.querySelector(".community-head-actions .profile-more");
+    if (more && info) {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = communityMoreHtml((info && info.name) || (ctx && ctx.name) || "", info);
+      const fresh = wrap.firstElementChild;
+      if (fresh) more.replaceWith(fresh);
+    }
+    if (!ctx) return;
+    const root = $("#communityMembers");
+    if (root) {
+      root.querySelectorAll("tr.community-member").forEach((row) => {
+        const table = row.closest("table");
+        const account = row.getAttribute("data-account");
+        const rowRole = communityNormalizeRole(row.getAttribute("data-role"));
+        const title = row.getAttribute("data-title") || "";
+        const section = communitySectionId(rowRole);
+        const html = communityMemberHtml(
+          { name: account, role: rowRole, title },
+          Object.assign({}, ctx, {
+            section,
+            actionsColumn: Boolean(table && table.classList.contains("has-actions")),
+          })
+        );
+        if (html) row.outerHTML = html;
+      });
+      COMMUNITY_PEOPLE_SECTIONS.forEach((section) => {
+        const head = document.querySelector("#" + communityPeopleSectionDomId(section) + " .community-people-head");
+        if (!head) return;
+        const sectionRole = section === "subscriber" ? "guest" : section;
+        const canAdd = ctx.manage && communityAssignableRoles(ctx.viewerRole).indexOf(sectionRole) !== -1;
+        const existing = head.querySelector("[data-community-add]");
+        if (canAdd && !existing) {
+          const title = communitySectionTitle(section);
+          head.insertAdjacentHTML(
+            "beforeend",
+            `<button type="button" class="btn-ghost btn-compact" data-community-add="${HiveMd.escapeHtml(sectionRole)}" aria-label="Add to ${HiveMd.escapeHtml(title)}">Add</button>`
+          );
+        } else if (!canAdd && existing) existing.remove();
+      });
+    }
+    communitySyncPeopleSections();
+  }
+
   async function communityAccountSubscribed(account, community) {
     const name = normalizeLoginUser(account);
     const id = normalizeCommunityName(community);
@@ -16812,9 +16876,13 @@ let CS77_FILTER_LOW_REP = 20;
     const account = normalizeLoginUser(user && user.value);
     const current = account ? communityListedRole(account).role : "guest";
     const needsOwner = next !== current && communityRoleNeedsOwner(ctx.viewerRole, current, next);
+    const self = Boolean(account) && account === normalizeLoginUser(ctx.viewer);
     if (removing) {
+      const cleared = self
+        ? "your role and drops you from the subspace."
+        : "their role and drops them from the subspace.";
       hint.textContent = needsOwner
-        ? "The owner account " + ctx.name + " must sign this. Remove clears their role and drops them from the subspace."
+        ? "The owner account " + ctx.name + " must sign this. Remove clears " + cleared
         : "Remove clears their role and drops them from the subspace. Only that account can end a subscription.";
       return;
     }
@@ -16916,7 +16984,10 @@ let CS77_FILTER_LOW_REP = 20;
       setCommunityDialogStatus("#communityRoleStatus", "The subspace account is the owner.", true);
       return;
     }
-    if (account === ctx.viewer) {
+    if (
+      account === ctx.viewer &&
+      !communityCanChangeRole(ctx.viewerRole, ctx.viewer, account, listed.role, ctx.name)
+    ) {
       setCommunityDialogStatus("#communityRoleStatus", "You cannot change your own role.", true);
       return;
     }
@@ -17008,6 +17079,9 @@ let CS77_FILTER_LOW_REP = 20;
         else dropCommunityMember(canonical);
       } else {
         paintCommunityMember(canonical, nextRole, fresh.title);
+      }
+      if (canonical === normalizeLoginUser(ctx.viewer)) {
+        communityApplyViewerRole(removing ? "guest" : nextRole);
       }
       setCommunityPeopleStatus("Saved.", false);
     } catch (err) {
