@@ -14670,6 +14670,39 @@ let CS77_FILTER_LOW_REP = 20;
     return `<section><h2>${title}</h2>${bodyHtml}</section>`;
   }
 
+  // Hivemind settings.cover_url wins. Older subspaces only store the picture
+  // on the account profile, the same fallback the edit form uses.
+  function communityCoverUrl(info, metadata) {
+    const settings = communitySettingsObject(info);
+    let cover = typeof settings.cover_url === "string" ? settings.cover_url.trim() : "";
+    const profile = metadata && metadata.profile;
+    if (!cover && profile && typeof profile.cover_image === "string") {
+      cover = profile.cover_image.trim();
+    }
+    return communityHttpUrl(cover) || "";
+  }
+
+  function communityAboutCoverHtml(url) {
+    const text = communityHttpUrl(url);
+    if (!text) return "";
+    const src = HiveMd.proxyImage(text, 1280);
+    return `<img class="community-about-cover" src="${HiveMd.escapeHtml(src)}" data-cover="${HiveMd.escapeHtml(text)}" alt="">`;
+  }
+
+  function bindCommunityAboutCover() {
+    const img = view.querySelector(".community-about-cover");
+    if (!img) return;
+    img.addEventListener("error", () => {
+      const raw = img.getAttribute("data-cover") || "";
+      const current = img.getAttribute("src") || "";
+      if (raw && current !== raw) {
+        img.src = raw;
+        return;
+      }
+      img.remove();
+    });
+  }
+
   // Description and rules come from the community. Language does too.
   // Beneficiary and preferred spaces live on the subspace account, with
   // preferred spaces also copied into hivemind settings.
@@ -14691,6 +14724,7 @@ let CS77_FILTER_LOW_REP = 20;
         ? communityBeneficiaryFields(metadata)
         : { beneficiary_account: "", beneficiary_percent: "" },
       tags: communityPreferredTags(metadata, settings),
+      cover: communityCoverUrl(info, metadata),
     };
   }
 
@@ -14702,6 +14736,7 @@ let CS77_FILTER_LOW_REP = 20;
     const account = beneficiary.beneficiary_account || "";
     const percent = beneficiary.beneficiary_percent || "";
     const tags = (extras && extras.tags) || [];
+    const coverHtml = communityAboutCoverHtml(extras && extras.cover);
     const sections = [];
     if (description) {
       sections.push(
@@ -14738,7 +14773,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!sections.length) {
       return `
-        <div class="community-panel">
+        <div class="community-panel community-about">
+          ${coverHtml}
           <div class="panel empty-state">
             <h2>No about posted</h2>
             <p>This subspace has not published an about yet.</p>
@@ -14746,7 +14782,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
       `;
     }
-    return `<div class="community-panel community-about">${sections.join("")}</div>`;
+    return `<div class="community-panel community-about">${coverHtml}${sections.join("")}</div>`;
   }
 
   function communityMemberHtml(row, opts) {
@@ -17502,6 +17538,7 @@ let CS77_FILTER_LOW_REP = 20;
       const extras = await communityAboutExtras(id, info);
       if (!communityRouteStill(id, tab) || communityState.name !== id) return;
       communitySubpageHtml(communityAboutHtml(info, extras));
+      bindCommunityAboutCover();
       releaseCommunitySubpageHold();
       return;
     }

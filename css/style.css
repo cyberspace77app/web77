@@ -3756,14 +3756,44 @@ a.tag:hover {
 }
 
 .community-about section {
-  margin-bottom: 2.25rem;
+  margin-bottom: 0;
+}
+
+.community-about .post-body > :last-child {
+  margin-bottom: 0;
 }
 
 .community-about .tags {
   margin-bottom: 0;
 }
 
-.community-about h2,
+/* 10:3 strip. In the 600px about column that is 180px, short of a 16:9 hero
+   and tall enough that a photo cover still reads. */
+.community-about-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 10 / 3;
+  height: auto;
+  object-fit: cover;
+  object-position: center;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #12080c;
+  margin: 0 0 1.75rem;
+}
+
+.community-about > section > h2,
+.community-about .post-body h2 {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--yellow);
+  margin: 2.1rem 0 0.85rem;
+  line-height: 1.2;
+}
+
 .community-panel h2 {
   font-family: var(--font-display);
   font-size: 0.68rem;
