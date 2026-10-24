@@ -15452,7 +15452,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
           <div class="settings-field">
             <label class="settings-label" for="communityCover">Cover picture</label>
-            <p class="settings-note">Used in other frontends.</p>
+            <p class="settings-note">Used on the about page.</p>
             <img id="communityCoverPreview" class="settings-cover-preview" alt="" ${coverSrc ? `src="${esc(coverSrc)}"` : "hidden"}>
             <input id="communityCover" name="cover_url" type="text" inputmode="url" autocomplete="off" maxlength="1023" placeholder="https://" value="${esc(fields.cover_url || "")}">
             <div class="settings-media-actions">
