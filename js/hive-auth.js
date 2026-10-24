@@ -200,7 +200,7 @@
     });
   }
 
-  async function login(username, wif) {
+  async function checkedPostingKey(username, wif) {
     const name = String(username || "")
       .trim()
       .replace(/^@/, "")
@@ -238,17 +238,21 @@
       wipe(bytes);
       throw new Error("This posting key does not match @" + name + ".");
     }
+    return { name, bytes };
+  }
 
+  async function login(username, wif) {
+    const checked = await checkedPostingKey(username, wif);
     try {
-      await persist(name, bytes);
+      await persist(checked.name, checked.bytes);
     } catch (err) {
-      wipe(bytes);
+      wipe(checked.bytes);
       throw new Error(
         (err && err.message) || "Could not store the posting key in this browser."
       );
     }
-    unlockMemory(name, bytes);
-    return name;
+    unlockMemory(checked.name, checked.bytes);
+    return checked.name;
   }
 
   async function ready() {
@@ -295,27 +299,45 @@
     throw new Error("Could not encode the Hive signature.");
   }
 
-  async function broadcast(username, operations) {
+  async function broadcastKeyBytes(keyBytes, operations) {
     if (!Array.isArray(operations) || !operations.length) {
       throw new Error("Invalid blockchain operation.");
     }
     const lib = await loadHiveTx();
-    const keyBytes = requireSession(username);
     if (lib.config && Array.isArray(lib.config.nodes)) {
       lib.config.nodes = hiveNodes();
     }
     const pk = lib.PrivateKey.from(keyBytes);
-    const tx = new lib.Transaction();
-    for (let i = 0; i < operations.length; i++) {
-      const op = operations[i];
-      if (!Array.isArray(op) || op.length < 2) {
-        throw new Error("Invalid blockchain operation.");
+    try {
+      const tx = new lib.Transaction();
+      for (let i = 0; i < operations.length; i++) {
+        const op = operations[i];
+        if (!Array.isArray(op) || op.length < 2) {
+          throw new Error("Invalid blockchain operation.");
+        }
+        await tx.addOperation(op[0], op[1]);
       }
-      await tx.addOperation(op[0], op[1]);
+      tx.sign(pk);
+      const result = await tx.broadcast();
+      return { success: true, result: result || null };
+    } finally {
+      if (pk && pk.key && pk.key !== keyBytes) wipe(pk.key);
     }
-    tx.sign(pk);
-    const result = await tx.broadcast();
-    return { success: true, result: result || null };
+  }
+
+  async function broadcast(username, operations) {
+    const keyBytes = requireSession(username);
+    return broadcastKeyBytes(keyBytes, operations);
+  }
+
+  // One signature. The posting key is checked, used, and discarded.
+  async function broadcastWithKey(username, wif, operations) {
+    const checked = await checkedPostingKey(username, wif);
+    try {
+      return await broadcastKeyBytes(checked.bytes, operations);
+    } finally {
+      wipe(checked.bytes);
+    }
   }
 
   global.HiveAuth = {
@@ -328,5 +350,6 @@
     },
     signBytes,
     broadcast,
+    broadcastWithKey,
   };
 })(window);

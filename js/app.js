@@ -110,7 +110,17 @@ let CS77_FILTER_LOW_REP = 20;
   let communityEditDraft = null;
   let communityEditBaseline = null;
   let communityEditSettings = null;
+  let communityEditOwner = null;
+  let communityEditTags = [];
   let communityEditBusy = false;
+  let ownerSignSession = null;
+  let ownerSignBusy = false;
+  let communityMemberContext = null;
+  let communityMemberSeen = null;
+  let communityRoleBusy = false;
+  let communityRoleSession = null;
+  let communityTitleSession = null;
+  let communityRoleToken = 0;
   let settingsNodeToken = 0;
   let settingsNodeBusy = false;
   let currentViewKey = "";
@@ -5472,6 +5482,18 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (publishDiscardOpen()) {
       hidePublishDiscard();
+      return;
+    }
+    if (ownerSignOpen()) {
+      cancelOwnerSign();
+      return;
+    }
+    if (communityRoleDialogOpen()) {
+      if (!communityRoleBusy) dismissCommunityRoleDialog();
+      return;
+    }
+    if (communityTitleDialogOpen()) {
+      if (!communityRoleBusy) dismissCommunityTitleDialog();
       return;
     }
     if (overlay && !overlay.hidden) {
@@ -14312,6 +14334,8 @@ let CS77_FILTER_LOW_REP = 20;
     communityEditDraft = null;
     communityEditBaseline = null;
     communityEditSettings = null;
+    communityEditOwner = null;
+    communityEditTags = [];
   }
 
   function communityTitleOf(info, name) {
@@ -14461,44 +14485,70 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
-  function communityMemberHtml(row) {
-    const name = String((row && row.name) || "")
-      .replace(/^@/, "")
-      .toLowerCase();
+  function communityMemberHtml(row, opts) {
+    const name = normalizeLoginUser(row && row.name);
     if (!name) return "";
-    const role = String((row && row.role) || "").toLowerCase();
+    const role = communityNormalizeRole(row && row.role);
     const title = String((row && row.title) || "").trim();
-    const showRole = role && role !== "guest" && role !== "member";
-    return `<tr class="community-member">
+    const manage = Boolean(opts && opts.manage);
+    const viewerRole = (opts && opts.viewerRole) || "";
+    const viewer = (opts && opts.viewer) || "";
+    const community = (opts && opts.community) || "";
+    const section = (opts && opts.section) || "members";
+    const typeId = Number(opts && opts.typeId);
+    const canChange = manage && communityCanChangeRole(viewerRole, viewer, name, role, community);
+    const canTitle = manage && communityCanEditTitle(viewerRole, viewer, name, role, community);
+    const canApprove = manage && section === "subscriber" && typeId === 3 && role === "guest";
+    const safeName = HiveMd.escapeHtml(name);
+    const safeTitle = HiveMd.escapeHtml(title);
+    const safeRole = HiveMd.escapeHtml(role);
+    const roleCell = canApprove
+      ? `<button type="button" class="community-role-btn community-approve-btn" data-community-action="approve" data-account="${safeName}" data-title="${safeTitle}">Approve</button>`
+      : role === "guest"
+        ? ""
+        : safeRole;
+    const actions = [];
+    if (canChange) {
+      actions.push(
+        `<button type="button" class="community-role-btn community-role-remove" data-community-action="change" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}" aria-label="Change role">-</button>`
+      );
+    }
+    const titleAttrs = `data-community-action="title" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}"`;
+    const titleCell = canTitle
+      ? title
+        ? `<button type="button" class="community-title-btn" ${titleAttrs} aria-label="Edit role title">${safeTitle}</button>`
+        : `<button type="button" class="community-role-btn community-role-edit" ${titleAttrs} aria-label="Edit role title">Edit</button>`
+      : title
+        ? safeTitle
+        : "";
+    const actionCell = manage
+      ? `<td class="community-member-actions">${
+          actions.length ? `<div class="community-member-actions-inner">${actions.join("")}</div>` : ""
+        }</td>`
+      : "";
+    return `<tr class="community-member" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}">
         <td class="community-member-who">${authorLinkHtml(name, "small")}</td>
-        <td class="community-member-title">${title ? HiveMd.escapeHtml(title) : ""}</td>
-        <td class="community-member-role">${showRole ? HiveMd.escapeHtml(role) : ""}</td>
+        <td class="community-member-title">${titleCell}</td>
+        <td class="community-member-role">${roleCell}</td>
+        ${actionCell}
       </tr>`;
   }
 
-  function communityTableHtml(bodyHtml, bodyId) {
+  function communityTableHtml(bodyHtml, bodyId, withActions, kind) {
     const idAttr = bodyId ? ` id="${HiveMd.escapeHtml(bodyId)}"` : "";
+    const actionsCol = withActions ? `<col class="community-col-actions">` : "";
+    const kindClass = kind === "team" ? " is-team" : "";
     return `<div class="community-table-wrap">
-        <table class="community-table">
+        <table class="community-table${withActions ? " has-actions" : ""}${kindClass}">
           <colgroup>
             <col class="community-col-who">
             <col class="community-col-title">
             <col class="community-col-role">
+            ${actionsCol}
           </colgroup>
           <tbody${idAttr}>${bodyHtml || ""}</tbody>
         </table>
       </div>`;
-  }
-
-  function communityMembersEmptyRow(heading, detail) {
-    return `<tr class="community-table-empty">
-        <td colspan="3">
-          <div class="panel empty-state">
-            <h2>${HiveMd.escapeHtml(heading)}</h2>
-            <p>${HiveMd.escapeHtml(detail)}</p>
-          </div>
-        </td>
-      </tr>`;
   }
 
   function communityTeamRows(info) {
@@ -14541,12 +14591,119 @@ let CS77_FILTER_LOW_REP = 20;
     "ug,uk,ur,uz,ve,vi,vo,wa,cy,wo,fy,xh,yi,yo,za"
   ).split(",");
 
+  // Ecency's community settings list. Codes Hivemind does not accept are left out,
+  // including Zulu (zu).
+  const COMMUNITY_LANG_OPTIONS = [
+    ["af", "Afrikaans"],
+    ["sq", "Albanian"],
+    ["am", "Amharic"],
+    ["ar", "Arabic"],
+    ["hy", "Armenian"],
+    ["az", "Azerbaijani"],
+    ["eu", "Basque"],
+    ["be", "Belarusian"],
+    ["bn", "Bengali"],
+    ["bs", "Bosnian"],
+    ["bg", "Bulgarian"],
+    ["my", "Burmese"],
+    ["ca", "Catalan"],
+    ["ny", "Chewa"],
+    ["zh", "Chinese"],
+    ["co", "Corsican"],
+    ["hr", "Croatian"],
+    ["cs", "Czech"],
+    ["da", "Danish"],
+    ["nl", "Dutch"],
+    ["en", "English"],
+    ["eo", "Esperanto"],
+    ["et", "Estonian"],
+    ["fi", "Finnish"],
+    ["fr", "French"],
+    ["gl", "Galician"],
+    ["ka", "Georgian"],
+    ["de", "German"],
+    ["el", "Greek"],
+    ["gu", "Gujarati"],
+    ["ht", "Haitian Creole"],
+    ["ha", "Hausa"],
+    ["he", "Hebrew"],
+    ["hi", "Hindi"],
+    ["hu", "Hungarian"],
+    ["is", "Icelandic"],
+    ["ig", "Igbo"],
+    ["id", "Indonesian"],
+    ["ga", "Irish"],
+    ["it", "Italian"],
+    ["ja", "Japanese"],
+    ["jv", "Javanese"],
+    ["kn", "Kannada"],
+    ["kk", "Kazakh"],
+    ["rw", "Kinyarwanda"],
+    ["ko", "Korean"],
+    ["ku", "Kurdish"],
+    ["ky", "Kyrgyz"],
+    ["lo", "Lao"],
+    ["la", "Latin"],
+    ["lv", "Latvian"],
+    ["lt", "Lithuanian"],
+    ["lb", "Luxembourgish"],
+    ["mk", "Macedonian"],
+    ["mg", "Malagasy"],
+    ["ms", "Malay"],
+    ["ml", "Malayalam"],
+    ["mt", "Maltese"],
+    ["mi", "Maori"],
+    ["mr", "Marathi"],
+    ["mn", "Mongolian"],
+    ["ne", "Nepali"],
+    ["nb", "Norwegian (Bokmål)"],
+    ["ps", "Pashto"],
+    ["fa", "Persian"],
+    ["pl", "Polish"],
+    ["pt", "Portuguese"],
+    ["pa", "Punjabi (Gurmukhi)"],
+    ["ro", "Romanian"],
+    ["ru", "Russian"],
+    ["sm", "Samoan"],
+    ["sr", "Serbian"],
+    ["sn", "Shona"],
+    ["sd", "Sindhi"],
+    ["si", "Sinhala"],
+    ["sk", "Slovak"],
+    ["sl", "Slovenian"],
+    ["so", "Somali"],
+    ["es", "Spanish"],
+    ["su", "Sundanese"],
+    ["sw", "Swahili"],
+    ["sv", "Swedish"],
+    ["tg", "Tajik"],
+    ["ta", "Tamil"],
+    ["tt", "Tatar"],
+    ["te", "Telugu"],
+    ["th", "Thai"],
+    ["tr", "Turkish"],
+    ["tk", "Turkmen"],
+    ["uk", "Ukrainian"],
+    ["ur", "Urdu"],
+    ["ug", "Uyghur"],
+    ["uz", "Uzbek"],
+    ["vi", "Vietnamese"],
+    ["cy", "Welsh"],
+    ["xh", "Xhosa"],
+    ["yi", "Yiddish"],
+    ["yo", "Yoruba"],
+    ["zu", "Zulu"],
+  ].filter((row) => COMMUNITY_LANGS.indexOf(row[0]) !== -1);
+
+  const COMMUNITY_MAX_SPACES = 20;
+
   function noteCommunityEditCommunity(id) {
     if (communityEditDraft && communityEditDraft.community !== id) communityEditDraft = null;
     if (communityEditBaseline && communityEditBaseline.community !== id) {
       communityEditBaseline = null;
       communityEditSettings = null;
     }
+    if (communityEditOwner && communityEditOwner.community !== id) communityEditOwner = null;
   }
 
   function communityViewerRole(info) {
@@ -14621,22 +14778,121 @@ let CS77_FILTER_LOW_REP = 20;
     return settings;
   }
 
-  // Hivemind replaces the stored settings object. Avatar and cover stay inside it.
-  function communitySettingsForSave(base, avatarUrl, coverUrl) {
-    let settings = {};
-    if (base && typeof base === "object" && !Array.isArray(base)) {
-      try {
-        const cloned = JSON.parse(JSON.stringify(base));
-        if (cloned && typeof cloned === "object" && !Array.isArray(cloned)) settings = cloned;
-      } catch {
-        Object.keys(base).forEach((key) => {
-          if (key === "__proto__" || key === "constructor" || key === "prototype") return;
-          if (base[key] !== undefined) settings[key] = base[key];
-        });
-      }
+  // Hivemind replaces the stored settings object. Pictures and preferred spaces
+  // are form fields. Everything else in settings is the admin custom JSON, so
+  // keys written by other frontends stay visible and can be edited.
+  function communityAdminCustomObject(settings) {
+    return copyJsonKeys(settings, {
+      avatar_url: true,
+      cover_url: true,
+      preferred_tags: true,
+    });
+  }
+
+  // account_update2 replaces posting_json_metadata. The owner custom JSON is
+  // that object minus the picture, beneficiary, and preferred-space keys this
+  // form writes itself. Legacy json_metadata is not included.
+  function communityOwnerCustomObject(metadata) {
+    const out = copyJsonKeys(metadata, { profile: true, beneficiary: true });
+    const profile =
+      metadata && metadata.profile && typeof metadata.profile === "object" && !Array.isArray(metadata.profile)
+        ? metadata.profile
+        : null;
+    if (!profile) return out;
+    const extra = copyJsonKeys(profile, {
+      profile_image: true,
+      cover_image: true,
+      beneficiary: true,
+      preferred_tags: true,
+    });
+    if (Object.keys(extra).length) out.profile = extra;
+    return out;
+  }
+
+  function parseCommunityCustom(raw, label) {
+    const text = String(raw || "").trim();
+    if (!text) return {};
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(label + " custom settings are not valid JSON.");
     }
-    settings.avatar_url = avatarUrl;
-    settings.cover_url = coverUrl;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error(label + " custom settings must be a JSON object.");
+    }
+    const out = copyJsonKeys(data);
+    if (out.profile && typeof out.profile === "object" && !Array.isArray(out.profile)) {
+      out.profile = copyJsonKeys(out.profile);
+    }
+    return out;
+  }
+
+  function communityCustomText(raw, label) {
+    try {
+      return formatSettingsCustom(parseCommunityCustom(raw, label));
+    } catch {
+      const text = String(raw || "").trim();
+      return text || "{}";
+    }
+  }
+
+  function communitySameCustom(a, b) {
+    try {
+      return (
+        JSON.stringify(parseCommunityCustom(a, "Custom")) === JSON.stringify(parseCommunityCustom(b, "Custom"))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function communityCustomProblem(raw, label) {
+    try {
+      parseCommunityCustom(raw, label);
+      return "";
+    } catch (err) {
+      return (err && err.message) || label + " custom settings are not valid JSON.";
+    }
+  }
+
+  function communityStoredSettings(name) {
+    if (
+      communityEditSettings &&
+      communityEditSettings.community === name &&
+      communityEditSettings.settings &&
+      typeof communityEditSettings.settings === "object" &&
+      !Array.isArray(communityEditSettings.settings)
+    ) {
+      return communityEditSettings.settings;
+    }
+    if (communityState.name === name) return communitySettingsObject(communityState.info);
+    return {};
+  }
+
+  // Custom JSON is the source for leftover keys. Pictures and tags are overlaid
+  // afterwards, so a pasted copy of those keys does not beat the form. An admin
+  // save overlays the stored pictures and tags, not unsaved owner edits.
+  function communitySettingsPayload(custom, fields, options) {
+    const settings = copyJsonKeys(custom, {
+      avatar_url: true,
+      cover_url: true,
+      preferred_tags: true,
+    });
+    const stored = (options && options.stored) || {};
+    if (options && options.picturesFromForm) {
+      settings.avatar_url = fields.avatar_url;
+      settings.cover_url = fields.cover_url;
+    } else {
+      if (typeof stored.avatar_url === "string") settings.avatar_url = stored.avatar_url;
+      if (typeof stored.cover_url === "string") settings.cover_url = stored.cover_url;
+    }
+    if (options && options.tagsFromForm) {
+      if (fields.tags && fields.tags.length) settings.preferred_tags = fields.tags.slice();
+      else delete settings.preferred_tags;
+    } else if (Array.isArray(stored.preferred_tags)) {
+      settings.preferred_tags = stored.preferred_tags.slice();
+    }
     return settings;
   }
 
@@ -14654,19 +14910,121 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.proxyImage(text, 960);
   }
 
+  function communityTypeId(value) {
+    const id = Number(value);
+    return id === 1 || id === 2 || id === 3 ? id : 0;
+  }
+
+  function communityTypeNote(typeId) {
+    if (typeId === 1) return "Anyone can post and comment, except a muted account.";
+    if (typeId === 2) return "Only members can post. Guests can still comment.";
+    if (typeId === 3) return "Only members can post or comment.";
+    return "Topic, journal, and council decide who can post and comment.";
+  }
+
+  function communityOwnerReady(name) {
+    return Boolean(
+      communityEditOwner && communityEditOwner.community === name && communityEditOwner.loaded
+    );
+  }
+
+  function communityPostingMetadata(account) {
+    const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
+    if (!posting || typeof posting !== "object" || Array.isArray(posting)) return {};
+    return posting;
+  }
+
+  function communityCloneObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    try {
+      const cloned = JSON.parse(JSON.stringify(value));
+      if (cloned && typeof cloned === "object" && !Array.isArray(cloned)) return cloned;
+    } catch {
+      return {};
+    }
+    return {};
+  }
+
+  function communityPreferredTags(metadata, settings) {
+    const profile = metadata && metadata.profile;
+    let raw = profile && profile.preferred_tags;
+    if (!Array.isArray(raw)) raw = settings && settings.preferred_tags;
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    raw.forEach((item) => {
+      const tag = normalizeTag(item);
+      if (!isValidTag(tag) || out.indexOf(tag) !== -1 || out.length >= COMMUNITY_MAX_SPACES) return;
+      out.push(tag);
+    });
+    return out;
+  }
+
+  function communityBeneficiaryFields(metadata) {
+    const profile =
+      metadata && metadata.profile && typeof metadata.profile === "object" && !Array.isArray(metadata.profile)
+        ? metadata.profile
+        : null;
+    const raw = (profile && profile.beneficiary) || (metadata && metadata.beneficiary) || null;
+    const account = normalizeLoginUser(raw && raw.account);
+    const weight = Number(raw && raw.weight);
+    if (!validLoginUser(account) || !Number.isFinite(weight) || weight < 1 || weight > 10000) {
+      return { beneficiary_account: "", beneficiary_percent: "" };
+    }
+    const percent = weight / 100;
+    return {
+      beneficiary_account: account,
+      beneficiary_percent: Number.isInteger(percent) ? String(percent) : String(percent),
+    };
+  }
+
+  function communityPercentText(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return "";
+    const n = Number(text);
+    if (!Number.isFinite(n)) return text;
+    const weight = Math.round(n * 100);
+    if (weight < 1 || weight > 10000) return text;
+    const percent = weight / 100;
+    return Number.isInteger(percent) ? String(percent) : String(percent);
+  }
+
+  function communitySameTags(a, b) {
+    const left = Array.isArray(a) ? a : [];
+    const right = Array.isArray(b) ? b : [];
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) {
+      if (left[i] !== right[i]) return false;
+    }
+    return true;
+  }
+
   function communityEditFieldsFromInfo(info) {
     const settings = communitySettingsObject(info);
-    const avatar = settings.avatar_url;
-    const cover = settings.cover_url;
+    const name = normalizeCommunityName((info && info.name) || communityState.name);
+    const ready = communityOwnerReady(name);
+    const metadata = ready ? communityEditOwner.metadata : null;
+    const posting = ready && communityEditOwner.posting ? communityEditOwner.posting : null;
+    const profile = metadata && metadata.profile;
+    let avatar = typeof settings.avatar_url === "string" ? settings.avatar_url : "";
+    let cover = typeof settings.cover_url === "string" ? settings.cover_url : "";
+    if (!avatar && profile && typeof profile.profile_image === "string") avatar = profile.profile_image;
+    if (!cover && profile && typeof profile.cover_image === "string") cover = profile.cover_image;
+    const beneficiary = metadata ? communityBeneficiaryFields(metadata) : { beneficiary_account: "", beneficiary_percent: "" };
     return {
       title: communityText(info && info.title),
       about: communityText(info && info.about),
-      avatar_url: typeof avatar === "string" ? avatar : "",
-      cover_url: typeof cover === "string" ? cover : "",
+      avatar_url: avatar,
+      cover_url: cover,
       description: communityText(info && info.description),
       flag_text: communityText(info && info.flag_text),
       lang: communityText(info && info.lang).trim().toLowerCase(),
       nsfw: Boolean(info && info.is_nsfw),
+      type_id: communityTypeId(info && info.type_id),
+      beneficiary_account: beneficiary.beneficiary_account,
+      beneficiary_percent: beneficiary.beneficiary_percent,
+      tags: communityPreferredTags(metadata, settings),
+      admin_custom: formatSettingsCustom(communityAdminCustomObject(settings)),
+      owner_custom: formatSettingsCustom(posting ? communityOwnerCustomObject(posting) : {}),
     };
   }
 
@@ -14693,26 +15051,10 @@ let CS77_FILTER_LOW_REP = 20;
 
   function communityLangOptionsHtml(selected) {
     const current = String(selected || "").trim().toLowerCase();
-    const known = COMMUNITY_LANGS.indexOf(current) !== -1;
-    let display = null;
-    try {
-      display = new Intl.DisplayNames(["en"], { type: "language" });
-    } catch {
-      display = null;
-    }
-    const rows = COMMUNITY_LANGS.map((code) => {
-      let name = code;
-      if (display) {
-        try {
-          const label = display.of(code);
-          if (label && label.toLowerCase() !== code) name = label;
-        } catch {
-          name = code;
-        }
-      }
-      return { code, name };
-    });
-    rows.sort((a, b) => a.name.localeCompare(b.name, "en") || a.code.localeCompare(b.code));
+    const rows = COMMUNITY_LANG_OPTIONS.slice().sort(
+      (a, b) => a[1].localeCompare(b[1], "en") || a[0].localeCompare(b[0])
+    );
+    const known = rows.some((row) => row[0] === current);
     const esc = HiveMd.escapeHtml;
     let html = "";
     if (!known) {
@@ -14721,20 +15063,52 @@ let CS77_FILTER_LOW_REP = 20;
     }
     html += rows
       .map((row) => {
-        const selectedAttr = row.code === current ? " selected" : "";
-        return `<option value="${esc(row.code)}"${selectedAttr}>${esc(row.name)} (${esc(row.code)})</option>`;
+        const selectedAttr = row[0] === current ? " selected" : "";
+        return `<option value="${esc(row[0])}"${selectedAttr}>${esc(row[1])}</option>`;
       })
       .join("");
     return html;
+  }
+
+  function communityTypeOptionsHtml(typeId) {
+    const current = communityTypeId(typeId);
+    let html = current ? "" : `<option value="" selected>Choose</option>`;
+    html += [
+      [1, "Topic"],
+      [2, "Journal"],
+      [3, "Council"],
+    ]
+      .map((row) => {
+        const selected = row[0] === current ? " selected" : "";
+        return `<option value="${row[0]}"${selected}>${row[1]}</option>`;
+      })
+      .join("");
+    return html;
+  }
+
+  function communityTagChipsHtml() {
+    const esc = HiveMd.escapeHtml;
+    return communityEditTags
+      .map(
+        (tag) =>
+          `<button type="button" class="publish-tag-chip" data-tag="${esc(tag)}">${esc(tag)} <span aria-hidden="true">×</span></button>`
+      )
+      .join("");
   }
 
   function communityEditFormHtml(fields) {
     const esc = HiveMd.escapeHtml;
     const avatarSrc = communityPictureSrc(fields.avatar_url) || AVATAR_DEFAULT_LARGE;
     const coverSrc = communityPictureSrc(fields.cover_url);
+    const typeId = communityTypeId(fields.type_id);
+    const ownerReady = communityOwnerReady(communityState.name);
+    const ownerLock = ownerReady ? "" : " disabled";
+    communityEditTags = Array.isArray(fields.tags) ? fields.tags.slice() : [];
+    const account = esc(communityState.name || "");
     return `
       <div class="community-panel community-edit">
         <form class="settings-form" id="communityEditForm" autocomplete="off" novalidate>
+          <h2 class="settings-section-title">Subspace Admin settings</h2>
           <div class="settings-field">
             <label class="settings-label" for="communityTitle">Title</label>
             <input id="communityTitle" name="title" type="text" maxlength="20" autocomplete="off" value="${esc(fields.title || "")}">
@@ -14743,6 +15117,41 @@ let CS77_FILTER_LOW_REP = 20;
             <label class="settings-label" for="communityAbout">About</label>
             <textarea id="communityAbout" class="settings-about" name="about" rows="3" maxlength="120">${esc(fields.about || "")}</textarea>
           </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityDescription">Description</label>
+            <textarea id="communityDescription" class="settings-about" name="description" rows="8" maxlength="1000">${esc(fields.description || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityRules">Rules</label>
+            <textarea id="communityRules" class="settings-about" name="flag_text" rows="8" maxlength="1000">${esc(fields.flag_text || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityLang">Language</label>
+            <select id="communityLang" name="lang">${communityLangOptionsHtml(fields.lang)}</select>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityType">Community type</label>
+            <select id="communityType" name="type_id">${communityTypeOptionsHtml(typeId)}</select>
+            <p class="settings-note" id="communityTypeNote">${esc(communityTypeNote(typeId))}</p>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label settings-label-white" for="communityNsfw">NSFW</label>
+            <label class="cyber-toggle">
+              <input id="communityNsfw" name="is_nsfw" type="checkbox"${fields.nsfw ? " checked" : ""}>
+              <span class="cyber-toggle-track" aria-hidden="true"></span>
+              <span class="cyber-toggle-copy">
+                <span class="cyber-toggle-title">NSFW</span>
+                <span class="cyber-toggle-sub">Mark this subspace as not safe for work.</span>
+              </span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityAdminCustom">Custom</label>
+            <p class="settings-note">Other settings stored on this subspace. Expert mode (keep as is recommended).</p>
+            <textarea id="communityAdminCustom" class="settings-custom" name="admin_custom" rows="12" spellcheck="false">${esc(fields.admin_custom || "{}")}</textarea>
+          </div>
+          <h2 class="settings-section-title settings-section-line"><span>Subspace Owner settings</span></h2>
+          <p class="settings-note" id="communityOwnerNote">Posting key of ${account} required</p>
           <div class="settings-field">
             <label class="settings-label" for="communityAvatar">Subspace picture</label>
             <div class="settings-media">
@@ -14767,22 +15176,31 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
           </div>
           <div class="settings-field">
-            <label class="settings-label" for="communityDescription">Description</label>
-            <textarea id="communityDescription" class="settings-about" name="description" rows="8" maxlength="1000">${esc(fields.description || "")}</textarea>
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="communityRules">Rules</label>
-            <textarea id="communityRules" class="settings-about" name="flag_text" rows="8" maxlength="1000">${esc(fields.flag_text || "")}</textarea>
-          </div>
-          <div class="settings-field">
-            <label class="settings-label" for="communityLang">Language</label>
-            <select id="communityLang" name="lang">${communityLangOptionsHtml(fields.lang)}</select>
-          </div>
-          <div class="settings-field">
-            <div class="settings-check">
-              <input id="communityNsfw" name="is_nsfw" type="checkbox"${fields.nsfw ? " checked" : ""}>
-              <label class="settings-label" for="communityNsfw">NSFW</label>
+            <label class="settings-label" for="communityBeneficiary">Required beneficiary</label>
+            <p class="settings-note">One account. Auto added to new posts in the subspace.</p>
+            <div class="settings-beneficiary">
+              <input id="communityBeneficiary" name="beneficiary" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="16" placeholder="account" value="${esc(fields.beneficiary_account || "")}"${ownerLock}>
+              <div class="settings-weight">
+                <input id="communityBeneficiaryPercent" name="beneficiary_percent" type="number" inputmode="decimal" min="0.01" max="100" step="0.01" autocomplete="off" placeholder="5" value="${esc(fields.beneficiary_percent || "")}"${ownerLock}>
+                <span class="settings-weight-unit">%</span>
+              </div>
             </div>
+          </div>
+          <div class="settings-field">
+            <div class="publish-tags-head">
+              <label class="settings-label" for="communityTagInput">Preferred spaces</label>
+              <span id="communityTagCount">${communityEditTags.length}/${COMMUNITY_MAX_SPACES}</span>
+            </div>
+            <p class="settings-note">Up to ${COMMUNITY_MAX_SPACES} tags.</p>
+            <div class="publish-tags community-tags" id="communityTagsWrap">
+              <div class="publish-tag-chips" id="communityTagChips">${communityTagChipsHtml()}</div>
+              <input id="communityTagInput" type="text" maxlength="24" placeholder="${communityEditTags.length >= COMMUNITY_MAX_SPACES ? "Tag limit reached" : "Add a space"}" autocomplete="off" spellcheck="false"${ownerLock}${communityEditTags.length >= COMMUNITY_MAX_SPACES ? " disabled" : ""}>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityOwnerCustom">Custom</label>
+            <p class="settings-note">Other settings stored on this subspace account. Expert mode (keep as is recommended).</p>
+            <textarea id="communityOwnerCustom" class="settings-custom" name="owner_custom" rows="12" spellcheck="false"${ownerLock}>${esc(fields.owner_custom || "{}")}</textarea>
           </div>
           <div class="settings-actions">
             <button type="submit" class="btn-primary" id="communityEditSave">Save</button>
@@ -14834,6 +15252,12 @@ let CS77_FILTER_LOW_REP = 20;
       flag_text: ($("#communityRules") && $("#communityRules").value) || "",
       lang: ($("#communityLang") && $("#communityLang").value) || "",
       nsfw: Boolean($("#communityNsfw") && $("#communityNsfw").checked),
+      type_id: ($("#communityType") && $("#communityType").value) || "",
+      beneficiary_account: ($("#communityBeneficiary") && $("#communityBeneficiary").value) || "",
+      beneficiary_percent: ($("#communityBeneficiaryPercent") && $("#communityBeneficiaryPercent").value) || "",
+      tags: communityEditTags.slice(),
+      admin_custom: ($("#communityAdminCustom") && $("#communityAdminCustom").value) || "",
+      owner_custom: ($("#communityOwnerCustom") && $("#communityOwnerCustom").value) || "",
     };
   }
 
@@ -14856,8 +15280,17 @@ let CS77_FILTER_LOW_REP = 20;
     set("#communityDescription", fields.description || "");
     set("#communityRules", fields.flag_text || "");
     set("#communityLang", fields.lang || "");
+    set("#communityType", fields.type_id ? String(fields.type_id) : "");
+    set("#communityBeneficiary", fields.beneficiary_account || "");
+    set("#communityBeneficiaryPercent", fields.beneficiary_percent || "");
+    set("#communityAdminCustom", fields.admin_custom || "{}");
+    set("#communityOwnerCustom", fields.owner_custom || "{}");
     const nsfw = $("#communityNsfw");
     if (nsfw) nsfw.checked = Boolean(fields.nsfw);
+    const typeNote = $("#communityTypeNote");
+    if (typeNote) typeNote.textContent = communityTypeNote(communityTypeId(fields.type_id));
+    communityEditTags = Array.isArray(fields.tags) ? fields.tags.slice() : [];
+    paintCommunityTags();
     paintCommunityPicture("avatar", fields.avatar_url || "");
     paintCommunityPicture("cover", fields.cover_url || "");
   }
@@ -14870,12 +15303,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function setCommunityEditLocked(locked) {
-    ["#communityEditSave", "#communityEditReset", "#communityAvatarUpload", "#communityCoverUpload"].forEach(
-      (id) => {
-        const el = $(id);
-        if (el) el.disabled = locked;
-      }
-    );
+    const form = $("#communityEditForm");
+    if (!form) return;
+    form.querySelectorAll("input, textarea, select, button").forEach((el) => {
+      el.disabled = locked;
+    });
+    if (!locked) paintCommunityTags();
   }
 
   function paintCommunityPicture(kind, url) {
@@ -14952,6 +15385,84 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  function paintCommunityTags() {
+    const chips = $("#communityTagChips");
+    const count = $("#communityTagCount");
+    const input = $("#communityTagInput");
+    const ownerReady = communityOwnerReady(communityState.name);
+    if (chips) chips.innerHTML = communityTagChipsHtml();
+    if (count) count.textContent = communityEditTags.length + "/" + COMMUNITY_MAX_SPACES;
+    if (input) {
+      const full = communityEditTags.length >= COMMUNITY_MAX_SPACES;
+      input.disabled = communityEditBusy || !ownerReady || full;
+      input.placeholder = full ? "Tag limit reached" : "Add a space";
+    }
+    const account = $("#communityBeneficiary");
+    const percent = $("#communityBeneficiaryPercent");
+    const ownerCustom = $("#communityOwnerCustom");
+    if (account) account.disabled = communityEditBusy || !ownerReady;
+    if (percent) percent.disabled = communityEditBusy || !ownerReady;
+    if (ownerCustom) ownerCustom.disabled = communityEditBusy || !ownerReady;
+  }
+
+  function addCommunityTag(raw) {
+    const tag = normalizeTag(raw);
+    if (!tag) return false;
+    if (!communityOwnerReady(communityState.name)) return false;
+    if (!isValidTag(tag)) {
+      setCommunityEditStatus("Spaces use 2–24 letters, numbers, or hyphens.", true);
+      return false;
+    }
+    if (communityEditTags.indexOf(tag) !== -1) return false;
+    if (communityEditTags.length >= COMMUNITY_MAX_SPACES) {
+      setCommunityEditStatus("Preferred spaces can include " + COMMUNITY_MAX_SPACES + " tags.", true);
+      return false;
+    }
+    communityEditTags.push(tag);
+    setCommunityEditStatus("", false);
+    paintCommunityTags();
+    rememberCommunityEditDraft();
+    return true;
+  }
+
+  function takeCommunityTagsFromInput() {
+    const input = $("#communityTagInput");
+    if (!input || input.disabled) return;
+    const parts = String(input.value || "").split(/[,\s]+/);
+    input.value = "";
+    parts.forEach((part) => addCommunityTag(part));
+  }
+
+  function bindCommunityTags() {
+    const wrap = $("#communityTagsWrap");
+    const input = $("#communityTagInput");
+    if (wrap) {
+      wrap.addEventListener("click", (e) => {
+        const chip = e.target.closest(".publish-tag-chip");
+        if (!chip || communityEditBusy || !communityOwnerReady(communityState.name)) return;
+        e.preventDefault();
+        const tag = chip.getAttribute("data-tag");
+        communityEditTags = communityEditTags.filter((item) => item !== tag);
+        paintCommunityTags();
+        rememberCommunityEditDraft();
+      });
+    }
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter" || e.key === "," || e.key === "Tab") {
+          if (e.key !== "Tab" || input.value.trim()) e.preventDefault();
+          takeCommunityTagsFromInput();
+          return;
+        }
+        if (e.key === "Backspace" && !input.value && communityEditTags.length && !input.disabled) {
+          communityEditTags.pop();
+          paintCommunityTags();
+          rememberCommunityEditDraft();
+        }
+      });
+    }
+  }
+
   function bindCommunityEdit() {
     const login = $("#communityEditLogin");
     if (login) login.addEventListener("click", openLogin);
@@ -14964,15 +15475,21 @@ let CS77_FILTER_LOW_REP = 20;
     form.addEventListener("input", (e) => {
       const target = e.target;
       if (!target || target.id === "communityAvatar" || target.id === "communityCover") return;
+      if (target.id === "communityTagInput") return;
       rememberCommunityEditDraft();
     });
     form.addEventListener("change", (e) => {
       const target = e.target;
       if (!target || target.id === "communityAvatar" || target.id === "communityCover") return;
+      if (target.id === "communityType") {
+        const note = $("#communityTypeNote");
+        if (note) note.textContent = communityTypeNote(communityTypeId(target.value));
+      }
       rememberCommunityEditDraft();
     });
     bindCommunityPicture("avatar");
     bindCommunityPicture("cover");
+    bindCommunityTags();
     const reset = $("#communityEditReset");
     if (reset) {
       reset.addEventListener("click", () => {
@@ -14991,6 +15508,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function preparedCommunityEditFields(raw) {
+    const tags = [];
+    (Array.isArray(raw && raw.tags) ? raw.tags : []).forEach((item) => {
+      const tag = normalizeTag(item);
+      if (!isValidTag(tag) || tags.indexOf(tag) !== -1 || tags.length >= COMMUNITY_MAX_SPACES) return;
+      tags.push(tag);
+    });
     return {
       title: String((raw && raw.title) || "").trim(),
       about: String((raw && raw.about) || "").trim(),
@@ -15000,18 +15523,41 @@ let CS77_FILTER_LOW_REP = 20;
       flag_text: String((raw && raw.flag_text) || "").trim(),
       lang: String((raw && raw.lang) || "").trim().toLowerCase(),
       nsfw: Boolean(raw && raw.nsfw),
+      type_id: communityTypeId(raw && raw.type_id),
+      beneficiary_account: normalizeLoginUser(raw && raw.beneficiary_account),
+      beneficiary_percent: communityPercentText(raw && raw.beneficiary_percent),
+      tags: tags,
+      admin_custom: String(raw && raw.admin_custom != null ? raw.admin_custom : "").trim(),
+      owner_custom: String(raw && raw.owner_custom != null ? raw.owner_custom : "").trim(),
     };
   }
 
-  function communityEditError(fields) {
+  function communityEditError(fields, ownerReady) {
     if (fields.title.length < 3 || fields.title.length > 20) return "Title must be 3 to 20 characters.";
     if (fields.title[0] === "@" || fields.title[0] === "#") return "Title cannot start with @ or #.";
     if (fields.about.length > 120) return "About must be 120 characters or fewer.";
     if (fields.description.length > 1000) return "Description must be 1000 characters or fewer.";
     if (fields.flag_text.length > 1000) return "Rules must be 1000 characters or fewer.";
     if (COMMUNITY_LANGS.indexOf(fields.lang) === -1) return "Choose a language.";
+    if (!fields.type_id) return "Choose a community type.";
     if (communityHttpUrl(fields.avatar_url) === null) return "Subspace picture must be an http or https link.";
     if (communityHttpUrl(fields.cover_url) === null) return "Cover picture must be an http or https link.";
+    if (ownerReady && (fields.beneficiary_account || fields.beneficiary_percent)) {
+      if (!validLoginUser(fields.beneficiary_account)) return "Enter a Hive account for the required beneficiary.";
+      const weight = Math.round(Number(fields.beneficiary_percent) * 100);
+      if (!fields.beneficiary_percent || weight < 1 || weight > 10000) {
+        return "Beneficiary percent must be between 0.01 and 100.";
+      }
+    }
+    if (ownerReady && fields.tags.length > COMMUNITY_MAX_SPACES) {
+      return "Preferred spaces can include " + COMMUNITY_MAX_SPACES + " tags.";
+    }
+    const adminCustom = communityCustomProblem(fields.admin_custom, "Admin");
+    if (adminCustom) return adminCustom;
+    if (ownerReady) {
+      const ownerCustom = communityCustomProblem(fields.owner_custom, "Owner");
+      if (ownerCustom) return ownerCustom;
+    }
     return "";
   }
 
@@ -15054,7 +15600,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function paintCommunityEditBanner(fields) {
+  function paintCommunityEditBanner(fields, bustAvatar) {
     const banner = view && view.querySelector(".community-banner");
     if (!banner) return;
     const h1 = banner.querySelector("h1");
@@ -15072,47 +15618,327 @@ let CS77_FILTER_LOW_REP = 20;
       aboutEl.remove();
     }
     const stats = banner.querySelector(".profile-stats");
-    if (!stats) return;
-    let nsfw = stats.querySelector(".community-nsfw");
-    if (fields.nsfw) {
-      if (!nsfw) {
-        nsfw = document.createElement("span");
-        nsfw.className = "community-nsfw";
-        nsfw.textContent = "NSFW";
-        stats.appendChild(nsfw);
+    if (stats) {
+      let nsfw = stats.querySelector(".community-nsfw");
+      if (fields.nsfw) {
+        if (!nsfw) {
+          nsfw = document.createElement("span");
+          nsfw.className = "community-nsfw";
+          nsfw.textContent = "NSFW";
+          stats.appendChild(nsfw);
+        }
+      } else if (nsfw) {
+        nsfw.remove();
       }
-    } else if (nsfw) {
-      nsfw.remove();
+    }
+    if (bustAvatar) {
+      const img = banner.querySelector(".avatar");
+      if (img) {
+        const src = HiveMd.avatarUrl(communityState.name, "large");
+        img.src = src + (src.indexOf("?") < 0 ? "?v=" : "&v=") + Date.now();
+      }
     }
   }
 
-  function applySavedCommunityEdit(fields, settings) {
+  function communityAdminChanged(fields, base) {
+    return (
+      fields.title !== base.title ||
+      fields.about !== base.about ||
+      fields.description !== base.description ||
+      fields.flag_text !== base.flag_text ||
+      fields.lang !== base.lang ||
+      Boolean(fields.nsfw) !== Boolean(base.nsfw) ||
+      Number(fields.type_id) !== Number(base.type_id) ||
+      !communitySameCustom(fields.admin_custom, base.admin_custom)
+    );
+  }
+
+  function communityOwnerChanged(fields, base, ownerReady) {
+    if (fields.avatar_url !== base.avatar_url || fields.cover_url !== base.cover_url) return true;
+    if (!ownerReady) return false;
+    return (
+      fields.beneficiary_account !== (base.beneficiary_account || "") ||
+      fields.beneficiary_percent !== (base.beneficiary_percent || "") ||
+      !communitySameTags(fields.tags, base.tags) ||
+      !communitySameCustom(fields.owner_custom, base.owner_custom)
+    );
+  }
+
+  function applyCommunityEditPart(fields, which) {
     const info = communityState.info;
-    if (!info) return;
-    info.title = fields.title;
-    info.about = fields.about;
-    info.lang = fields.lang;
-    info.is_nsfw = Boolean(fields.nsfw);
-    info.description = fields.description;
-    info.flag_text = fields.flag_text;
-    info.settings = settings;
-    communityEditSettings = { community: communityState.name, settings: settings };
-    const saved = {
-      community: communityState.name,
-      user: observer(),
-      title: fields.title,
-      about: fields.about,
-      avatar_url: fields.avatar_url,
-      cover_url: fields.cover_url,
-      description: fields.description,
-      flag_text: fields.flag_text,
-      lang: fields.lang,
-      nsfw: Boolean(fields.nsfw),
+    if (!info || !communityEditBaseline) return;
+    if (which.admin) {
+      info.title = fields.title;
+      info.about = fields.about;
+      info.lang = fields.lang;
+      info.is_nsfw = Boolean(fields.nsfw);
+      info.description = fields.description;
+      info.flag_text = fields.flag_text;
+      info.type_id = fields.type_id;
+      paintCommunityEditBanner(fields, false);
+      setCommunityMeta(communityState.name, "edit", info);
+    }
+    if (which.settings) {
+      info.settings = which.settings;
+      communityEditSettings = { community: communityState.name, settings: which.settings };
+    }
+    if (which.owner && which.avatarChanged) paintCommunityEditBanner(fields, true);
+    const patch = {};
+    if (which.admin) {
+      patch.title = fields.title;
+      patch.about = fields.about;
+      patch.description = fields.description;
+      patch.flag_text = fields.flag_text;
+      patch.lang = fields.lang;
+      patch.nsfw = Boolean(fields.nsfw);
+      patch.type_id = fields.type_id;
+      patch.admin_custom = communityCustomText(fields.admin_custom, "Admin");
+      const adminCustom = $("#communityAdminCustom");
+      if (adminCustom) adminCustom.value = patch.admin_custom;
+    }
+    if (which.owner) {
+      patch.avatar_url = fields.avatar_url;
+      patch.cover_url = fields.cover_url;
+      patch.beneficiary_account = fields.beneficiary_account;
+      patch.beneficiary_percent = fields.beneficiary_percent;
+      patch.tags = fields.tags.slice();
+      patch.owner_custom = communityCustomText(fields.owner_custom, "Owner");
+      const ownerCustom = $("#communityOwnerCustom");
+      if (ownerCustom) ownerCustom.value = patch.owner_custom;
+    }
+    const next = Object.assign({}, communityEditBaseline, patch);
+    if (patch.tags) next.tags = patch.tags.slice();
+    communityEditBaseline = next;
+    const live = readCommunityEditFields();
+    if (live) {
+      communityEditDraft = Object.assign({ community: communityState.name, user: observer() }, live);
+    }
+  }
+
+  // Beneficiary matches Ecency: posting_json_metadata.profile.beneficiary
+  // is {account, weight} with weight in basis points. Preferred spaces have
+  // no Ecency or PeakD field, so they are stored as profile.preferred_tags
+  // and copied into hivemind settings. Pictures stay in settings and are
+  // also written to profile_image / cover_image for PeakD. When the account
+  // loaded, the owner custom JSON is the rest of posting_json_metadata.
+  // When it did not, the fetched posting metadata is kept and only pictures change.
+  function communityOwnerMetadata(baseMeta, fields, ownerReady) {
+    const source = ownerReady ? parseCommunityCustom(fields.owner_custom, "Owner") : baseMeta;
+    const meta = communityCloneObject(source);
+    if (ownerReady) {
+      delete meta.beneficiary;
+      if (meta.profile && typeof meta.profile === "object" && !Array.isArray(meta.profile)) {
+        delete meta.profile.profile_image;
+        delete meta.profile.cover_image;
+        delete meta.profile.beneficiary;
+        delete meta.profile.preferred_tags;
+      }
+    }
+    if (!meta.profile || typeof meta.profile !== "object" || Array.isArray(meta.profile)) {
+      meta.profile = {};
+    }
+    const profile = meta.profile;
+    if (fields.avatar_url) profile.profile_image = fields.avatar_url;
+    else delete profile.profile_image;
+    if (fields.cover_url) profile.cover_image = fields.cover_url;
+    else delete profile.cover_image;
+    if (ownerReady) {
+      if (fields.beneficiary_account) {
+        profile.beneficiary = {
+          account: fields.beneficiary_account,
+          weight: Math.round(Number(fields.beneficiary_percent) * 100),
+        };
+      } else {
+        delete profile.beneficiary;
+      }
+      delete meta.beneficiary;
+      if (fields.tags.length) profile.preferred_tags = fields.tags.slice();
+      else delete profile.preferred_tags;
+    }
+    return meta;
+  }
+
+  async function communityOwnerOperations(name, fields, ownerReady) {
+    const accounts = await HiveApi.getAccounts([name]);
+    const account = accounts && accounts[0];
+    if (!account || String(account.name || "").toLowerCase() !== name) {
+      throw new Error("Could not load the subspace account.");
+    }
+    // Build settings from the admin custom JSON instead of a fresh get_community.
+    // Hivemind may not have reindexed an admin save from earlier in this submit.
+    const settings = communitySettingsPayload(parseCommunityCustom(fields.admin_custom, "Admin"), fields, {
+      picturesFromForm: true,
+      tagsFromForm: ownerReady,
+      stored: communityStoredSettings(name),
+    });
+    const metadata = communityOwnerMetadata(
+      ownerReady ? null : communityPostingMetadata(account),
+      fields,
+      ownerReady
+    );
+    let propsJson = "";
+    let metaJson = "";
+    try {
+      propsJson = JSON.stringify(["updateProps", { community: name, props: { settings: settings } }]);
+      metaJson = JSON.stringify(metadata);
+    } catch {
+      throw new Error("Could not prepare these settings.");
+    }
+    if (new TextEncoder().encode(propsJson).length > 8192 || metaJson.length > SETTINGS_METADATA_MAX) {
+      throw new Error("These settings are too long to save.");
+    }
+    return {
+      settings: settings,
+      operations: [
+        [
+          "custom_json",
+          {
+            required_auths: [],
+            required_posting_auths: [name],
+            id: "community",
+            json: propsJson,
+          },
+        ],
+        [
+          "account_update2",
+          {
+            account: name,
+            json_metadata: "",
+            posting_json_metadata: metaJson,
+            extensions: [],
+          },
+        ],
+      ],
     };
-    communityEditBaseline = saved;
-    communityEditDraft = Object.assign({}, saved);
-    paintCommunityEditBanner(fields);
-    setCommunityMeta(communityState.name, "edit", info);
+  }
+
+  function ownerSignOpen() {
+    const el = $("#ownerSignOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function setOwnerSignStatus(message, isError) {
+    const status = $("#ownerSignStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function restoreOwnerSignCopy() {
+    const title = $("#ownerSignTitle");
+    const lead = $("#ownerSignLead");
+    if (title) title.textContent = "Sign owner settings";
+    if (lead) lead.textContent = "Use hive keychain (recommended) or enter the posting key of this subspace account.";
+  }
+
+  function hideOwnerSign() {
+    const el = $("#ownerSignOverlay");
+    if (el) el.hidden = true;
+    const key = $("#ownerSignKey");
+    if (key) key.value = "";
+    setOwnerSignStatus("", false);
+    restoreOwnerSignCopy();
+    ownerSignBusy = false;
+    const connect = $("#ownerSignConnect");
+    const cancel = $("#ownerSignCancel");
+    if (connect) connect.disabled = false;
+    if (cancel) cancel.disabled = false;
+  }
+
+  function signCommunityOwnerOps(name, operations, copy) {
+    const opts = copy || {};
+    return new Promise((resolve, reject) => {
+      const el = $("#ownerSignOverlay");
+      const user = $("#ownerSignUser");
+      if (!el || !user) {
+        reject(new Error("Could not ask for the subspace posting key."));
+        return;
+      }
+      hideOwnerSign();
+      user.value = name;
+      const title = $("#ownerSignTitle");
+      const lead = $("#ownerSignLead");
+      if (title) title.textContent = opts.title || "Sign owner settings";
+      if (lead) {
+        lead.textContent =
+          opts.lead || "Use hive keychain (recommended) or enter the posting key of this subspace account.";
+      }
+      el.hidden = false;
+      const key = $("#ownerSignKey");
+      if (key) key.focus();
+      ownerSignSession = {
+        name,
+        operations,
+        resolve,
+        reject,
+        source: opts.source || "",
+        failMessage: opts.failMessage || "",
+        cancelMessage: opts.cancelMessage || "",
+      };
+    });
+  }
+
+  async function submitOwnerSign() {
+    const session = ownerSignSession;
+    if (!session || ownerSignBusy) return;
+    const key = $("#ownerSignKey");
+    const connect = $("#ownerSignConnect");
+    const cancel = $("#ownerSignCancel");
+    let wif = ((key && key.value) || "").replace(/\s+/g, "");
+    if (key) key.value = "";
+    ownerSignBusy = true;
+    if (connect) connect.disabled = true;
+    if (cancel) cancel.disabled = true;
+    try {
+      if (wif) {
+        setOwnerSignStatus("Signing…", false);
+        if (!window.HiveAuth || typeof HiveAuth.broadcastWithKey !== "function") {
+          throw new Error("Could not sign with that posting key.");
+        }
+        await HiveAuth.broadcastWithKey(session.name, wif, session.operations);
+      } else if (!window.hive_keychain) {
+        setOwnerSignStatus("Enter the posting key. Hive Keychain is not available.", true);
+        return;
+      } else {
+        setOwnerSignStatus("Waiting for Keychain…", false);
+        await new Promise((resolve, reject) => {
+          window.hive_keychain.requestBroadcast(session.name, session.operations, "Posting", (res) => {
+            if (res && res.success) resolve(res);
+            else reject(new Error((res && (res.message || res.error)) || "Broadcast was cancelled."));
+          });
+        });
+      }
+      const done = session;
+      ownerSignSession = null;
+      hideOwnerSign();
+      done.resolve();
+    } catch (err) {
+      setOwnerSignStatus((err && err.message) || session.failMessage || "Could not sign these settings.", true);
+    } finally {
+      wif = "";
+      ownerSignBusy = false;
+      if (ownerSignSession) {
+        if (connect) connect.disabled = false;
+        if (cancel) cancel.disabled = false;
+      }
+    }
+  }
+
+  function cancelOwnerSign() {
+    if (ownerSignBusy) return;
+    const session = ownerSignSession;
+    ownerSignSession = null;
+    hideOwnerSign();
+    if (!session) return;
+    const err = new Error(session.cancelMessage || "Owner settings were not signed.");
+    err.ownerCancel = true;
+    session.reject(err);
+  }
+
+  function communityOwnerHoldMessage(adminSaved, detail) {
+    if (adminSaved && detail) return "Admin settings saved. " + detail;
+    if (adminSaved) return "Admin settings saved. Owner settings were not signed.";
+    return detail || "Owner settings were not signed.";
   }
 
   async function saveCommunityEdit() {
@@ -15126,80 +15952,131 @@ let CS77_FILTER_LOW_REP = 20;
     if (!name || !communityCanEdit(communityState.info)) return;
     const raw = readCommunityEditFields();
     if (!raw) return;
+    const ownerReady = communityOwnerReady(name);
     const fields = preparedCommunityEditFields(raw);
-    const problem = communityEditError(fields);
+    const problem = communityEditError(fields, ownerReady);
     if (problem) {
       setCommunityEditStatus(problem, true);
       return;
     }
     fields.avatar_url = communityHttpUrl(fields.avatar_url) || "";
     fields.cover_url = communityHttpUrl(fields.cover_url) || "";
-    const settings = communitySettingsForSave(
-      communityEditSettings && communityEditSettings.community === name
-        ? communityEditSettings.settings
-        : communitySettingsObject(communityState.info),
-      fields.avatar_url,
-      fields.cover_url
-    );
-    const payload = [
-      "updateProps",
-      {
-        community: name,
-        props: {
-          title: fields.title,
-          about: fields.about,
-          lang: fields.lang,
-          is_nsfw: fields.nsfw,
-          description: fields.description,
-          flag_text: fields.flag_text,
-          settings: settings,
-        },
-      },
-    ];
-    let json = "";
-    try {
-      json = JSON.stringify(payload);
-    } catch {
-      setCommunityEditStatus("Could not prepare these settings.", true);
-      return;
-    }
-    if (new TextEncoder().encode(json).length > 8192) {
-      setCommunityEditStatus("These settings are too long to save.", true);
-      return;
-    }
+    const base = communityEditBaseline;
+    if (!base || base.community !== name || base.user !== user) return;
+    const adminDirty = communityAdminChanged(fields, base);
+    const ownerDirty = communityOwnerChanged(fields, base, ownerReady);
     writeCommunityEditFields(fields);
     rememberCommunityEditDraft();
-    if (!hasSigner(user)) {
+    if (!adminDirty && !ownerDirty) {
+      setCommunityEditStatus("Nothing to save.", false);
+      return;
+    }
+    if (adminDirty && !hasSigner(user)) {
       setCommunityEditStatus(signerNeededMessage(), true);
       return;
     }
-    if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+    if (adminDirty && (!window.ChainQueue || typeof ChainQueue.enqueue !== "function")) {
       setCommunityEditStatus("Could not save this subspace.", true);
       return;
     }
+    let adminJson = "";
+    let adminSettings = null;
+    if (adminDirty) {
+      const props = {
+        title: fields.title,
+        about: fields.about,
+        lang: fields.lang,
+        is_nsfw: fields.nsfw,
+        description: fields.description,
+        flag_text: fields.flag_text,
+        type_id: fields.type_id,
+      };
+      if (!communitySameCustom(fields.admin_custom, base.admin_custom)) {
+        try {
+          adminSettings = communitySettingsPayload(parseCommunityCustom(fields.admin_custom, "Admin"), fields, {
+            picturesFromForm: false,
+            tagsFromForm: false,
+            stored: communityStoredSettings(name),
+          });
+        } catch (err) {
+          setCommunityEditStatus((err && err.message) || "Admin custom settings are not valid JSON.", true);
+          return;
+        }
+        props.settings = adminSettings;
+      }
+      try {
+        adminJson = JSON.stringify(["updateProps", { community: name, props: props }]);
+      } catch {
+        setCommunityEditStatus("Could not prepare these settings.", true);
+        return;
+      }
+      if (new TextEncoder().encode(adminJson).length > 8192) {
+        setCommunityEditStatus("These settings are too long to save.", true);
+        return;
+      }
+    }
     communityEditBusy = true;
     setCommunityEditLocked(true);
-    setCommunityEditStatus("Saving…", false);
+    let adminSaved = false;
     try {
-      const queued = ChainQueue.enqueue({
-        username: user,
-        key: "Posting",
-        operations: [
-          [
-            "custom_json",
-            {
-              required_auths: [],
-              required_posting_auths: [user],
-              id: "community",
-              json: json,
-            },
+      if (adminDirty) {
+        setCommunityEditStatus("Saving…", false);
+        const queued = ChainQueue.enqueue({
+          username: user,
+          key: "Posting",
+          operations: [
+            [
+              "custom_json",
+              {
+                required_auths: [],
+                required_posting_auths: [user],
+                id: "community",
+                json: adminJson,
+              },
+            ],
           ],
-        ],
-        meta: { type: "community", action: "updateProps", community: name },
-      });
-      await queued.promise;
+          meta: { type: "community", action: "updateProps", community: name },
+        });
+        await queued.promise;
+        if (communityState.name !== name || observer() !== user) return;
+        adminSaved = true;
+        applyCommunityEditPart(fields, { admin: true, settings: adminSettings });
+      }
+      if (!ownerDirty) {
+        if (communityEditStill(name)) setCommunityEditStatus("Saved.", false);
+        return;
+      }
+      if (!communityEditStill(name) || observer() !== user) return;
+      setCommunityEditStatus(adminSaved ? "Admin settings saved. Preparing owner settings…" : "Preparing owner settings…", false);
+      let ownerOps;
+      try {
+        ownerOps = await communityOwnerOperations(name, fields, ownerReady);
+      } catch (err) {
+        if (communityEditStill(name)) {
+          setCommunityEditStatus(
+            communityOwnerHoldMessage(adminSaved, (err && err.message) || "Could not prepare the owner settings."),
+            true
+          );
+        }
+        return;
+      }
+      if (!communityEditStill(name) || observer() !== user) return;
+      try {
+        await signCommunityOwnerOps(name, ownerOps.operations);
+      } catch (err) {
+        if (communityEditStill(name)) {
+          const cancelled = Boolean(err && err.ownerCancel);
+          const detail = cancelled ? "" : (err && err.message) || "Could not sign the owner settings.";
+          setCommunityEditStatus(communityOwnerHoldMessage(adminSaved, detail), !cancelled);
+        }
+        return;
+      }
       if (communityState.name !== name || observer() !== user) return;
-      applySavedCommunityEdit(fields, settings);
+      applyCommunityEditPart(fields, {
+        owner: true,
+        settings: ownerOps.settings,
+        avatarChanged: fields.avatar_url !== (base.avatar_url || ""),
+      });
       if (communityEditStill(name)) setCommunityEditStatus("Saved.", false);
     } catch (err) {
       if (communityEditStill(name)) {
@@ -15208,6 +16085,7 @@ let CS77_FILTER_LOW_REP = 20;
     } finally {
       communityEditBusy = false;
       if (communityEditStill(name)) setCommunityEditLocked(false);
+      if (!communityEditStill(name) && ownerSignOpen() && !ownerSignBusy) cancelOwnerSign();
     }
   }
 
@@ -15269,96 +16147,1015 @@ let CS77_FILTER_LOW_REP = 20;
       });
   }
 
+  const COMMUNITY_ROLE_RANK = { owner: 8, admin: 6, mod: 4, member: 2, guest: 0, muted: -2 };
+
+  function communityNormalizeRole(role) {
+    const key = String(role || "guest").trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(COMMUNITY_ROLE_RANK, key)) return key;
+    return "guest";
+  }
+
+  function communityRoleRank(role) {
+    return COMMUNITY_ROLE_RANK[communityNormalizeRole(role)];
+  }
+
+  function communityRoleLabel(role) {
+    const raw = String(role || "").trim().toLowerCase();
+    if (raw === "remove") return "Remove";
+    const key = communityNormalizeRole(raw);
+    if (key === "owner") return "Owner";
+    if (key === "admin") return "Admin";
+    if (key === "mod") return "Mod";
+    if (key === "member") return "Member";
+    if (key === "guest") return "Subscriber";
+    return "Muted";
+  }
+
+  function communityRoleChoice(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    return raw === "remove" ? "remove" : communityNormalizeRole(raw);
+  }
+
+  function communityCanManageMembers(info) {
+    const role = communityViewerRole(info);
+    return role === "owner" || role === "admin" || role === "mod";
+  }
+
+  // Hivemind only accepts a role below the signer's rank. Admin is included for
+  // an admin viewer; that change is signed by the subspace owner.
+  function communityAssignableRoles(viewerRole) {
+    if (viewerRole === "owner" || viewerRole === "admin") return ["admin", "mod", "member", "muted"];
+    if (viewerRole === "mod") return ["member", "muted"];
+    return [];
+  }
+
+  // Remove is a dialog choice, not a Hivemind role. It broadcasts setRole guest.
+  function communityRoleIsRemovable(role) {
+    const key = communityNormalizeRole(role);
+    return key === "admin" || key === "mod" || key === "member" || key === "muted";
+  }
+
+  function communityRoleChoices(viewerRole, mode, currentRole) {
+    const roles = communityAssignableRoles(viewerRole).slice();
+    if (mode === "change" && communityRoleIsRemovable(currentRole)) roles.push("remove");
+    return roles;
+  }
+
+  function communityCanChangeRole(viewerRole, viewer, target, targetRole, communityName) {
+    if (!communityAssignableRoles(viewerRole).length) return false;
+    const account = normalizeLoginUser(target);
+    const actor = normalizeLoginUser(viewer);
+    const community = normalizeLoginUser(communityName);
+    if (!account || !actor || account === actor) return false;
+    if (community && account === community) return false;
+    if (communityRoleRank(targetRole) >= 8) return false;
+    const targetRank = communityRoleRank(targetRole);
+    const viewerRank = communityRoleRank(viewerRole);
+    if (targetRank > viewerRank) return false;
+    if (targetRank === viewerRank) return viewerRole === "admin" && communityNormalizeRole(targetRole) === "admin";
+    return true;
+  }
+
+  function communityCanEditTitle(viewerRole, viewer, target, targetRole, communityName) {
+    if (communityRoleRank(viewerRole) < 4) return false;
+    const account = normalizeLoginUser(target);
+    const actor = normalizeLoginUser(viewer);
+    const community = normalizeLoginUser(communityName);
+    if (!account || !actor) return false;
+    if (account === actor) return true;
+    if ((community && account === community) || communityRoleRank(targetRole) >= 8) return viewerRole === "owner";
+    return communityCanChangeRole(viewerRole, actor, account, targetRole, community);
+  }
+
+  function communityRoleNeedsOwner(viewerRole, currentRole, nextRole) {
+    if (viewerRole === "owner") return false;
+    const next = communityNormalizeRole(nextRole);
+    const current = communityNormalizeRole(currentRole);
+    if (next === "admin") return true;
+    return viewerRole === "admin" && current === "admin";
+  }
+
+  function communityCustomOp(signer, action, payload) {
+    return [
+      "custom_json",
+      {
+        required_auths: [],
+        required_posting_auths: [signer],
+        id: "community",
+        json: JSON.stringify([action, payload]),
+      },
+    ];
+  }
+
+  function communityMemberSelector(account) {
+    const name = normalizeLoginUser(account);
+    if (!name) return "";
+    const safe = window.CSS && CSS.escape ? CSS.escape(name) : name;
+    return 'tr.community-member[data-account="' + safe + '"]';
+  }
+
+  function communityListedRole(account) {
+    const selector = communityMemberSelector(account);
+    const row = selector ? document.querySelector(selector) : null;
+    if (row) {
+      return {
+        role: communityNormalizeRole(row.getAttribute("data-role")),
+        title: row.getAttribute("data-title") || "",
+      };
+    }
+    const key = normalizeLoginUser(account);
+    const team = communityTeamRows(communityState.info);
+    for (let i = 0; i < team.length; i++) {
+      if (normalizeLoginUser(team[i].name) === key) {
+        return {
+          role: communityNormalizeRole(team[i].role),
+          title: String(team[i].title || ""),
+        };
+      }
+    }
+    return { role: "guest", title: "" };
+  }
+
+  function communityUpdateTeamEntry(account, role, title) {
+    const info = communityState.info;
+    if (!info) return;
+    if (!Array.isArray(info.team)) info.team = [];
+    const key = normalizeLoginUser(account);
+    const nextRole = communityNormalizeRole(role);
+    const nextTitle = String(title || "");
+    const keep = communityRoleRank(nextRole) >= 4;
+    let found = false;
+    const next = [];
+    info.team.forEach((row) => {
+      const parsed = communityTeamRows({ team: [row] })[0];
+      if (!parsed || normalizeLoginUser(parsed.name) !== key) {
+        next.push(row);
+        return;
+      }
+      found = true;
+      if (!keep) return;
+      if (Array.isArray(row)) next.push([key, nextRole, nextTitle]);
+      else next.push(Object.assign({}, row, { name: key, role: nextRole, title: nextTitle }));
+    });
+    if (!found && keep) next.push([key, nextRole, nextTitle]);
+    info.team = next;
+  }
+
+  function communityMembersStill(name) {
+    const route = parseRoute();
+    return Boolean(
+      communityMemberContext &&
+        communityMemberContext.name === name &&
+        communityState.name === name &&
+        route &&
+        route.name === "community" &&
+        normalizeCommunityPage(route.page) === "members"
+    );
+  }
+
+  const COMMUNITY_PEOPLE_SECTIONS = ["owner", "admin", "mod", "member", "subscriber", "muted"];
+
+  function communitySectionId(role) {
+    const key = communityNormalizeRole(role);
+    if (key === "owner" || key === "admin" || key === "mod" || key === "member" || key === "muted") return key;
+    return "subscriber";
+  }
+
+  function communitySectionTitle(section) {
+    if (section === "owner") return "Owner";
+    if (section === "admin") return "Admins";
+    if (section === "mod") return "Mods";
+    if (section === "member") return "Members";
+    if (section === "muted") return "Muted";
+    return "Subscribers";
+  }
+
+  function communitySectionListId(section) {
+    if (section === "owner") return "communityOwnerList";
+    if (section === "admin") return "communityAdminList";
+    if (section === "mod") return "communityModList";
+    if (section === "member") return "communityMemberList";
+    if (section === "muted") return "communityMutedList";
+    return "communitySubscriberList";
+  }
+
+  function communityPeopleSectionDomId(section) {
+    if (section === "owner") return "communityOwnerSection";
+    if (section === "admin") return "communityAdminSection";
+    if (section === "mod") return "communityModSection";
+    if (section === "member") return "communityMemberSection";
+    if (section === "muted") return "communityMutedSection";
+    return "communitySubscriberSection";
+  }
+
+  function communitySectionIsTeam(section) {
+    return section === "owner" || section === "admin" || section === "mod";
+  }
+
+  function communityAddLead(role) {
+    const raw = String(role || "").trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(COMMUNITY_ROLE_RANK, raw)) return "Add an account and choose a role.";
+    const section = communitySectionId(raw);
+    if (section === "admin") return "Add an account as an admin.";
+    if (section === "mod") return "Add an account as a mod.";
+    if (section === "member") return "Add an account as a member.";
+    if (section === "muted") return "Add an account as muted.";
+    if (section === "subscriber") return "Add an account as a subscriber.";
+    return "Add an account and choose a role.";
+  }
+
+  function communitySectionHasRows(section) {
+    const list = $("#" + communitySectionListId(section));
+    return Boolean(list && list.querySelector("tr.community-member"));
+  }
+
+  // Managers always see every category. Everyone else only sees a category that has people.
+  function communitySyncPeopleSections() {
+    const ctx = communityMemberContext;
+    if (!ctx) return;
+    let any = false;
+    COMMUNITY_PEOPLE_SECTIONS.forEach((section) => {
+      const el = $("#" + communityPeopleSectionDomId(section));
+      if (!el) return;
+      const has = communitySectionHasRows(section);
+      if (has) any = true;
+      el.hidden = ctx.manage ? false : !has;
+    });
+    const empty = $("#communityPeopleEmpty");
+    if (empty) empty.hidden = Boolean(ctx.manage) || !ctx.done || any;
+  }
+
+  function communityPeopleSectionHtml(section, bodyHtml, ctx) {
+    const title = communitySectionTitle(section);
+    const role = section === "subscriber" ? "guest" : section;
+    const canAdd = Boolean(ctx && ctx.manage) && communityAssignableRoles(ctx.viewerRole).indexOf(role) !== -1;
+    const hidden = ctx && ctx.manage ? "" : bodyHtml ? "" : " hidden";
+    const note =
+      section === "subscriber" && Number(ctx && ctx.typeId) === 3
+        ? `<p class="community-people-note">Subscribers stay guests until a mod approves them as members.</p>`
+        : "";
+    const add = canAdd
+      ? `<button type="button" class="btn-ghost btn-compact" data-community-add="${HiveMd.escapeHtml(role)}" aria-label="Add to ${HiveMd.escapeHtml(title)}">Add</button>`
+      : "";
+    const kind = communitySectionIsTeam(section) ? "team" : "";
+    return `<section class="community-people-section" id="${communityPeopleSectionDomId(section)}"${hidden}>
+        <div class="community-people-head">
+          <h2>${title}</h2>
+          ${add}
+        </div>
+        ${note}
+        ${communityTableHtml(bodyHtml, communitySectionListId(section), Boolean(ctx && ctx.manage), kind)}
+        <div class="community-section-more">
+          <div class="loading-row" data-community-loading="${section}" hidden><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
+          <div class="feed-actions">
+            <button type="button" class="btn-primary" data-community-more="${section}" aria-label="Load more ${HiveMd.escapeHtml(title)}" hidden>Load more</button>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function placeCommunityMemberRow(name, html, listId) {
+    const selector = communityMemberSelector(name);
+    const existing = selector ? document.querySelector(selector) : null;
+    if (existing && (!existing.parentElement || existing.parentElement.id !== listId)) existing.remove();
+    const list = listId ? $("#" + listId) : null;
+    const row = list && selector ? list.querySelector(selector) : null;
+    if (row) row.outerHTML = html;
+    else if (list) {
+      const empty = list.querySelector("tr.community-table-empty");
+      if (empty) empty.remove();
+      list.insertAdjacentHTML("beforeend", html);
+    }
+  }
+
+  function paintCommunityMember(account, role, title) {
+    const ctx = communityMemberContext;
+    const name = normalizeLoginUser(account);
+    if (!ctx || !name) return;
+    const nextRole = communityNormalizeRole(role);
+    const nextTitle = String(title || "");
+    communityUpdateTeamEntry(name, nextRole, nextTitle);
+    if (communityMemberSeen) communityMemberSeen.add(name);
+    const section = communitySectionId(nextRole);
+    const listId = communitySectionListId(section);
+    const html = communityMemberHtml(
+      { name, role: nextRole, title: nextTitle },
+      Object.assign({}, ctx, { section })
+    );
+    placeCommunityMemberRow(name, html, listId);
+    communitySyncPeopleSections();
+  }
+
+  function dropCommunityMember(account) {
+    const name = normalizeLoginUser(account);
+    if (!name) return;
+    communityUpdateTeamEntry(name, "guest", "");
+    const selector = communityMemberSelector(name);
+    const existing = selector ? document.querySelector(selector) : null;
+    if (existing) existing.remove();
+    communitySyncPeopleSections();
+  }
+
+  async function communityAccountSubscribed(account, community) {
+    const name = normalizeLoginUser(account);
+    const id = normalizeCommunityName(community);
+    if (!name || !id || !window.HiveApi || typeof HiveApi.listAllSubscriptions !== "function") return false;
+    const list = await HiveApi.listAllSubscriptions(name);
+    for (let i = 0; i < list.length; i++) {
+      if (normalizeCommunityName(list[i] && list[i].name) === id) return true;
+    }
+    return false;
+  }
+
+  function setCommunityPeopleStatus(message, isError) {
+    const status = $("#communityPeopleStatus");
+    if (!status) return;
+    const text = message || "";
+    status.hidden = !text;
+    status.textContent = text;
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(text));
+  }
+
+  function setCommunityDialogStatus(id, message, isError) {
+    const status = $(id);
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setCommunityMemberControlsLocked(locked) {
+    const root = $("#communityMembers");
+    if (!root) return;
+    root.querySelectorAll("button").forEach((btn) => {
+      if (locked) {
+        if (!btn.disabled) btn.setAttribute("data-role-lock", "1");
+        btn.disabled = true;
+      } else if (btn.getAttribute("data-role-lock") === "1") {
+        btn.removeAttribute("data-role-lock");
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function setCommunityRoleDialogLocked(locked) {
+    const save = $("#communityRoleSave");
+    const cancel = $("#communityRoleCancel");
+    const user = $("#communityRoleUser");
+    const select = $("#communityRoleSelect");
+    if (save) save.disabled = locked;
+    if (cancel) cancel.disabled = locked;
+    if (user) user.disabled = locked;
+    if (select) select.disabled = locked;
+  }
+
+  function setCommunityTitleDialogLocked(locked) {
+    const save = $("#communityTitleSave");
+    const cancel = $("#communityTitleCancel");
+    const input = $("#communityTitleInput");
+    if (save) save.disabled = locked;
+    if (cancel) cancel.disabled = locked;
+    if (input) input.disabled = locked;
+  }
+
+  function communityRoleDialogOpen() {
+    const el = $("#communityRoleOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function communityTitleDialogOpen() {
+    const el = $("#communityTitleOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function dismissCommunityRoleDialog() {
+    const el = $("#communityRoleOverlay");
+    if (el) el.hidden = true;
+    communityRoleSession = null;
+    setCommunityDialogStatus("#communityRoleStatus", "", false);
+    setCommunityRoleDialogLocked(false);
+  }
+
+  function dismissCommunityTitleDialog() {
+    const el = $("#communityTitleOverlay");
+    if (el) el.hidden = true;
+    communityTitleSession = null;
+    setCommunityDialogStatus("#communityTitleStatus", "", false);
+    setCommunityTitleDialogLocked(false);
+  }
+
+  function invalidateCommunityRoleWork() {
+    communityRoleToken += 1;
+    dismissCommunityRoleDialog();
+    dismissCommunityTitleDialog();
+  }
+
+  function paintCommunityRoleHint() {
+    const hint = $("#communityRoleHint");
+    const select = $("#communityRoleSelect");
+    const user = $("#communityRoleUser");
+    const ctx = communityMemberContext;
+    if (!hint || !select || !ctx) return;
+    const choice = communityRoleChoice(select.value);
+    const removing = choice === "remove";
+    const next = removing ? "guest" : choice;
+    const account = normalizeLoginUser(user && user.value);
+    const current = account ? communityListedRole(account).role : "guest";
+    const needsOwner = next !== current && communityRoleNeedsOwner(ctx.viewerRole, current, next);
+    if (removing) {
+      hint.textContent = needsOwner
+        ? "The owner account " + ctx.name + " must sign this. Remove clears their role and drops them from the subspace."
+        : "Remove clears their role and drops them from the subspace. Only that account can end a subscription.";
+      return;
+    }
+    hint.textContent = needsOwner ? "The owner account " + ctx.name + " must sign this." : "";
+  }
+
+  function openCommunityRoleDialog(opts) {
+    if (communityRoleBusy || !communityMemberContext || !communityMemberContext.manage) return;
+    const ctx = communityMemberContext;
+    const roles = communityAssignableRoles(ctx.viewerRole);
+    const el = $("#communityRoleOverlay");
+    const user = $("#communityRoleUser");
+    const select = $("#communityRoleSelect");
+    const heading = $("#communityRoleTitle");
+    const lead = $("#communityRoleLead");
+    if (!roles.length || !el || !user || !select) return;
+    dismissCommunityTitleDialog();
+    const mode = opts && opts.mode === "change" ? "change" : "add";
+    const account = mode === "change" ? normalizeLoginUser(opts && opts.account) : "";
+    const role = communityNormalizeRole(opts && opts.role);
+    communityRoleSession = { mode, account, role, title: String((opts && opts.title) || "") };
+    if (heading) heading.textContent = mode === "add" ? "Add user" : "Change role";
+    if (lead) {
+      lead.textContent =
+        mode === "add"
+          ? communityAddLead(opts && opts.role)
+          : "Choose a role.";
+    }
+    user.readOnly = mode === "change";
+    user.disabled = false;
+    user.value = account;
+    select.disabled = false;
+    const choices = communityRoleChoices(ctx.viewerRole, mode, role);
+    select.innerHTML = choices
+      .map((item) => `<option value="${item}">${HiveMd.escapeHtml(communityRoleLabel(item))}</option>`)
+      .join("");
+    select.value = roles.indexOf(role) !== -1 ? role : roles.indexOf("member") !== -1 ? "member" : roles[0];
+    setCommunityDialogStatus("#communityRoleStatus", "", false);
+    paintCommunityRoleHint();
+    el.hidden = false;
+    if (mode === "add") user.focus();
+    else select.focus();
+  }
+
+  function openCommunityTitleDialog(opts) {
+    if (communityRoleBusy || !communityMemberContext || !communityMemberContext.manage) return;
+    const account = normalizeLoginUser(opts && opts.account);
+    const el = $("#communityTitleOverlay");
+    const user = $("#communityTitleUser");
+    const input = $("#communityTitleInput");
+    if (!account || !el || !user || !input) return;
+    dismissCommunityRoleDialog();
+    communityTitleSession = {
+      account,
+      role: communityNormalizeRole(opts && opts.role),
+      title: String((opts && opts.title) || ""),
+    };
+    user.value = account;
+    input.disabled = false;
+    input.value = communityTitleSession.title;
+    setCommunityDialogStatus("#communityTitleStatus", "", false);
+    el.hidden = false;
+    input.focus();
+    input.select();
+  }
+
+  function communityCleanTitle(value) {
+    const title = String(value == null ? "" : value).trim();
+    if (title.length > 32) return { error: "Title must be 32 characters or less.", title: "" };
+    return { error: "", title };
+  }
+
+  async function submitCommunityRole() {
+    if (communityRoleBusy || !communityRoleSession || !communityMemberContext) return;
+    const ctx = communityMemberContext;
+    const session = communityRoleSession;
+    const token = communityRoleToken;
+    const userInput = $("#communityRoleUser");
+    const select = $("#communityRoleSelect");
+    const account = normalizeLoginUser(userInput && userInput.value);
+    const choice = communityRoleChoice(select && select.value);
+    const removing = choice === "remove";
+    const nextRole = removing ? "guest" : choice;
+    if (!validLoginUser(account)) {
+      setCommunityDialogStatus("#communityRoleStatus", "Enter a Hive account name.", true);
+      if (userInput && !userInput.readOnly) userInput.focus();
+      return;
+    }
+    const listed = communityListedRole(account);
+    if (communityRoleChoices(ctx.viewerRole, session.mode, listed.role).indexOf(choice) === -1) {
+      setCommunityDialogStatus(
+        "#communityRoleStatus",
+        removing || nextRole === "guest" ? "Only that account can subscribe or leave." : "You cannot change that role.",
+        true
+      );
+      return;
+    }
+    if (account === ctx.name) {
+      setCommunityDialogStatus("#communityRoleStatus", "The subspace account is the owner.", true);
+      return;
+    }
+    if (account === ctx.viewer) {
+      setCommunityDialogStatus("#communityRoleStatus", "You cannot change your own role.", true);
+      return;
+    }
+    if (listed.role === nextRole) {
+      setCommunityDialogStatus("#communityRoleStatus", "That role is already set.", true);
+      return;
+    }
+    if (!communityCanChangeRole(ctx.viewerRole, ctx.viewer, account, listed.role, ctx.name)) {
+      setCommunityDialogStatus("#communityRoleStatus", "You cannot change that role.", true);
+      return;
+    }
+    const needsOwner = communityRoleNeedsOwner(ctx.viewerRole, listed.role, nextRole);
+    if (!ctx.viewer) {
+      openLogin();
+      return;
+    }
+    if (!needsOwner && !hasSigner(ctx.viewer)) {
+      setCommunityDialogStatus("#communityRoleStatus", signerNeededMessage(), true);
+      return;
+    }
+    communityRoleBusy = true;
+    setCommunityRoleDialogLocked(true);
+    setCommunityMemberControlsLocked(true);
+    try {
+      let canonical = account;
+      if (session.mode === "add") {
+        setCommunityDialogStatus("#communityRoleStatus", "Checking account…", false);
+        let rows;
+        try {
+          rows = await HiveApi.getAccounts([account]);
+        } catch (err) {
+          throw new Error((err && err.message) || "Could not look up that account.");
+        }
+        if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+        const found = (rows || []).find((row) => row && normalizeLoginUser(row.name) === account);
+        if (!found) throw new Error("No such account.");
+        canonical = normalizeLoginUser(found.name);
+      }
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      const fresh = communityListedRole(canonical);
+      if (communityRoleChoices(ctx.viewerRole, session.mode, fresh.role).indexOf(choice) === -1) {
+        throw new Error(
+          removing || nextRole === "guest" ? "Only that account can subscribe or leave." : "You cannot change that role."
+        );
+      }
+      if (fresh.role === nextRole) throw new Error("That role is already set.");
+      if (!communityCanChangeRole(ctx.viewerRole, ctx.viewer, canonical, fresh.role, ctx.name)) {
+        throw new Error("You cannot change that role.");
+      }
+      const needs = communityRoleNeedsOwner(ctx.viewerRole, fresh.role, nextRole);
+      const opSigner = needs ? ctx.name : ctx.viewer;
+      const op = communityCustomOp(opSigner, "setRole", {
+        community: ctx.name,
+        account: canonical,
+        role: nextRole,
+      });
+      dismissCommunityRoleDialog();
+      setCommunityPeopleStatus(needs ? "Waiting for the owner signature…" : "Saving…", false);
+      if (needs) {
+        await signCommunityOwnerOps(ctx.name, [op], {
+          source: "role",
+          title: "Sign owner change",
+          lead: "The owner account must sign this role change. Use Hive Keychain or enter the posting key of this subspace account.",
+          cancelMessage: "The owner did not sign this change.",
+          failMessage: "Could not sign this role change.",
+        });
+      } else {
+        if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+          throw new Error("Could not sign this role change.");
+        }
+        const queued = ChainQueue.enqueue({
+          username: opSigner,
+          key: "Posting",
+          operations: [op],
+          meta: { type: "community", action: "setRole", community: ctx.name },
+        });
+        await queued.promise;
+      }
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      if (removing) {
+        let subscribed = false;
+        try {
+          subscribed = await communityAccountSubscribed(canonical, ctx.name);
+        } catch {
+          subscribed = false;
+        }
+        if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+        if (subscribed) paintCommunityMember(canonical, "guest", fresh.title);
+        else dropCommunityMember(canonical);
+      } else {
+        paintCommunityMember(canonical, nextRole, fresh.title);
+      }
+      setCommunityPeopleStatus("Saved.", false);
+    } catch (err) {
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      const message = (err && err.message) || "Could not change that role.";
+      if (communityRoleDialogOpen()) setCommunityDialogStatus("#communityRoleStatus", message, true);
+      else setCommunityPeopleStatus(message, true);
+    } finally {
+      communityRoleBusy = false;
+      setCommunityRoleDialogLocked(false);
+      setCommunityMemberControlsLocked(false);
+    }
+  }
+
+  async function submitCommunityTitle() {
+    if (communityRoleBusy || !communityTitleSession || !communityMemberContext) return;
+    const ctx = communityMemberContext;
+    const session = communityTitleSession;
+    const token = communityRoleToken;
+    const input = $("#communityTitleInput");
+    const cleaned = communityCleanTitle(input && input.value);
+    if (cleaned.error) {
+      setCommunityDialogStatus("#communityTitleStatus", cleaned.error, true);
+      return;
+    }
+    const listed = communityListedRole(session.account);
+    if (String(listed.title || "").trim() === cleaned.title) {
+      setCommunityDialogStatus("#communityTitleStatus", "That title is already set.", true);
+      return;
+    }
+    if (!communityCanEditTitle(ctx.viewerRole, ctx.viewer, session.account, listed.role, ctx.name)) {
+      setCommunityDialogStatus("#communityTitleStatus", "You cannot edit that title.", true);
+      return;
+    }
+    if (!ctx.viewer) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(ctx.viewer)) {
+      setCommunityDialogStatus("#communityTitleStatus", signerNeededMessage(), true);
+      return;
+    }
+    communityRoleBusy = true;
+    setCommunityTitleDialogLocked(true);
+    setCommunityMemberControlsLocked(true);
+    try {
+      const op = communityCustomOp(ctx.viewer, "setUserTitle", {
+        community: ctx.name,
+        account: session.account,
+        title: cleaned.title,
+      });
+      dismissCommunityTitleDialog();
+      setCommunityPeopleStatus("Saving…", false);
+      if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+        throw new Error("Could not sign this title.");
+      }
+      const queued = ChainQueue.enqueue({
+        username: ctx.viewer,
+        key: "Posting",
+        operations: [op],
+        meta: { type: "community", action: "setUserTitle", community: ctx.name },
+      });
+      await queued.promise;
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      const fresh = communityListedRole(session.account);
+      paintCommunityMember(session.account, fresh.role || session.role, cleaned.title);
+      setCommunityPeopleStatus("Saved.", false);
+    } catch (err) {
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      const message = (err && err.message) || "Could not edit that title.";
+      if (communityTitleDialogOpen()) setCommunityDialogStatus("#communityTitleStatus", message, true);
+      else setCommunityPeopleStatus(message, true);
+    } finally {
+      communityRoleBusy = false;
+      setCommunityTitleDialogLocked(false);
+      setCommunityMemberControlsLocked(false);
+    }
+  }
+
+  async function approveCommunityMember(account, title) {
+    if (communityRoleBusy || !communityMemberContext) return;
+    const ctx = communityMemberContext;
+    const name = normalizeLoginUser(account);
+    const token = communityRoleToken;
+    if (!name || ctx.typeId !== 3 || communityRoleRank(ctx.viewerRole) < 4) return;
+    const listed = communityListedRole(name);
+    if (listed.role !== "guest") return;
+    if (!ctx.viewer) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(ctx.viewer)) {
+      setCommunityPeopleStatus(signerNeededMessage(), true);
+      return;
+    }
+    communityRoleBusy = true;
+    setCommunityMemberControlsLocked(true);
+    setCommunityPeopleStatus("Approving…", false);
+    try {
+      if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+        throw new Error("Could not approve that subscriber.");
+      }
+      const queued = ChainQueue.enqueue({
+        username: ctx.viewer,
+        key: "Posting",
+        operations: [
+          communityCustomOp(ctx.viewer, "setRole", {
+            community: ctx.name,
+            account: name,
+            role: "member",
+          }),
+        ],
+        meta: { type: "community", action: "setRole", community: ctx.name },
+      });
+      await queued.promise;
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      paintCommunityMember(name, "member", title || listed.title);
+      setCommunityPeopleStatus("Saved.", false);
+    } catch (err) {
+      if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
+      setCommunityPeopleStatus((err && err.message) || "Could not approve that subscriber.", true);
+    } finally {
+      communityRoleBusy = false;
+      setCommunityMemberControlsLocked(false);
+    }
+  }
+
   async function renderCommunityMembers(info) {
-    const name = String((info && info.name) || communityState.name || "");
+    const name = normalizeCommunityName((info && info.name) || communityState.name || "");
+    const viewer = observer() || "";
+    const viewerRole = communityViewerRole(info);
+    const ctx = {
+      name,
+      community: name,
+      viewer,
+      viewerRole,
+      typeId: Number(info && info.type_id) || 0,
+      manage: communityCanManageMembers(info),
+      done: false,
+    };
+    communityMemberContext = ctx;
     const team = communityTeamRows(info);
-    const teamHtml = team.map(communityMemberHtml).join("");
+    const groups = { owner: [], admin: [], mod: [], member: [], subscriber: [], muted: [] };
+    team.forEach((row) => {
+      const section = communitySectionId(row.role);
+      groups[section].push(communityMemberHtml(row, Object.assign({}, ctx, { section })));
+    });
     const host = view.querySelector("#communityMembers");
     if (!host) return;
+    const sectionsHtml = COMMUNITY_PEOPLE_SECTIONS.map((section) =>
+      communityPeopleSectionHtml(section, groups[section].join(""), ctx)
+    ).join("");
     host.innerHTML = `
-      ${
-        teamHtml
-          ? `<section class="community-people-section">
-              <h2>Team</h2>
-              ${communityTableHtml(teamHtml)}
-            </section>`
-          : ""
-      }
-      <section class="community-people-section">
-        <h2>Members</h2>
-        ${communityTableHtml("", "communityMemberList")}
+      <p id="communityPeopleStatus" class="community-people-status" hidden></p>
+      ${sectionsHtml}
+      <div id="communityPeopleEmpty" class="panel empty-state" hidden>
+        <h2>No members yet</h2>
+        <p>Be the first to subscribe.</p>
+      </div>
+      <div class="community-people-more">
         <div id="communityMemberStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading members…</div>
-        <div class="feed-actions">
-          <button type="button" class="btn-primary" id="moreMembersBtn" hidden>Load more</button>
-        </div>
-      </section>
+      </div>
     `;
-    const list = $("#communityMemberList");
     const status = $("#communityMemberStatus");
-    const moreBtn = $("#moreMembersBtn");
-    const seen = new Set(team.map((row) => String(row.name || "").toLowerCase()));
-    let last = "";
-    let done = false;
-    let loading = false;
+    const seen = new Set(team.map((row) => normalizeLoginUser(row.name)).filter(Boolean));
+    communityMemberSeen = seen;
+    let roleLast = "";
+    let roleMore = "";
+    let rolesDone = false;
+    let rolesBusy = false;
+    let subLast = "";
+    let subMore = false;
+    let subsDone = false;
+    let subsBusy = false;
+    let opening = true;
 
-    async function fill() {
-      if (loading || done) return;
-      loading = true;
-      if (moreBtn) moreBtn.hidden = true;
-      if (status) status.hidden = false;
-      try {
-        const batch = await HiveApi.listSubscribers(name, last, 100);
-        clearError();
-        if (!batch.length) {
-          done = true;
-        } else {
-          const parts = [];
-          for (const row of batch) {
-            const key = String(row.name || "").toLowerCase();
-            if (!key || seen.has(key)) continue;
-            seen.add(key);
-            parts.push(communityMemberHtml(row));
-          }
-          if (list && parts.length) list.insertAdjacentHTML("beforeend", parts.join(""));
-          const nextLast = String(batch[batch.length - 1].name || "").toLowerCase();
-          if (!nextLast || nextLast === last || batch.length < 100) done = true;
-          else last = nextLast;
-        }
-      } catch (err) {
-        showError(err.message || String(err));
-        done = true;
-        loading = false;
-        if (status) status.hidden = true;
-        if (moreBtn) moreBtn.hidden = true;
-        if (list && !list.querySelector("tr.community-member")) {
-          list.innerHTML = communityMembersEmptyRow(
-            "Could not load members",
-            "Try again in a moment."
-          );
-        }
-        return;
+    function placeMemberBatch(batch, room) {
+      const buckets = {};
+      const cap = room > 0 ? room : 0;
+      let placed = 0;
+      let scanned = 0;
+      let lastName = "";
+      let lastRole = "";
+      for (const row of batch) {
+        if (cap && placed >= cap) break;
+        scanned += 1;
+        const key = normalizeLoginUser(row.name);
+        if (key) lastName = key;
+        lastRole = String((row && row.role) || "");
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const section = communitySectionId(row.role);
+        if (!buckets[section]) buckets[section] = [];
+        buckets[section].push(communityMemberHtml(row, Object.assign({}, ctx, { section })));
+        placed += 1;
       }
-      loading = false;
-      const empty = list && !list.querySelector("tr.community-member");
-      if (empty && done) {
-        if (status) status.hidden = true;
-        if (list) {
-          list.innerHTML = communityMembersEmptyRow(
-            "No members yet",
-            "Be the first to subscribe."
-          );
-        }
-        return;
-      }
-      if (status) status.hidden = true;
-      if (moreBtn) moreBtn.hidden = done;
+      COMMUNITY_PEOPLE_SECTIONS.forEach((section) => {
+        const parts = buckets[section];
+        if (!parts || !parts.length) return;
+        const list = $("#" + communitySectionListId(section));
+        if (list) list.insertAdjacentHTML("beforeend", parts.join(""));
+      });
+      if (placed) communitySyncPeopleSections();
+      return { placed, scanned, lastName, lastRole };
     }
 
-    if (moreBtn) moreBtn.addEventListener("click", fill);
-    await fill();
+    function pageAdvanced(batch, previous) {
+      if (!batch.length || batch.length < 100) return "";
+      const nextLast = normalizeLoginUser(batch[batch.length - 1].name);
+      if (!nextLast || nextLast === previous) return "";
+      return nextLast;
+    }
+
+    function roleFrontier(batch) {
+      if (!batch.length) return "";
+      const section = communitySectionId(batch[batch.length - 1].role);
+      if (section === "owner" || section === "admin" || section === "mod" || section === "member" || section === "muted") {
+        return section;
+      }
+      return "";
+    }
+
+    function paintSectionMore() {
+      COMMUNITY_PEOPLE_SECTIONS.forEach((section) => {
+        const btn = host.querySelector('[data-community-more="' + section + '"]');
+        const loading = host.querySelector('[data-community-loading="' + section + '"]');
+        const more = section === "subscriber" ? subMore : roleMore === section;
+        const busy = !opening && (section === "subscriber" ? subsBusy : rolesBusy && roleMore === section);
+        if (loading) loading.hidden = !busy;
+        if (btn) btn.hidden = busy || !more;
+      });
+    }
+
+    function finishOpening() {
+      if (communityMemberContext !== ctx) return;
+      opening = false;
+      rolesBusy = false;
+      subsBusy = false;
+      ctx.done = true;
+      if (status) status.hidden = true;
+      communitySyncPeopleSections();
+      paintSectionMore();
+    }
+
+    // Roles are one Hivemind cursor (owner through muted). Subscribers are a second cursor.
+    // A page of names already shown, such as the team, is skipped and the cursor keeps moving.
+    // Hivemind returns at most 100 names per request. `want` is how many new rows to add.
+    async function pullRoles(want) {
+      if (rolesDone || communityMemberContext !== ctx) return;
+      const goal = want > 0 ? want : 1;
+      let gained = 0;
+      let guard = 0;
+      let frontier = roleMore;
+      const maxPages = Math.ceil(goal / 100) + 30;
+      while (guard++ < maxPages && gained < goal) {
+        const roles = await HiveApi.listCommunityRoles(name, roleLast, 100);
+        if (communityMemberContext !== ctx) return;
+        const room = goal > 1 ? goal - gained : 0;
+        const step = placeMemberBatch(roles, room);
+        gained += step.placed;
+        if (room && step.scanned < roles.length) {
+          if (step.lastName) roleLast = step.lastName;
+          roleMore = roleFrontier([{ role: step.lastRole }]) || frontier;
+          return;
+        }
+        const next = pageAdvanced(roles, roleLast);
+        if (!next) {
+          rolesDone = true;
+          roleMore = "";
+          return;
+        }
+        roleLast = next;
+        frontier = roleFrontier(roles) || frontier;
+        if (gained >= goal) {
+          roleMore = frontier;
+          return;
+        }
+      }
+      roleMore = frontier || "";
+    }
+
+    function takeSubsPage(batch, room) {
+      const step = placeMemberBatch(batch, room);
+      if (room > 0 && step.scanned < batch.length) {
+        if (step.lastName) subLast = step.lastName;
+        subMore = true;
+        return { status: "more", placed: step.placed };
+      }
+      const next = pageAdvanced(batch, subLast);
+      if (!next) {
+        subsDone = true;
+        subMore = false;
+        return { status: "done", placed: step.placed };
+      }
+      subLast = next;
+      subMore = true;
+      return { status: step.placed > 0 ? "more" : "skip", placed: step.placed };
+    }
+
+    async function pullSubs(want) {
+      if (subsDone || communityMemberContext !== ctx) return;
+      const goal = want > 0 ? want : 1;
+      let gained = 0;
+      let guard = 0;
+      const maxPages = Math.ceil(goal / 100) + 30;
+      while (guard++ < maxPages && gained < goal) {
+        const batch = await HiveApi.listSubscribers(name, subLast, 100);
+        if (communityMemberContext !== ctx) return;
+        const room = goal > 1 ? goal - gained : 0;
+        const step = takeSubsPage(batch, room);
+        gained += step.placed;
+        if (step.status === "done" || (goal > 1 ? gained >= goal : step.status !== "skip")) return;
+      }
+      subMore = true;
+    }
+
+    async function loadMoreRoles() {
+      if (rolesBusy || rolesDone || !roleMore || communityMemberContext !== ctx) return;
+      rolesBusy = true;
+      paintSectionMore();
+      try {
+        clearError();
+        setCommunityPeopleStatus("", false);
+        await pullRoles(1000);
+      } catch (err) {
+        if (communityMemberContext !== ctx) return;
+        showError(err.message || String(err));
+        setCommunityPeopleStatus("Could not load members. Try again in a moment.", true);
+      }
+      if (communityMemberContext !== ctx) return;
+      rolesBusy = false;
+      communitySyncPeopleSections();
+      paintSectionMore();
+    }
+
+    async function loadMoreSubs() {
+      if (subsBusy || subsDone || !subMore || communityMemberContext !== ctx) return;
+      subsBusy = true;
+      paintSectionMore();
+      try {
+        clearError();
+        setCommunityPeopleStatus("", false);
+        await pullSubs(1000);
+      } catch (err) {
+        if (communityMemberContext !== ctx) return;
+        showError(err.message || String(err));
+        setCommunityPeopleStatus("Could not load subscribers. Try again in a moment.", true);
+      }
+      if (communityMemberContext !== ctx) return;
+      subsBusy = false;
+      communitySyncPeopleSections();
+      paintSectionMore();
+    }
+
+    host.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-community-more]");
+      if (!btn || btn.hidden || btn.disabled || !host.contains(btn)) return;
+      e.preventDefault();
+      const section = btn.getAttribute("data-community-more");
+      if (section === "subscriber") loadMoreSubs();
+      else loadMoreRoles();
+    });
+
+    rolesBusy = true;
+    subsBusy = true;
+    const subsTask = HiveApi.listSubscribers(name, "", 100).then(
+      (batch) => ({ ok: true, batch }),
+      (err) => ({ ok: false, err })
+    );
+    let rolesError = null;
+    try {
+      await pullRoles();
+    } catch (err) {
+      rolesError = err;
+    }
+    const subsResult = await subsTask;
+    if (communityMemberContext !== ctx) return;
+    if (subsResult.ok && takeSubsPage(subsResult.batch).status === "skip") await pullSubs();
+    if (communityMemberContext !== ctx) return;
+    if (rolesError || !subsResult.ok) {
+      const err = rolesError || subsResult.err;
+      showError((err && err.message) || String(err || "Could not load members."));
+      if (rolesError && !subsResult.ok) {
+        setCommunityPeopleStatus("Could not load members. Try again in a moment.", true);
+      } else if (!subsResult.ok) {
+        setCommunityPeopleStatus("Could not load subscribers. Try again in a moment.", true);
+        subMore = true;
+      } else {
+        setCommunityPeopleStatus("Could not load members. Try again in a moment.", true);
+      }
+    }
+    finishOpening();
   }
 
   async function renderCommunity(name, page) {
+    invalidateCommunityRoleWork();
+    if (ownerSignSession && ownerSignSession.source === "role" && !ownerSignBusy) cancelOwnerSign();
+    communityMemberContext = null;
+    communityMemberSeen = null;
     const id = normalizeCommunityName(name);
     const tab = normalizeCommunityPage(page) || "latest";
     noteCommunityEditCommunity(id);
@@ -15394,8 +17191,40 @@ let CS77_FILTER_LOW_REP = 20;
       }
 
       if (tab === "edit") {
+        communityEditOwner = { community: communityState.name, metadata: {}, loaded: false };
+        try {
+          const rows = await HiveApi.getAccounts([communityState.name]);
+          if (communityState.name !== id) return;
+          const account = rows && rows[0];
+          if (account && String(account.name || "").toLowerCase() === communityState.name) {
+            communityEditOwner = {
+              community: communityState.name,
+              metadata: metadataFromAccount(account),
+              posting: communityPostingMetadata(account),
+              loaded: true,
+            };
+          }
+        } catch {
+          if (communityState.name !== id) return;
+        }
+        const routeNow = parseRoute();
+        if (
+          !routeNow ||
+          routeNow.name !== "community" ||
+          normalizeCommunityPage(routeNow.page) !== "edit" ||
+          normalizeCommunityName(routeNow.community) !== id ||
+          communityState.name !== id
+        ) {
+          return;
+        }
         view.innerHTML = chrome + communityEditBodyHtml(info);
         bindCommunityEdit();
+        if (!communityOwnerReady(communityState.name) && $("#communityEditForm")) {
+          setCommunityEditStatus(
+            "Could not load the subspace account. Beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
+            true
+          );
+        }
         return;
       }
 
@@ -17457,6 +19286,24 @@ let CS77_FILTER_LOW_REP = 20;
         toggleCommunitySubscription();
         return;
       }
+      const addMember = e.target.closest("[data-community-add]");
+      if (addMember && inInteractiveSurface(addMember)) {
+        e.preventDefault();
+        openCommunityRoleDialog({ mode: "add", role: addMember.getAttribute("data-community-add") || "" });
+        return;
+      }
+      const memberAction = e.target.closest("[data-community-action]");
+      if (memberAction && inInteractiveSurface(memberAction)) {
+        e.preventDefault();
+        const action = memberAction.getAttribute("data-community-action");
+        const account = memberAction.getAttribute("data-account") || "";
+        const role = memberAction.getAttribute("data-role") || "";
+        const title = memberAction.getAttribute("data-title") || "";
+        if (action === "change") openCommunityRoleDialog({ mode: "change", account, role, title });
+        else if (action === "title") openCommunityTitleDialog({ account, role, title });
+        else if (action === "approve") approveCommunityMember(account, title);
+        return;
+      }
       const followBtn = e.target.closest(".profile-follow-btn");
       if (followBtn && inInteractiveSurface(followBtn)) {
         e.preventDefault();
@@ -17682,6 +19529,63 @@ let CS77_FILTER_LOW_REP = 20;
 
     $("#loginCancel").addEventListener("click", closeLogin);
     $("#loginConnect").addEventListener("click", connectLogin);
+    const ownerSignConnect = $("#ownerSignConnect");
+    const ownerSignCancel = $("#ownerSignCancel");
+    const ownerSignKey = $("#ownerSignKey");
+    if (ownerSignConnect) ownerSignConnect.addEventListener("click", submitOwnerSign);
+    if (ownerSignCancel) ownerSignCancel.addEventListener("click", cancelOwnerSign);
+    if (ownerSignKey) {
+      ownerSignKey.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitOwnerSign();
+        }
+      });
+    }
+    const communityRoleUser = $("#communityRoleUser");
+    const communityRoleSelect = $("#communityRoleSelect");
+    const communityRoleSave = $("#communityRoleSave");
+    const communityRoleCancel = $("#communityRoleCancel");
+    const communityTitleInput = $("#communityTitleInput");
+    const communityTitleSave = $("#communityTitleSave");
+    const communityTitleCancel = $("#communityTitleCancel");
+    if (communityRoleUser) {
+      communityRoleUser.addEventListener("input", paintCommunityRoleHint);
+      communityRoleUser.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitCommunityRole();
+        }
+      });
+    }
+    if (communityRoleSelect) communityRoleSelect.addEventListener("change", paintCommunityRoleHint);
+    if (communityRoleSave) communityRoleSave.addEventListener("click", submitCommunityRole);
+    if (communityRoleCancel) communityRoleCancel.addEventListener("click", () => {
+      if (!communityRoleBusy) dismissCommunityRoleDialog();
+    });
+    if (communityTitleInput) {
+      communityTitleInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitCommunityTitle();
+        }
+      });
+    }
+    if (communityTitleSave) communityTitleSave.addEventListener("click", submitCommunityTitle);
+    if (communityTitleCancel) communityTitleCancel.addEventListener("click", () => {
+      if (!communityRoleBusy) dismissCommunityTitleDialog();
+    });
+    ["#communityRoleOverlay", "#communityTitleOverlay"].forEach((id) => {
+      const ov = $(id);
+      if (!ov) return;
+      ov.addEventListener("click", (e) => {
+        if (e.target !== ov || communityRoleBusy) return;
+        const active = document.activeElement;
+        if (active && ov.contains(active)) return;
+        if (id === "#communityRoleOverlay") dismissCommunityRoleDialog();
+        else dismissCommunityTitleDialog();
+      });
+    });
     $("#loginUser").addEventListener("keydown", (e) => {
       if (e.key === "Enter") connectLogin();
     });

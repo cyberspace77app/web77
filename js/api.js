@@ -471,6 +471,21 @@
     return list.map(normalizeSubscriber).filter((row) => row.name);
   }
 
+  // hive_roles rows, including members and muted accounts who never subscribed.
+  // Guest (role_id 0) is omitted by Hivemind. A subscription cannot be created for someone else.
+  async function listCommunityRoles(community, last, limit) {
+    const id = normalizeCommunityAccount(community);
+    if (!id) return [];
+    const params = {
+      community: id,
+      limit: Math.min(Math.max(limit || PAGE_SIZE, 1), 100),
+    };
+    if (last) params.last = last;
+    const result = await hiveRpc("bridge.list_community_roles", params);
+    const list = Array.isArray(result) ? result : [];
+    return list.map(normalizeSubscriber).filter((row) => row.name);
+  }
+
   async function listCommunities({ last, limit, query, sort, observer } = {}) {
     const params = {
       limit: Math.min(Math.max(limit || PAGE_SIZE, 1), 100),
@@ -1056,6 +1071,7 @@
     isCommunityName,
     getCommunity,
     listSubscribers,
+    listCommunityRoles,
     listCommunities,
     unreadNotifications,
     accountNotifications,
