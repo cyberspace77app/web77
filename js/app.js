@@ -9639,6 +9639,10 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
+  function searchGlassHtml() {
+    return `<button type="submit" class="community-search-glass" aria-label="Search"><svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"><path d="M3.9 7.15V3.9h3.25"/><path d="M12.85 3.9h3.25v3.25"/><path d="M7.15 16.1H3.9v-3.25"/><circle cx="10" cy="10" r="5.15"/><path d="M10 6.55v1.25M10 12.2v1.25M6.55 10h1.25M12.2 10h1.25"/><circle cx="10" cy="10" r="0.7" fill="currentColor" stroke="none"/></g><path class="community-search-handle" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square" d="M16 16 21.15 21.15"/></svg></button>`;
+  }
+
   function subspacesSearchHtml() {
     const user = observer();
     const subscribedBlock = user
@@ -9650,9 +9654,9 @@ let CS77_FILTER_LOW_REP = 20;
     return `
       <h2 class="tags-page-title">Search communities</h2>
       <p class="feed-hint">Find communities by title, hive-id, or number.</p>
-      <form class="tags-add" id="communitySearchForm">
-        <input id="communitySearchInput" type="text" maxlength="80" placeholder="" autocomplete="off" spellcheck="false" autocapitalize="off">
-        <button type="submit" class="btn-primary btn-compact">Search</button>
+      <form class="tags-add community-search-form" id="communitySearchForm">
+        <input id="communitySearchInput" type="text" maxlength="80" placeholder="Search" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search" aria-label="Search">
+        ${searchGlassHtml()}
       </form>
       <p class="tags-status" id="communitySearchStatus" hidden></p>
       <div class="community-list" id="communitySearchList"></div>
@@ -10231,6 +10235,7 @@ let CS77_FILTER_LOW_REP = 20;
         </nav>
         <form class="tags-add search-form" id="searchForm">
           <input id="searchInput" type="text" maxlength="80" placeholder="Search" value="${value}" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search" aria-label="Search">
+          ${searchGlassHtml()}
         </form>
         <p class="tags-status" id="searchStatus" hidden></p>
         <div id="searchResults"></div>

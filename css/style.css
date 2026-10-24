@@ -2789,11 +2789,60 @@ a.tag:hover {
 }
 
 .search-form {
+  position: relative;
   display: block;
 }
 
 .search-form input {
   width: 100%;
+  padding-right: 2.85rem;
+}
+
+.tags-add.community-search-form {
+  position: relative;
+  display: block;
+}
+
+.community-search-form input {
+  width: 100%;
+  padding-right: 2.85rem;
+}
+
+.community-search-glass {
+  position: absolute;
+  top: 50%;
+  right: 0.7rem;
+  width: 1.45rem;
+  height: 1.45rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  transform: translateY(-50%);
+  color: var(--yellow);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.community-search-glass:focus {
+  outline: none;
+}
+
+.community-search-glass:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.community-search-glass svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  shape-rendering: geometricPrecision;
+}
+
+.community-search-glass .community-search-handle {
+  stroke: var(--red-bright);
 }
 
 .tags-status {
