@@ -153,8 +153,8 @@ function cs77_community_page(string $raw): string
     if ($page === "trending" || $page === "hot") {
         return $page;
     }
-    if ($page === "rules" || $page === "about") {
-        return "rules";
+    if ($page === "about") {
+        return "about";
     }
     if ($page === "members" || $page === "roles") {
         return "members";
@@ -927,8 +927,8 @@ function cs77_community_title($info, string $name, string $page): string
     if ($title === "") {
         $title = $name;
     }
-    if ($page === "rules") {
-        return "Rules · " . $title . " — CyberSpace77";
+    if ($page === "about") {
+        return "About · " . $title . " — CyberSpace77";
     }
     if ($page === "members") {
         return "Members · " . $title . " — CyberSpace77";

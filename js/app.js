@@ -3429,7 +3429,7 @@ let CS77_FILTER_LOW_REP = 20;
       .toLowerCase();
     if (!page || page === "created" || page === "latest") return "latest";
     if (page === "trending" || page === "hot") return page;
-    if (page === "rules" || page === "about") return "rules";
+    if (page === "about") return "about";
     if (page === "members" || page === "roles") return "members";
     if (page === "edit") return "edit";
     return "";
@@ -14350,7 +14350,7 @@ let CS77_FILTER_LOW_REP = 20;
     const items = [
       ["latest", "Latest", communityHref(name, "latest")],
       ["trending", "Trending", communityHref(name, "trending")],
-      ["rules", "Rules", communityHref(name, "rules")],
+      ["about", "About", communityHref(name, "about")],
       ["members", "Members", communityHref(name, "members")],
     ];
     return `
@@ -14457,8 +14457,8 @@ let CS77_FILTER_LOW_REP = 20;
       return `
         <div class="community-panel">
           <div class="panel empty-state">
-            <h2>No rules posted</h2>
-            <p>This community has not published rules yet.</p>
+            <h2>No about posted</h2>
+            <p>This subspace has not published an about yet.</p>
           </div>
         </div>
       `;
@@ -14572,7 +14572,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function communityPageTitle(info, name, page) {
     const title = communityTitleOf(info, name);
-    if (page === "rules") return "Rules · " + title + " — CyberSpace77";
+    if (page === "about") return "About · " + title + " — CyberSpace77";
     if (page === "members") return "Members · " + title + " — CyberSpace77";
     if (page === "edit") return "Edit · " + title + " — CyberSpace77";
     return title + " — CyberSpace77";
@@ -17179,7 +17179,7 @@ let CS77_FILTER_LOW_REP = 20;
       setCommunityMeta(communityState.name, tab, info);
       const chrome = communityBannerHtml(info) + communityNavHtml(communityState.name, tab);
 
-      if (tab === "rules") {
+      if (tab === "about") {
         view.innerHTML = chrome + communityRulesHtml(info);
         return;
       }
