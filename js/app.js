@@ -14778,17 +14778,6 @@ let CS77_FILTER_LOW_REP = 20;
     return settings;
   }
 
-  // Hivemind replaces the stored settings object. Pictures and preferred spaces
-  // are form fields. Everything else in settings is the admin custom JSON, so
-  // keys written by other frontends stay visible and can be edited.
-  function communityAdminCustomObject(settings) {
-    return copyJsonKeys(settings, {
-      avatar_url: true,
-      cover_url: true,
-      preferred_tags: true,
-    });
-  }
-
   // account_update2 replaces posting_json_metadata. The owner custom JSON is
   // that object minus the picture, beneficiary, and preferred-space keys this
   // form writes itself. Legacy json_metadata is not included.
@@ -14870,23 +14859,18 @@ let CS77_FILTER_LOW_REP = 20;
     return {};
   }
 
-  // Custom JSON is the source for leftover keys. Pictures and tags are overlaid
-  // afterwards, so a pasted copy of those keys does not beat the form. An admin
-  // save overlays the stored pictures and tags, not unsaved owner edits.
-  function communitySettingsPayload(custom, fields, options) {
-    const settings = copyJsonKeys(custom, {
+  // Hivemind replaces the stored settings object. Pictures always come from
+  // the form. Preferred spaces come from the form when the subspace account
+  // loaded, and stay as stored otherwise. Other keys stay as stored.
+  function communitySettingsPayload(fields, options) {
+    const stored = (options && options.stored) || {};
+    const settings = copyJsonKeys(stored, {
       avatar_url: true,
       cover_url: true,
       preferred_tags: true,
     });
-    const stored = (options && options.stored) || {};
-    if (options && options.picturesFromForm) {
-      settings.avatar_url = fields.avatar_url;
-      settings.cover_url = fields.cover_url;
-    } else {
-      if (typeof stored.avatar_url === "string") settings.avatar_url = stored.avatar_url;
-      if (typeof stored.cover_url === "string") settings.cover_url = stored.cover_url;
-    }
+    settings.avatar_url = fields.avatar_url;
+    settings.cover_url = fields.cover_url;
     if (options && options.tagsFromForm) {
       if (fields.tags && fields.tags.length) settings.preferred_tags = fields.tags.slice();
       else delete settings.preferred_tags;
@@ -15023,7 +15007,6 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: beneficiary.beneficiary_account,
       beneficiary_percent: beneficiary.beneficiary_percent,
       tags: communityPreferredTags(metadata, settings),
-      admin_custom: formatSettingsCustom(communityAdminCustomObject(settings)),
       owner_custom: formatSettingsCustom(posting ? communityOwnerCustomObject(posting) : {}),
     };
   }
@@ -15145,11 +15128,6 @@ let CS77_FILTER_LOW_REP = 20;
               </span>
             </label>
           </div>
-          <div class="settings-field">
-            <label class="settings-label" for="communityAdminCustom">Custom</label>
-            <p class="settings-note">Other settings stored on this subspace. Expert mode (keep as is recommended).</p>
-            <textarea id="communityAdminCustom" class="settings-custom" name="admin_custom" rows="12" spellcheck="false">${esc(fields.admin_custom || "{}")}</textarea>
-          </div>
           <h2 class="settings-section-title settings-section-line"><span>Subspace Owner settings</span></h2>
           <p class="settings-note" id="communityOwnerNote">Posting key of ${account} required</p>
           <div class="settings-field">
@@ -15256,7 +15234,6 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: ($("#communityBeneficiary") && $("#communityBeneficiary").value) || "",
       beneficiary_percent: ($("#communityBeneficiaryPercent") && $("#communityBeneficiaryPercent").value) || "",
       tags: communityEditTags.slice(),
-      admin_custom: ($("#communityAdminCustom") && $("#communityAdminCustom").value) || "",
       owner_custom: ($("#communityOwnerCustom") && $("#communityOwnerCustom").value) || "",
     };
   }
@@ -15283,7 +15260,6 @@ let CS77_FILTER_LOW_REP = 20;
     set("#communityType", fields.type_id ? String(fields.type_id) : "");
     set("#communityBeneficiary", fields.beneficiary_account || "");
     set("#communityBeneficiaryPercent", fields.beneficiary_percent || "");
-    set("#communityAdminCustom", fields.admin_custom || "{}");
     set("#communityOwnerCustom", fields.owner_custom || "{}");
     const nsfw = $("#communityNsfw");
     if (nsfw) nsfw.checked = Boolean(fields.nsfw);
@@ -15527,7 +15503,6 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: normalizeLoginUser(raw && raw.beneficiary_account),
       beneficiary_percent: communityPercentText(raw && raw.beneficiary_percent),
       tags: tags,
-      admin_custom: String(raw && raw.admin_custom != null ? raw.admin_custom : "").trim(),
       owner_custom: String(raw && raw.owner_custom != null ? raw.owner_custom : "").trim(),
     };
   }
@@ -15552,8 +15527,6 @@ let CS77_FILTER_LOW_REP = 20;
     if (ownerReady && fields.tags.length > COMMUNITY_MAX_SPACES) {
       return "Preferred spaces can include " + COMMUNITY_MAX_SPACES + " tags.";
     }
-    const adminCustom = communityCustomProblem(fields.admin_custom, "Admin");
-    if (adminCustom) return adminCustom;
     if (ownerReady) {
       const ownerCustom = communityCustomProblem(fields.owner_custom, "Owner");
       if (ownerCustom) return ownerCustom;
@@ -15648,8 +15621,7 @@ let CS77_FILTER_LOW_REP = 20;
       fields.flag_text !== base.flag_text ||
       fields.lang !== base.lang ||
       Boolean(fields.nsfw) !== Boolean(base.nsfw) ||
-      Number(fields.type_id) !== Number(base.type_id) ||
-      !communitySameCustom(fields.admin_custom, base.admin_custom)
+      Number(fields.type_id) !== Number(base.type_id)
     );
   }
 
@@ -15692,9 +15664,6 @@ let CS77_FILTER_LOW_REP = 20;
       patch.lang = fields.lang;
       patch.nsfw = Boolean(fields.nsfw);
       patch.type_id = fields.type_id;
-      patch.admin_custom = communityCustomText(fields.admin_custom, "Admin");
-      const adminCustom = $("#communityAdminCustom");
-      if (adminCustom) adminCustom.value = patch.admin_custom;
     }
     if (which.owner) {
       patch.avatar_url = fields.avatar_url;
@@ -15764,10 +15733,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (!account || String(account.name || "").toLowerCase() !== name) {
       throw new Error("Could not load the subspace account.");
     }
-    // Build settings from the admin custom JSON instead of a fresh get_community.
+    // Rebuild settings from the stored object instead of a fresh get_community.
     // Hivemind may not have reindexed an admin save from earlier in this submit.
-    const settings = communitySettingsPayload(parseCommunityCustom(fields.admin_custom, "Admin"), fields, {
-      picturesFromForm: true,
+    const settings = communitySettingsPayload(fields, {
       tagsFromForm: ownerReady,
       stored: communityStoredSettings(name),
     });
@@ -15980,7 +15948,6 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     let adminJson = "";
-    let adminSettings = null;
     if (adminDirty) {
       const props = {
         title: fields.title,
@@ -15991,19 +15958,6 @@ let CS77_FILTER_LOW_REP = 20;
         flag_text: fields.flag_text,
         type_id: fields.type_id,
       };
-      if (!communitySameCustom(fields.admin_custom, base.admin_custom)) {
-        try {
-          adminSettings = communitySettingsPayload(parseCommunityCustom(fields.admin_custom, "Admin"), fields, {
-            picturesFromForm: false,
-            tagsFromForm: false,
-            stored: communityStoredSettings(name),
-          });
-        } catch (err) {
-          setCommunityEditStatus((err && err.message) || "Admin custom settings are not valid JSON.", true);
-          return;
-        }
-        props.settings = adminSettings;
-      }
       try {
         adminJson = JSON.stringify(["updateProps", { community: name, props: props }]);
       } catch {
@@ -16040,7 +15994,7 @@ let CS77_FILTER_LOW_REP = 20;
         await queued.promise;
         if (communityState.name !== name || observer() !== user) return;
         adminSaved = true;
-        applyCommunityEditPart(fields, { admin: true, settings: adminSettings });
+        applyCommunityEditPart(fields, { admin: true });
       }
       if (!ownerDirty) {
         if (communityEditStill(name)) setCommunityEditStatus("Saved.", false);
