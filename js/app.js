@@ -163,6 +163,9 @@ let CS77_FILTER_LOW_REP = 20;
   // Set for a click on the profile nav. route() clears it. Those switches
   // keep the scroll position; session and logo links still go to the top.
   let profileNavSwitch = false;
+  // Set for a click on the subspace nav. route() clears it. Those switches
+  // keep the header and the scroll position.
+  let communityNavSwitch = false;
   // Session-menu Comments / Replies / Wallet. Mobile hides the profile banner
   // and scrolls to the top. Desktop scrolls to .profile-nav only when that
   // nav is already painted and not fully in the viewport.
@@ -4287,6 +4290,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
       profileNavSwitch = Boolean(a.closest(".profile-nav"));
+      communityNavSwitch = Boolean(a.closest(".community-nav"));
       navigate(appHref(hrefToPath(href)));
       return;
     }
@@ -4323,10 +4327,12 @@ let CS77_FILTER_LOW_REP = 20;
       }
       e.preventDefault();
       profileNavSwitch = Boolean(a.closest(".profile-nav"));
+      communityNavSwitch = Boolean(a.closest(".community-nav"));
       navigate(u.pathname + u.search + u.hash);
     } catch {
       e.preventDefault();
       profileNavSwitch = Boolean(a.closest(".profile-nav"));
+      communityNavSwitch = Boolean(a.closest(".community-nav"));
       navigate(href);
     }
   });
@@ -17353,6 +17359,193 @@ let CS77_FILTER_LOW_REP = 20;
     finishOpening();
   }
 
+  function communityRouteStill(name, tab) {
+    const r = parseRoute();
+    if (!r || r.name !== "community") return false;
+    const id = normalizeCommunityName(r.community);
+    const page = normalizeCommunityPage(r.page) || "latest";
+    return id === name && page === tab;
+  }
+
+  function communitySubpageHtml(html) {
+    const status = $("#communitySubpageStatus");
+    if (status) status.outerHTML = html;
+    else {
+      const section = communitySubpageEl();
+      if (section) section.insertAdjacentHTML("beforeend", html);
+      else view.insertAdjacentHTML("beforeend", html);
+    }
+  }
+
+  function communitySubpageLoadingHtml() {
+    return `<div class="loading-row" id="communitySubpageStatus"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`;
+  }
+
+  // The banner stays when this subspace is already on screen. A new subspace
+  // still loads the community first, then the posts, about, members, or edit page.
+  function communityBannerReady(name) {
+    if (communityState.name !== name || !communityState.info) return false;
+    const banner = view.querySelector(".community-banner");
+    if (!banner || !view.querySelector(".community-nav")) return false;
+    const btn = banner.querySelector(".community-sub-btn");
+    return Boolean(btn && normalizeCommunityName(btn.getAttribute("data-community")) === name);
+  }
+
+  function paintCommunityNavActive(page) {
+    const nav = view.querySelector(".community-nav");
+    if (!nav) return;
+    const ids = ["latest", "trending", "about", "members"];
+    const links = nav.querySelectorAll("a");
+    for (let i = 0; i < links.length; i++) {
+      links[i].classList.toggle("is-active", ids[i] === page);
+    }
+  }
+
+  function clearCommunitySubpage() {
+    const nav = view.querySelector(".community-nav");
+    if (!nav) return;
+    let el = nav.nextElementSibling;
+    while (el) {
+      const next = el.nextElementSibling;
+      el.remove();
+      el = next;
+    }
+  }
+
+  function communitySubpageEl() {
+    return document.getElementById("communitySubpage");
+  }
+
+  function releaseCommunitySubpageHold() {
+    const section = communitySubpageEl();
+    if (section) section.style.minHeight = "";
+  }
+
+  function showCommunitySubpageLoading() {
+    let section = communitySubpageEl();
+    if (!section) {
+      clearCommunitySubpage();
+      view.insertAdjacentHTML(
+        "beforeend",
+        `<div id="communitySubpage">${communitySubpageLoadingHtml()}</div>`
+      );
+      return;
+    }
+    // Keep the old section height so a short loader does not pull the page up.
+    const hold = section.offsetHeight;
+    section.innerHTML = communitySubpageLoadingHtml();
+    if (hold > 40) section.style.minHeight = hold + "px";
+  }
+
+  async function renderCommunityFeed(name, tab) {
+    if (!communityRouteStill(name, tab)) return;
+    resetFeed(feedSpecForCommunity(name, tab));
+    const status = $("#communitySubpageStatus");
+    if (status && communityRouteStill(name, tab)) status.remove();
+    if (!communityRouteStill(name, tab)) return;
+    const feedShell = `
+        <div id="feedList" class="feed"></div>
+        <div id="feedStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading posts…</div>
+        <div class="feed-actions">
+          <button type="button" class="btn-primary" id="moreBtn" hidden>Load more</button>
+        </div>
+      `;
+    const section = communitySubpageEl();
+    if (section) section.insertAdjacentHTML("beforeend", feedShell);
+    else view.insertAdjacentHTML("beforeend", feedShell);
+    const list = $("#feedList");
+    const feedStatus = $("#feedStatus");
+    const moreBtn = $("#moreBtn");
+    if (!list || !feedStatus || !moreBtn) return;
+
+    async function fill() {
+      const gen = feedState.gen;
+      if (!communityRouteStill(name, tab) || !feedStill(gen)) return;
+      hideVoteSlider();
+      moreBtn.hidden = true;
+      feedStatus.hidden = false;
+      let failed = false;
+      try {
+        await loadFeedPage();
+      } catch (err) {
+        if (!communityRouteStill(name, tab) || !feedStill(gen)) return;
+        failed = true;
+        showError(err.message || String(err));
+      }
+      if (!communityRouteStill(name, tab) || !feedStill(gen) || !list.isConnected) return;
+      if (!failed) clearError();
+      paintFeedCards(list, cardHtml);
+      if (!feedState.items.length && feedState.done) {
+        feedStatus.hidden = true;
+        list.innerHTML = `
+            <div class="panel empty-state">
+              <h2>No posts in this community</h2>
+              <p>Try another sort, or check back later.</p>
+            </div>`;
+        return;
+      }
+      feedStatus.hidden = true;
+      moreBtn.hidden = feedState.done;
+    }
+
+    moreBtn.addEventListener("click", fill);
+    await fill();
+    if (communityRouteStill(name, tab)) releaseCommunitySubpageHold();
+  }
+
+  async function renderCommunitySubpage(id, tab) {
+    if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+    const info = communityState.info;
+    if (!info) return;
+
+    if (tab === "about") {
+      const extras = await communityAboutExtras(id, info);
+      if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+      communitySubpageHtml(communityAboutHtml(info, extras));
+      releaseCommunitySubpageHold();
+      return;
+    }
+
+    if (tab === "members") {
+      communitySubpageHtml(`<div class="community-panel" id="communityMembers"></div>`);
+      await renderCommunityMembers(info);
+      if (communityRouteStill(id, tab)) releaseCommunitySubpageHold();
+      return;
+    }
+
+    if (tab === "edit") {
+      communityEditOwner = { community: communityState.name, metadata: {}, loaded: false };
+      try {
+        const rows = await HiveApi.getAccounts([communityState.name]);
+        if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+        const account = rows && rows[0];
+        if (account && String(account.name || "").toLowerCase() === communityState.name) {
+          communityEditOwner = {
+            community: communityState.name,
+            metadata: metadataFromAccount(account),
+            posting: communityPostingMetadata(account),
+            loaded: true,
+          };
+        }
+      } catch {
+        if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+      }
+      if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+      communitySubpageHtml(communityEditBodyHtml(info));
+      releaseCommunitySubpageHold();
+      bindCommunityEdit();
+      if (!communityOwnerReady(communityState.name) && $("#communityEditForm")) {
+        setCommunityEditStatus(
+          "Could not load the subspace account. Beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
+          true
+        );
+      }
+      return;
+    }
+
+    await renderCommunityFeed(id, tab);
+  }
+
   async function renderCommunity(name, page) {
     invalidateCommunityRoleWork();
     if (ownerSignSession && ownerSignSession.source === "role" && !ownerSignBusy) cancelOwnerSign();
@@ -17363,9 +17556,21 @@ let CS77_FILTER_LOW_REP = 20;
     noteCommunityEditCommunity(id);
     const known = communityState.name === id ? communityState.info : null;
     setCommunityMeta(id, tab, known);
+    if (communityBannerReady(id)) {
+      paintCommunityNavActive(tab);
+      showCommunitySubpageLoading();
+      try {
+        await renderCommunitySubpage(id, tab);
+      } catch (err) {
+        if (!communityRouteStill(id, tab)) return;
+        showError(err.message || String(err));
+      }
+      return;
+    }
     view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading subspace…</div>`;
     try {
       const info = await HiveApi.getCommunity(id, observer());
+      if (!communityRouteStill(id, tab)) return;
       setNodeLabel();
       if (!info || !info.name) {
         resetCommunityState();
@@ -17374,118 +17579,23 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       clearError();
-      communityState.name = String(info.name).toLowerCase();
+      const loadedName = String(info.name || id).toLowerCase();
+      communityState.name = loadedName;
       communityState.info = info;
       communityState.subscribed = communitySubscribed(info);
       communityState.pending = false;
-      setCommunityMeta(communityState.name, tab, info);
-      const chrome = communityBannerHtml(info) + communityNavHtml(communityState.name, tab);
-
-      if (tab === "about") {
-        const extras = await communityAboutExtras(communityState.name, info);
-        if (communityState.name !== id) return;
-        const routeNow = parseRoute();
-        if (
-          !routeNow ||
-          routeNow.name !== "community" ||
-          normalizeCommunityPage(routeNow.page) !== "about" ||
-          normalizeCommunityName(routeNow.community) !== id
-        ) {
-          return;
-        }
-        view.innerHTML = chrome + communityAboutHtml(info, extras);
-        return;
-      }
-
-      if (tab === "members") {
-        view.innerHTML = chrome + `<div class="community-panel" id="communityMembers"></div>`;
-        await renderCommunityMembers(info);
-        return;
-      }
-
-      if (tab === "edit") {
-        communityEditOwner = { community: communityState.name, metadata: {}, loaded: false };
-        try {
-          const rows = await HiveApi.getAccounts([communityState.name]);
-          if (communityState.name !== id) return;
-          const account = rows && rows[0];
-          if (account && String(account.name || "").toLowerCase() === communityState.name) {
-            communityEditOwner = {
-              community: communityState.name,
-              metadata: metadataFromAccount(account),
-              posting: communityPostingMetadata(account),
-              loaded: true,
-            };
-          }
-        } catch {
-          if (communityState.name !== id) return;
-        }
-        const routeNow = parseRoute();
-        if (
-          !routeNow ||
-          routeNow.name !== "community" ||
-          normalizeCommunityPage(routeNow.page) !== "edit" ||
-          normalizeCommunityName(routeNow.community) !== id ||
-          communityState.name !== id
-        ) {
-          return;
-        }
-        view.innerHTML = chrome + communityEditBodyHtml(info);
-        bindCommunityEdit();
-        if (!communityOwnerReady(communityState.name) && $("#communityEditForm")) {
-          setCommunityEditStatus(
-            "Could not load the subspace account. Beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
-            true
-          );
-        }
-        return;
-      }
-
-      resetFeed(feedSpecForCommunity(communityState.name, tab));
-      view.innerHTML = `
-        ${chrome}
-        <div id="feedList" class="feed"></div>
-        <div id="feedStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading posts…</div>
-        <div class="feed-actions">
-          <button type="button" class="btn-primary" id="moreBtn" hidden>Load more</button>
-        </div>
-      `;
-      const list = $("#feedList");
-      const status = $("#feedStatus");
-      const moreBtn = $("#moreBtn");
-
-      async function fill() {
-        const gen = feedState.gen;
-        hideVoteSlider();
-        moreBtn.hidden = true;
-        status.hidden = false;
-        let failed = false;
-        try {
-          await loadFeedPage();
-        } catch (err) {
-          if (!feedStill(gen)) return;
-          failed = true;
-          showError(err.message || String(err));
-        }
-        if (!feedStill(gen) || !list.isConnected) return;
-        if (!failed) clearError();
-        paintFeedCards(list, cardHtml);
-        if (!feedState.items.length && feedState.done) {
-          status.hidden = true;
-          list.innerHTML = `
-            <div class="panel empty-state">
-              <h2>No posts in this community</h2>
-              <p>Try another sort, or check back later.</p>
-            </div>`;
-          return;
-        }
-        status.hidden = true;
-        moreBtn.hidden = feedState.done;
-      }
-
-      moreBtn.addEventListener("click", fill);
-      await fill();
+      setCommunityMeta(loadedName, tab, info);
+      if (!communityRouteStill(id, tab)) return;
+      const chrome = communityBannerHtml(info) + communityNavHtml(loadedName, tab);
+      view.innerHTML =
+        chrome + `<div id="communitySubpage">${communitySubpageLoadingHtml()}</div>`;
+      await renderCommunitySubpage(id, tab);
     } catch (err) {
+      if (!communityRouteStill(id, tab)) return;
+      if (communityBannerReady(id)) {
+        showError(err.message || String(err));
+        return;
+      }
       resetCommunityState();
       showError(err.message || String(err));
       setPageMeta("Not found — CyberSpace77");
@@ -18634,6 +18744,8 @@ let CS77_FILTER_LOW_REP = 20;
     parkedForProfile = false;
     const fromProfileNav = profileNavSwitch;
     profileNavSwitch = false;
+    const fromCommunityNav = communityNavSwitch;
+    communityNavSwitch = false;
     closeLogoMenu();
     hideVoteSlider();
     closeProfileMore();
@@ -18684,6 +18796,7 @@ let CS77_FILTER_LOW_REP = 20;
       const here = currentPath().replace(/\/+$/, "") || "/";
       const target = communityRedirectTarget(here, r);
       if (target) {
+        communityNavSwitch = fromCommunityNav;
         navigate(appHref(target), true);
         return;
       }
@@ -18765,7 +18878,10 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
 
-    if (!(fromProfileNav && r.name === "profile")) {
+    if (
+      !(fromProfileNav && r.name === "profile") &&
+      !(fromCommunityNav && r.name === "community")
+    ) {
       if (fromAccountMenu) settleAccountMenuSub();
       else window.scrollTo(0, 0);
     }
