@@ -15113,7 +15113,7 @@ let CS77_FILTER_LOW_REP = 20;
             <select id="communityLang" name="lang">${communityLangOptionsHtml(fields.lang)}</select>
           </div>
           <div class="settings-field">
-            <label class="settings-label" for="communityType">Community type</label>
+            <label class="settings-label" for="communityType">Subspace type</label>
             <select id="communityType" name="type_id">${communityTypeOptionsHtml(typeId)}</select>
             <p class="settings-note" id="communityTypeNote">${esc(communityTypeNote(typeId))}</p>
           </div>
@@ -15157,9 +15157,9 @@ let CS77_FILTER_LOW_REP = 20;
             <label class="settings-label" for="communityBeneficiary">Required beneficiary</label>
             <p class="settings-note">One account. Auto added to new posts in the subspace.</p>
             <div class="settings-beneficiary">
-              <input id="communityBeneficiary" name="beneficiary" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="16" placeholder="account" value="${esc(fields.beneficiary_account || "")}"${ownerLock}>
+              <input id="communityBeneficiary" name="beneficiary" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="16" placeholder="username" value="${esc(fields.beneficiary_account || "")}"${ownerLock}>
               <div class="settings-weight">
-                <input id="communityBeneficiaryPercent" name="beneficiary_percent" type="number" inputmode="decimal" min="0.01" max="100" step="0.01" autocomplete="off" placeholder="5" value="${esc(fields.beneficiary_percent || "")}"${ownerLock}>
+                <input id="communityBeneficiaryPercent" name="beneficiary_percent" type="number" inputmode="decimal" min="0.01" max="100" step="0.01" autocomplete="off" placeholder="" value="${esc(fields.beneficiary_percent || "")}"${ownerLock}>
                 <span class="settings-weight-unit">%</span>
               </div>
             </div>
@@ -15514,7 +15514,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (fields.description.length > 1000) return "Description must be 1000 characters or fewer.";
     if (fields.flag_text.length > 1000) return "Rules must be 1000 characters or fewer.";
     if (COMMUNITY_LANGS.indexOf(fields.lang) === -1) return "Choose a language.";
-    if (!fields.type_id) return "Choose a community type.";
+    if (!fields.type_id) return "Choose a subspace type.";
     if (communityHttpUrl(fields.avatar_url) === null) return "Subspace picture must be an http or https link.";
     if (communityHttpUrl(fields.cover_url) === null) return "Cover picture must be an http or https link.";
     if (ownerReady && (fields.beneficiary_account || fields.beneficiary_percent)) {
