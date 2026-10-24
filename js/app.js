@@ -14818,7 +14818,7 @@ let CS77_FILTER_LOW_REP = 20;
     const actions = [];
     if (canChange) {
       actions.push(
-        `<button type="button" class="community-role-btn community-role-remove" data-community-action="change" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}" aria-label="Change role">-</button>`
+        `<button type="button" class="community-role-btn community-role-remove btn-ghost" data-community-action="change" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}" aria-label="Change role">-</button>`
       );
     }
     const titleAttrs = `data-community-action="title" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}"`;
