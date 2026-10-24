@@ -87,6 +87,13 @@ let CS77_FILTER_LOW_REP = 20;
   // Publish still sends. Hivemind mutes that post in the subspace.
   let publishDestNote = "";
   let publishAccessSeq = 0;
+  // Load of the selected subspace account's required beneficiary.
+  let publishBeneficiarySeq = 0;
+  // Account last applied for the selected subspace. Choosing another subspace
+  // or My cyberspace removes that one row. Other beneficiary rows stay.
+  // Kept after the author removes the row, so reopening the draft does not
+  // put it back. Choosing that subspace again loads it once more.
+  let publishCommunityBeneficiary = null;
   // Silent council comment check. The note warns when a comment would be muted.
   // Comment and Reply still send.
   let commentAccessSeq = 0;
@@ -5751,6 +5758,12 @@ let CS77_FILTER_LOW_REP = 20;
       description: advanced.description,
       reward: advanced.reward,
       beneficiaries: advanced.beneficiaries,
+      communityBeneficiary:
+        publishCommunityBeneficiary &&
+        publishDest.type === "community" &&
+        publishCommunityBeneficiary.community === normalizeCommunityName(publishDest.name)
+          ? publishCommunityBeneficiary.account
+          : "",
     };
   }
 
@@ -5932,6 +5945,17 @@ let CS77_FILTER_LOW_REP = 20;
     if (body) body.value = publishBodyDraft;
     if (tagInput) tagInput.value = (state && state.tagInput) || "";
     applyPublishAdvanced(state);
+    const savedBeneficiary = normalizeLoginUser(state && state.communityBeneficiary);
+    if (
+      !publishEdit &&
+      publishDest.type === "community" &&
+      validLoginUser(savedBeneficiary)
+    ) {
+      publishCommunityBeneficiary = {
+        community: normalizeCommunityName(publishDest.name),
+        account: savedBeneficiary,
+      };
+    }
     paintPublishDest();
     paintPublishTags();
     setPublishStatus("");
@@ -6203,6 +6227,114 @@ let CS77_FILTER_LOW_REP = 20;
     ensurePublishCommunity(id, publishDest.title);
   }
 
+  function forgetPublishCommunityBeneficiary() {
+    publishBeneficiarySeq += 1;
+    publishCommunityBeneficiary = null;
+  }
+
+  function publishBeneficiaryRowsEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].account !== b[i].account || a[i].percent !== b[i].percent) return false;
+    }
+    return true;
+  }
+
+  // Drop the required-beneficiary row from the subspace we just left.
+  function clearPublishCommunityBeneficiary() {
+    const tracked = publishCommunityBeneficiary;
+    publishBeneficiarySeq += 1;
+    publishCommunityBeneficiary = null;
+    if (!tracked || !tracked.account || publishEdit) return;
+    const rows = readPublishBeneficiaryRows();
+    let removed = false;
+    const next = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (!removed && normalizeLoginUser(rows[i].account) === tracked.account) {
+        removed = true;
+        continue;
+      }
+      next.push(rows[i]);
+    }
+    if (!removed) return;
+    paintPublishBeneficiaries(next);
+    schedulePublishDraftSave();
+  }
+
+  function placePublishCommunityBeneficiary(community, account, percent) {
+    if (publishEdit) return;
+    if (publishDest.type !== "community" || normalizeCommunityName(publishDest.name) !== community) return;
+    const rows = readPublishBeneficiaryRows();
+    const tracked = publishCommunityBeneficiary;
+    const drop = tracked && tracked.account && tracked.account !== account ? tracked.account : "";
+    const list = [];
+    let removed = false;
+    for (let i = 0; i < rows.length; i++) {
+      if (drop && !removed && normalizeLoginUser(rows[i].account) === drop) {
+        removed = true;
+        continue;
+      }
+      list.push({ account: rows[i].account, percent: rows[i].percent });
+    }
+    const idx = list.findIndex((row) => normalizeLoginUser(row.account) === account);
+    if (idx === -1) list.unshift({ account: account, percent: percent });
+    else if (idx > 0) {
+      const row = list[idx];
+      if (!String(row.percent || "").trim()) row.percent = percent;
+      list.splice(idx, 1);
+      list.unshift(row);
+    } else if (!String(list[0].percent || "").trim()) {
+      list[0] = { account: list[0].account || account, percent: percent };
+    }
+    publishCommunityBeneficiary = { community: community, account: account };
+    if (publishBeneficiaryRowsEqual(rows, list)) return;
+    paintPublishBeneficiaries(list);
+    schedulePublishDraftSave();
+  }
+
+  // posting_json_metadata.profile.beneficiary on the subspace account.
+  // Silent. A late reply is dropped when the selection has already changed.
+  function requestPublishCommunityBeneficiary(communityId, opts) {
+    const force = Boolean(opts && opts.force);
+    if (publishEdit) return;
+    const id = normalizeCommunityName(communityId);
+    if (!id) {
+      clearPublishCommunityBeneficiary();
+      return;
+    }
+    if (
+      !force &&
+      publishCommunityBeneficiary &&
+      publishCommunityBeneficiary.community === id
+    ) {
+      return;
+    }
+    if (publishCommunityBeneficiary && publishCommunityBeneficiary.community !== id) {
+      clearPublishCommunityBeneficiary();
+    }
+    const seq = ++publishBeneficiarySeq;
+    if (!window.HiveApi || typeof HiveApi.getAccounts !== "function") return;
+    HiveApi.getAccounts([id])
+      .then((accounts) => {
+        if (seq !== publishBeneficiarySeq || publishEdit) return;
+        if (publishDest.type !== "community" || normalizeCommunityName(publishDest.name) !== id) return;
+        const row = accounts && accounts[0];
+        if (!row || normalizeLoginUser(row.name) !== id) {
+          clearPublishCommunityBeneficiary();
+          return;
+        }
+        const fields = communityBeneficiaryFields(communityPostingMetadata(row));
+        if (!fields.beneficiary_account) {
+          clearPublishCommunityBeneficiary();
+          return;
+        }
+        placePublishCommunityBeneficiary(id, fields.beneficiary_account, fields.beneficiary_percent);
+      })
+      .catch(() => {
+        /* Leave the rows already on the form. */
+      });
+  }
+
   function selectPublishDest(type, name, title) {
     if (publishEdit) return;
     closeDestMenu();
@@ -6215,6 +6347,7 @@ let CS77_FILTER_LOW_REP = 20;
       schedulePublishDraftSave();
       setPublishStatus("");
       setPublishDestNote("");
+      requestPublishCommunityBeneficiary("");
       return;
     }
     const pendingTitle = String(title || "").trim() || id;
@@ -6222,6 +6355,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintPublishDest();
     renderDestMenu();
     ensurePublishCommunity(id, pendingTitle);
+    requestPublishCommunityBeneficiary(id, { force: true });
   }
 
   function paintPublishTags() {
@@ -6338,7 +6472,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (!Array.isArray(raw)) return [];
     const out = [];
     raw.forEach((item) => {
-      if (!item || typeof item !== "object" || out.length >= MAX_BENEFICIARIES) return;
+      // One past the chain limit so a subspace beneficiary can be prepended
+      // in front of eight rows that were already filled in.
+      if (!item || typeof item !== "object" || out.length >= MAX_BENEFICIARIES + 1) return;
       const account = typeof item.account === "string" ? item.account : "";
       let percent = "";
       if (typeof item.percent === "string") percent = item.percent;
@@ -6375,6 +6511,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function applyPublishAdvanced(state) {
+    forgetPublishCommunityBeneficiary();
     const desc = $("#publishDescription");
     if (desc) {
       const text = state && typeof state.description === "string" ? state.description : "";
@@ -6593,6 +6730,7 @@ let CS77_FILTER_LOW_REP = 20;
       const description = typeof parsed.description === "string" ? parsed.description : "";
       const reward = normalizePublishReward(parsed.reward);
       const beneficiaries = beneficiariesFromStored(parsed.beneficiaries);
+      const communityBeneficiary = normalizeLoginUser(parsed.communityBeneficiary);
       if (
         !title &&
         !body &&
@@ -6605,7 +6743,17 @@ let CS77_FILTER_LOW_REP = 20;
       ) {
         return null;
       }
-      return { title, body, tags, dest, tagInput, description, reward, beneficiaries };
+      return {
+        title,
+        body,
+        tags,
+        dest,
+        tagInput,
+        description,
+        reward,
+        beneficiaries,
+        communityBeneficiary: validLoginUser(communityBeneficiary) ? communityBeneficiary : "",
+      };
     } catch {
       return null;
     }
@@ -6626,6 +6774,9 @@ let CS77_FILTER_LOW_REP = 20;
           description: state.description || "",
           reward: normalizePublishReward(state.reward),
           beneficiaries: Array.isArray(state.beneficiaries) ? state.beneficiaries : [],
+          communityBeneficiary: validLoginUser(normalizeLoginUser(state.communityBeneficiary))
+            ? normalizeLoginUser(state.communityBeneficiary)
+            : "",
         })
       );
     } catch {
@@ -7487,16 +7638,17 @@ let CS77_FILTER_LOW_REP = 20;
     publishDestRequest = null;
     if (!req) {
       publishPinnedCommunity = null;
-      return;
+      return false;
     }
     const name = normalizeCommunityName(req.name);
     if (!name || publishEdit) {
       publishPinnedCommunity = null;
-      return;
+      return false;
     }
     const title = String(req.title || "").trim() || name;
     publishPinnedCommunity = { name, title };
     publishDest = { type: "community", name, title };
+    return true;
   }
 
   function resetPublishForm() {
@@ -7608,7 +7760,7 @@ let CS77_FILTER_LOW_REP = 20;
       hydratePublishDraftFromStorage();
       collapsePublishAdvanced();
     }
-    applyPublishDestRequest();
+    const fromCommunityWrite = applyPublishDestRequest();
     ov.hidden = false;
     paintPublishChrome();
     fitPublishTitle();
@@ -7621,6 +7773,9 @@ let CS77_FILTER_LOW_REP = 20;
     startPublishDraftAutosave();
     focusPublishField();
     syncPublishCommunityAccess();
+    if (fromCommunityWrite && publishDest.type === "community") {
+      requestPublishCommunityBeneficiary(publishDest.name, { force: true });
+    }
   }
 
   async function submitPublish() {
@@ -10906,6 +11061,7 @@ let CS77_FILTER_LOW_REP = 20;
       ensurePublishCommunity(loadedCommunity, loadedCommunityTitle).then((ok) => {
         if (ok) setPublishStatus("Post loaded.");
       });
+      requestPublishCommunityBeneficiary(loadedCommunity, { force: true });
       return;
     }
     setPublishStatus(
