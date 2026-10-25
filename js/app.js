@@ -17005,16 +17005,6 @@ let CS77_FILTER_LOW_REP = 20;
     const account = normalizeLoginUser(user && user.value);
     const current = account ? communityListedRole(account).role : "guest";
     const needsOwner = next !== current && communityRoleNeedsOwner(ctx.viewerRole, current, next);
-    const self = Boolean(account) && account === normalizeLoginUser(ctx.viewer);
-    if (removing) {
-      const cleared = self
-        ? "your role and drops you from the subspace."
-        : "their role and drops them from the subspace.";
-      hint.textContent = needsOwner
-        ? "The owner account " + ctx.name + " must sign this. Remove clears " + cleared
-        : "Remove clears their role and drops them from the subspace. Only that account can end a subscription.";
-      return;
-    }
     hint.textContent = needsOwner ? "The owner account " + ctx.name + " must sign this." : "";
   }
 
