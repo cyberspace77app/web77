@@ -14716,7 +14716,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Description and rules come from the community. Language does too.
   // Beneficiary and preferred spaces live on the subspace account, with
-  // preferred spaces also copied into hivemind settings.
+  // preferred spaces also copied into hivemind settings. PeakD stores the
+  // same list as profile.topics.
   async function communityAboutExtras(name, info) {
     const id = normalizeCommunityName(name);
     const settings = communitySettingsObject(info);
@@ -14734,7 +14735,7 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary: metadata
         ? communityBeneficiaryFields(metadata)
         : { beneficiary_account: "", beneficiary_percent: "" },
-      tags: communityPreferredTags(metadata, settings),
+      tags: communityAboutTags(metadata, settings),
       cover: communityCoverUrl(info, metadata),
     };
   }
@@ -14759,6 +14760,11 @@ let CS77_FILTER_LOW_REP = 20;
         communityAboutSection("Rules", `<div class="post-body">${HiveMd.renderMarkdown(rules)}</div>`)
       );
     }
+    if (tags.length) {
+      sections.push(
+        communityAboutSection("Preferred spaces", `<div class="tags">${tags.map(tagChipHtml).join("")}</div>`)
+      );
+    }
     if (language) {
       sections.push(
         communityAboutSection(
@@ -14778,11 +14784,6 @@ let CS77_FILTER_LOW_REP = 20;
           "Beneficiary",
           `<table class="community-about-beneficiary"><tbody><tr><td><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a></td><td>${reward}</td></tr></tbody></table>${shareNote}`
         )
-      );
-    }
-    if (tags.length) {
-      sections.push(
-        communityAboutSection("Preferred spaces", `<div class="tags">${tags.map(tagChipHtml).join("")}</div>`)
       );
     }
     if (!sections.length) {
@@ -15277,10 +15278,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {};
   }
 
-  function communityPreferredTags(metadata, settings) {
-    const profile = metadata && metadata.profile;
-    let raw = profile && profile.preferred_tags;
-    if (!Array.isArray(raw)) raw = settings && settings.preferred_tags;
+  function communityCollectTags(raw) {
     if (!Array.isArray(raw)) return [];
     const out = [];
     raw.forEach((item) => {
@@ -15289,6 +15287,24 @@ let CS77_FILTER_LOW_REP = 20;
       out.push(tag);
     });
     return out;
+  }
+
+  function communityPreferredTags(metadata, settings) {
+    const profile = metadata && metadata.profile;
+    let raw = profile && profile.preferred_tags;
+    if (!Array.isArray(raw)) raw = settings && settings.preferred_tags;
+    return communityCollectTags(raw);
+  }
+
+  // About shows the subspace's own preferred spaces, then hivemind's copy,
+  // then PeakD's profile.topics when neither of those is set.
+  function communityAboutTags(metadata, settings) {
+    const profile = metadata && metadata.profile;
+    const own = profile && profile.preferred_tags;
+    if (Array.isArray(own)) return communityCollectTags(own);
+    const stored = settings && settings.preferred_tags;
+    if (Array.isArray(stored)) return communityCollectTags(stored);
+    return communityCollectTags(profile && profile.topics);
   }
 
   function communityBeneficiaryFields(metadata) {
