@@ -10127,7 +10127,7 @@ let CS77_FILTER_LOW_REP = 20;
             <select id="subspaceCreateType" name="type_id">${communityTypeOptionsHtml(typeId)}</select>
             <p class="settings-note" id="subspaceCreateTypeNote">${esc(communityTypeNote(typeId))}</p>
           </div>
-          <div class="settings-field">
+          <div class="settings-field subspace-account-start">
             <label class="settings-label" for="subspaceCreateName">Subspace username (owner)</label>
             <div class="subspace-key-line">
               <input id="subspaceCreateName" name="username" type="text" maxlength="16" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="subspaceCreateNameNote" value="${esc(subspaceOwnerName(typeId, digits))}">
@@ -10136,7 +10136,7 @@ let CS77_FILTER_LOW_REP = 20;
             <p class="settings-note" id="subspaceCreateNameNote">hive-${typeId}xxxxx. The first digit is the subspace type. The username must be free.</p>
             <p class="settings-note subspace-name-status" id="subspaceCreateNameStatus"></p>
           </div>
-          <div class="settings-field">
+          <div class="settings-field subspace-account-end">
             <label class="settings-label" for="subspaceCreateKey">Master key</label>
             <div class="subspace-key-line">
               <input id="subspaceCreateKey" type="text" readonly spellcheck="false" autocomplete="off" autocapitalize="off" value="${esc(subspaceCreateDraft.password)}">

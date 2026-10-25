@@ -6838,6 +6838,14 @@ min-height: 0;
   text-shadow: var(--glow-yellow);
 }
 
+.subspace-create .subspace-account-start {
+  padding-top: 1.35rem;
+}
+
+.subspace-create .subspace-account-end {
+  margin-bottom: 2.85rem;
+}
+
 .subspace-key-line {
   display: flex;
   align-items: center;
