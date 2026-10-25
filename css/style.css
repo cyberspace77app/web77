@@ -3672,6 +3672,12 @@ a.tag:hover {
   user-select: none;
 }
 
+.profile-more-btn:hover,
+.profile-more.is-open .profile-more-btn {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
 .profile-more-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
