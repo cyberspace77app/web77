@@ -161,9 +161,9 @@
     return hiveTxPromise;
   }
 
-  function postingPubs(account) {
-    const auths =
-      (account && account.posting && account.posting.key_auths) || [];
+  function authorityPubs(account, role) {
+    const auth = account && account[role];
+    const auths = (auth && auth.key_auths) || [];
     const out = [];
     for (let i = 0; i < auths.length; i++) {
       const row = auths[i];
@@ -171,6 +171,17 @@
       if (pub) out.push(String(pub));
     }
     return out;
+  }
+
+  function postingPubs(account) {
+    return authorityPubs(account, "posting");
+  }
+
+  function accountName(username) {
+    return String(username || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
   }
 
   function requireSession(username) {
@@ -201,10 +212,7 @@
   }
 
   async function checkedPostingKey(username, wif) {
-    const name = String(username || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(username);
     const secret = String(wif || "").replace(/\s+/g, "");
     if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
       throw new Error("Enter a valid Hive username.");
@@ -340,6 +348,75 @@
     }
   }
 
+  async function openWif(wif) {
+    const secret = String(wif || "").replace(/\s+/g, "");
+    if (!secret) throw new Error("Enter a key.");
+    const lib = await loadHiveTx();
+    let pk;
+    try {
+      pk = lib.PrivateKey.from(secret);
+    } catch {
+      throw new Error("That key is not valid.");
+    }
+    const pub = pk.createPublic().toString();
+    const bytes = pk.key.slice();
+    wipe(pk.key);
+    return { pub, bytes };
+  }
+
+  // One signature. The active key is checked, used, and discarded.
+  async function broadcastActiveKey(username, wif, operations) {
+    const name = accountName(username);
+    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+      throw new Error("Enter a valid Hive username.");
+    }
+    const opened = await openWif(wif);
+    try {
+      const accounts = await HiveApi.getAccounts([name]);
+      const account = accounts && accounts[0];
+      if (!account || accountName(account.name) !== name) {
+        throw new Error("Unknown Hive account @" + name + ".");
+      }
+      if (authorityPubs(account, "active").indexOf(opened.pub) < 0) {
+        throw new Error("This active key does not match @" + name + ".");
+      }
+      return await broadcastKeyBytes(opened.bytes, operations);
+    } finally {
+      wipe(opened.bytes);
+    }
+  }
+
+  // Sign with a key this page derived. The caller discards the WIF.
+  async function broadcastWif(wif, operations) {
+    const opened = await openWif(wif);
+    try {
+      return await broadcastKeyBytes(opened.bytes, operations);
+    } finally {
+      wipe(opened.bytes);
+    }
+  }
+
+  // Hive master-password derivation: sha256(username + role + password).
+  async function keysFromLogin(username, password) {
+    const name = accountName(username);
+    const pass = String(password || "");
+    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+      throw new Error("Enter a valid Hive username.");
+    }
+    if (!pass) throw new Error("Missing master key.");
+    const lib = await loadHiveTx();
+    const roles = ["owner", "active", "posting", "memo"];
+    const out = {};
+    for (let i = 0; i < roles.length; i++) {
+      const role = roles[i];
+      const pk = lib.PrivateKey.fromLogin(name, pass, role);
+      out[role] = pk.toString();
+      out[role + "Pub"] = pk.createPublic().toString();
+      wipe(pk.key);
+    }
+    return out;
+  }
+
   global.HiveAuth = {
     ready,
     login,
@@ -351,5 +428,8 @@
     signBytes,
     broadcast,
     broadcastWithKey,
+    broadcastActiveKey,
+    broadcastWif,
+    keysFromLogin,
   };
 })(window);

@@ -231,7 +231,7 @@ function cs77_route(string $pathname): array
         }
         if (count($parts) === 2) {
             $page = strtolower($parts[1]);
-            if ($page === "search" || $page === "browse" || $page === "newest") {
+            if ($page === "search" || $page === "browse" || $page === "newest" || $page === "create") {
                 $route["name"] = "communities";
                 $route["page"] = $page;
                 return $route;
@@ -957,7 +957,9 @@ function cs77_page(array $route): array
     } elseif ($name === "tags") {
         $title = "Spaces — CyberSpace77";
     } elseif ($name === "communities") {
-        $title = "Subspaces — CyberSpace77";
+        $title = ($route["page"] ?? "") === "create"
+            ? "Create subspace — CyberSpace77"
+            : "Subspaces — CyberSpace77";
     } elseif ($name === "welcome") {
         $title = "CyberSpace77";
     } elseif ($name === "about") {

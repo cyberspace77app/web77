@@ -209,6 +209,16 @@ let CS77_FILTER_LOW_REP = 20;
     browseLoading: false,
     browseError: "",
   };
+  const subspaceCreateDraft = {
+    title: "",
+    about: "",
+    typeId: 1,
+    digits: "",
+    password: "",
+    created: "",
+  };
+  let subspaceCreateBusy = false;
+  let subspaceNameCheck = 0;
   const profileState = {
     author: "",
     page: "posts",
@@ -3564,6 +3574,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "browse") return "browse";
     if (page === "newest") return "newest";
     if (page === "search") return "search";
+    if (page === "create") return "create";
     return "";
   }
 
@@ -3571,6 +3582,7 @@ let CS77_FILTER_LOW_REP = 20;
     const p = normalizeSubspacesPage(page);
     if (p === "browse") return "/subspaces/browse";
     if (p === "newest") return "/subspaces/newest";
+    if (p === "create") return "/subspaces/create";
     return "/subspaces";
   }
 
@@ -3797,7 +3809,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "settings") return "settings:" + (r.page || "general");
     if (r.name === "search") return "search:" + (r.page || "users");
     if (r.name === "communities") {
-      const page = r.page === "browse" || r.page === "newest" ? r.page : "search";
+      const page =
+        r.page === "browse" || r.page === "newest" || r.page === "create" ? r.page : "search";
       return "communities:" + page;
     }
     return r.name || "";
@@ -5219,6 +5232,7 @@ let CS77_FILTER_LOW_REP = 20;
     resetAccountState();
     clearSettingsProfileScratch();
     clearCommunityEditScratch();
+    clearSubspaceCreateDraft();
     renderSession();
     currentViewKey = "";
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
@@ -9290,7 +9304,7 @@ let CS77_FILTER_LOW_REP = 20;
   function subspacesPageName() {
     const r = parseRoute();
     if (r.name !== "communities") return "";
-    if (r.page === "browse" || r.page === "newest") return r.page;
+    if (r.page === "browse" || r.page === "newest" || r.page === "create") return r.page;
     return "search";
   }
 
@@ -9621,10 +9635,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function subspacesShellHtml(tab) {
-    const page = tab === "browse" || tab === "newest" ? tab : "search";
+    const page = tab === "browse" || tab === "newest" || tab === "create" ? tab : "search";
     const searchHref = HiveMd.escapeHtml(appHref(pathForSubspaces("search")));
     const browseHref = HiveMd.escapeHtml(appHref(pathForSubspaces("browse")));
     const newestHref = HiveMd.escapeHtml(appHref(pathForSubspaces("newest")));
+    const createHref = HiveMd.escapeHtml(appHref(pathForSubspaces("create")));
     return `
       <section class="cs77-page communities-page">
         <h2 class="page-title">Subspaces</h2>
@@ -9632,6 +9647,7 @@ let CS77_FILTER_LOW_REP = 20;
           <a href="${searchHref}" class="${page === "search" ? "is-active" : ""}">Search</a>
           <a href="${browseHref}" class="${page === "browse" ? "is-active" : ""}">Browse</a>
           <a href="${newestHref}" class="${page === "newest" ? "is-active" : ""}">Newest</a>
+          <a href="${createHref}" class="${page === "create" ? "is-active" : ""}">Create...</a>
         </nav>
         <div id="subspacesPanel"></div>
       </section>
@@ -9782,15 +9798,673 @@ let CS77_FILTER_LOW_REP = 20;
     maybeLoadMoreBrowse();
   }
 
+  function clearSubspaceCreateDraft() {
+    subspaceCreateDraft.title = "";
+    subspaceCreateDraft.about = "";
+    subspaceCreateDraft.typeId = 1;
+    subspaceCreateDraft.digits = "";
+    subspaceCreateDraft.password = "";
+    subspaceCreateDraft.created = "";
+    subspaceCreateBusy = false;
+    subspaceNameCheck += 1;
+  }
+
+  function rememberSubspaceCreateDraft() {
+    const title = $("#subspaceCreateTitle");
+    const about = $("#subspaceCreateAbout");
+    const type = $("#subspaceCreateType");
+    const name = $("#subspaceCreateName");
+    const key = $("#subspaceCreateKey");
+    if (title) subspaceCreateDraft.title = title.value;
+    if (about) subspaceCreateDraft.about = about.value;
+    if (type) subspaceCreateDraft.typeId = communityTypeId(type.value) || 1;
+    if (name) subspaceCreateDraft.digits = subspaceOwnerDigits(name.value);
+    if (key && key.value) subspaceCreateDraft.password = key.value;
+  }
+
+  function subspaceCreateStill(gen) {
+    return communityDirState.gen === gen && subspacesPageName() === "create" && Boolean($("#subspaceCreateForm"));
+  }
+
+  function setSubspaceCreateStatus(message, isError) {
+    const el = $("#subspaceCreateStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function paintSubspaceCreateLock() {
+    const busy = subspaceCreateBusy;
+    const fixedName = Boolean(subspaceCreateDraft.created);
+    const title = $("#subspaceCreateTitle");
+    const about = $("#subspaceCreateAbout");
+    const type = $("#subspaceCreateType");
+    const name = $("#subspaceCreateName");
+    const saved = $("#subspaceCreateSaved");
+    const submit = $("#subspaceCreateSubmit");
+    if (title) title.disabled = busy;
+    if (about) about.disabled = busy;
+    if (type) type.disabled = busy || fixedName;
+    if (name) name.disabled = busy || fixedName;
+    if (saved) saved.disabled = busy;
+    if (submit) submit.disabled = busy;
+  }
+
+  function subspaceOwnerName(typeId, digits) {
+    return "hive-" + String(typeId) + String(digits || "");
+  }
+
+  function subspaceOwnerDigits(value) {
+    const raw = String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/^@/, "");
+    const rest = raw.startsWith("hive-") ? raw.slice(5) : raw.replace(/^hive-?/, "");
+    const digits = rest.replace(/\D/g, "");
+    if (!digits) return "";
+    if (raw.startsWith("hive-") || digits.length > 5) return digits.slice(1, 6);
+    return digits.slice(0, 5);
+  }
+
+  function subspaceNameOk(name, typeId) {
+    return new RegExp("^hive-" + String(typeId) + "\\d{5}$").test(name);
+  }
+
+  function randomSubspaceDigits() {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return String(buf[0] % 100000).padStart(5, "0");
+  }
+
+  const SUBSPACE_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+  function subspaceBase58(source) {
+    if (!source || !source.length) return "";
+    let zeroes = 0;
+    let pbegin = 0;
+    while (pbegin < source.length && source[pbegin] === 0) {
+      zeroes += 1;
+      pbegin += 1;
+    }
+    const size = (((source.length - pbegin) * 138) / 100 + 1) | 0;
+    const b58 = new Uint8Array(size);
+    let length = 0;
+    for (let i = pbegin; i < source.length; i++) {
+      let carry = source[i];
+      let j = 0;
+      for (let it = size - 1; (carry !== 0 || j < length) && it >= 0; it--, j++) {
+        carry += 256 * b58[it];
+        b58[it] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      length = j;
+    }
+    let it = size - length;
+    while (it < size && b58[it] === 0) it += 1;
+    let str = "1".repeat(zeroes);
+    for (; it < size; it++) str += SUBSPACE_B58.charAt(b58[it]);
+    return str;
+  }
+
+  function randomSubspaceMasterKey() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    return "P" + subspaceBase58(bytes);
+  }
+
+  function formatHiveFee(raw) {
+    if (raw == null) return "";
+    if (typeof raw === "string") {
+      const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s+([A-Za-z]+)$/);
+      if (!match) return "";
+      const amount = Number(match[1]);
+      if (!Number.isFinite(amount) || amount < 0) return "";
+      return amount.toFixed(3) + " " + match[2].toUpperCase();
+    }
+    if (typeof raw === "object") {
+      const amount = Number(raw.amount);
+      const precision = Number(raw.precision);
+      const places = Number.isFinite(precision) ? precision : 3;
+      if (!Number.isFinite(amount) || amount < 0) return "";
+      return (amount / Math.pow(10, places)).toFixed(3) + " HIVE";
+    }
+    return "";
+  }
+
+  function subspaceClaimedTokens(account) {
+    const n = Number(account && account.pending_claimed_accounts);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  function subspaceFeeWords(text) {
+    return String(text || "").replace(/\bHIVE\b/g, "hive");
+  }
+
+  function subspaceFeeLine(fee, account) {
+    const user = observer();
+    if (!user) {
+      return fee ? subspaceFeeWords("Account creation fee: " + fee + ".") : "Could not load the account creation fee.";
+    }
+    const tokens = subspaceClaimedTokens(account);
+    if (tokens > 0) {
+      const noun = tokens === 1 ? "account creation token" : "account creation tokens";
+      const usual = fee ? " The usual fee is " + fee + "." : "";
+      return subspaceFeeWords("You have " + tokens + " " + noun + ". This creation uses one token instead of paying that fee." + usual);
+    }
+    if (!fee) return "Could not load the account creation fee.";
+    let line = "Account creation fee: " + fee + ".";
+    const balance = account ? HiveApi.parseAsset(account.balance) : NaN;
+    const cost = HiveApi.parseAsset(fee);
+    if (account && Number.isFinite(balance) && Number.isFinite(cost) && balance < cost) {
+      const held = String(account.balance || "").trim();
+      if (held) line += " This account has " + held + ".";
+    }
+    return subspaceFeeWords(line);
+  }
+
+  function paintSubspaceNameStatus(kind, text) {
+    const el = $("#subspaceCreateNameStatus");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("is-ok", kind === "ok");
+    el.classList.toggle("is-bad", kind === "taken" || kind === "invalid" || kind === "error");
+  }
+
+  function paintSubspaceCreateType() {
+    const typeId = communityTypeId(($("#subspaceCreateType") || {}).value) || 1;
+    const input = $("#subspaceCreateName");
+    const note = $("#subspaceCreateTypeNote");
+    const nameNote = $("#subspaceCreateNameNote");
+    if (input && !input.disabled) {
+      const name = subspaceOwnerName(typeId, subspaceOwnerDigits(input.value));
+      if (input.value !== name) input.value = name;
+    }
+    if (note) note.textContent = communityTypeNote(typeId);
+    if (nameNote) {
+      nameNote.textContent =
+        "hive-" + typeId + "xxxxx. The first digit is the subspace type. The username must be free.";
+    }
+    return typeId;
+  }
+
+  async function hiveAccountRecord(name) {
+    const rows = await HiveApi.getAccounts([name]);
+    const account = rows && rows[0];
+    if (!account || String(account.name || "").toLowerCase() !== name) return null;
+    return account;
+  }
+
+  async function checkSubspaceOwnerName() {
+    const token = (subspaceNameCheck += 1);
+    const typeId = paintSubspaceCreateType();
+    const input = $("#subspaceCreateName");
+    const digits = subspaceOwnerDigits(input && input.value);
+    const name = subspaceOwnerName(typeId, digits);
+    if (input && !input.disabled && input.value !== name) input.value = name;
+    subspaceCreateDraft.digits = digits;
+    subspaceCreateDraft.typeId = typeId;
+    if (!subspaceNameOk(name, typeId)) {
+      paintSubspaceNameStatus("invalid", "Use a name like hive-" + typeId + "xxxxx.");
+      return { ok: false, name: "", taken: false };
+    }
+    paintSubspaceNameStatus("checking", "Checking whether that username is free…");
+    try {
+      const account = await hiveAccountRecord(name);
+      if (token !== subspaceNameCheck || subspacesPageName() !== "create") {
+        return { ok: false, name: name, taken: false, stale: true };
+      }
+      if (account && subspaceCreateDraft.created === name) {
+        paintSubspaceNameStatus("ok", name + " is created. Press Create to finish setting it up.");
+        return { ok: true, name: name, taken: false };
+      }
+      if (account) {
+        paintSubspaceNameStatus("taken", name + " is already taken.");
+        return { ok: false, name: name, taken: true };
+      }
+      paintSubspaceNameStatus("ok", name + " is available.");
+      return { ok: true, name: name, taken: false };
+    } catch (err) {
+      if (token !== subspaceNameCheck || subspacesPageName() !== "create") {
+        return { ok: false, name: name, taken: false, stale: true };
+      }
+      paintSubspaceNameStatus("error", (err && err.message) || "Could not check that username.");
+      return { ok: false, name: name, taken: false };
+    }
+  }
+
+  function scheduleSubspaceNameCheck() {
+    window.clearTimeout(scheduleSubspaceNameCheck.timer);
+    scheduleSubspaceNameCheck.timer = window.setTimeout(() => {
+      if (subspaceCreateBusy) return;
+      checkSubspaceOwnerName();
+    }, 400);
+  }
+
+  async function fillFreeSubspaceNumber(gen) {
+    const input = $("#subspaceCreateName");
+    if (!input) return;
+    if (/^\d{5}$/.test(subspaceOwnerDigits(input.value))) {
+      if (!subspaceCreateBusy) await checkSubspaceOwnerName();
+      return;
+    }
+    paintSubspaceNameStatus("checking", "Looking for a free username…");
+    for (let i = 0; i < 12; i++) {
+      if (subspaceCreateBusy || !subspaceCreateStill(gen)) return;
+      if (subspaceOwnerDigits(input.value)) {
+        await checkSubspaceOwnerName();
+        return;
+      }
+      const typeId = communityTypeId(($("#subspaceCreateType") || {}).value) || 1;
+      const digits = randomSubspaceDigits();
+      const name = subspaceOwnerName(typeId, digits);
+      let record = null;
+      try {
+        record = await hiveAccountRecord(name);
+      } catch {
+        if (subspaceCreateBusy || !subspaceCreateStill(gen)) return;
+        continue;
+      }
+      if (subspaceCreateBusy || !subspaceCreateStill(gen)) return;
+      if (subspaceOwnerDigits(input.value)) {
+        await checkSubspaceOwnerName();
+        return;
+      }
+      if (!record) {
+        input.value = name;
+        subspaceCreateDraft.digits = digits;
+        await checkSubspaceOwnerName();
+        return;
+      }
+    }
+    if (subspaceCreateBusy || !subspaceCreateStill(gen) || subspaceOwnerDigits(input.value)) return;
+    const typeId = communityTypeId(($("#subspaceCreateType") || {}).value) || 1;
+    input.value = subspaceOwnerName(typeId, randomSubspaceDigits());
+    await checkSubspaceOwnerName();
+  }
+
+  async function loadSubspaceCreateFee(gen) {
+    const el = $("#subspaceCreateFee");
+    if (el) el.textContent = "Checking the account creation fee…";
+    let fee = "";
+    let account = null;
+    try {
+      const props = await HiveApi.hiveRpc("condenser_api.get_chain_properties", []);
+      fee = formatHiveFee(props && props.account_creation_fee);
+    } catch {
+      fee = "";
+    }
+    const user = normalizeLoginUser(observer());
+    if (user) {
+      try {
+        account = await hiveAccountRecord(user);
+      } catch {
+        account = null;
+      }
+    }
+    if (!subspaceCreateStill(gen)) return;
+    const node = $("#subspaceCreateFee");
+    if (node) node.textContent = subspaceFeeLine(fee, account);
+  }
+
+  function subspaceCreateHtml() {
+    const esc = HiveMd.escapeHtml;
+    const typeId = communityTypeId(subspaceCreateDraft.typeId) || 1;
+    const digits = /^\d{5}$/.test(subspaceCreateDraft.digits) ? subspaceCreateDraft.digits : "";
+    if (!subspaceCreateDraft.password) subspaceCreateDraft.password = randomSubspaceMasterKey();
+    return `
+      <form class="settings-form" id="subspaceCreateForm" autocomplete="off" novalidate>
+        <div class="community-panel subspace-create">
+          <h2 class="settings-section-title">Create new subspace</h2>
+          <div class="settings-field">
+            <label class="settings-label" for="subspaceCreateTitle">Title</label>
+            <input id="subspaceCreateTitle" name="title" type="text" maxlength="20" autocomplete="off" spellcheck="false" value="${esc(subspaceCreateDraft.title || "")}">
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="subspaceCreateAbout">About</label>
+            <textarea id="subspaceCreateAbout" class="settings-about" name="about" rows="3" maxlength="120">${esc(subspaceCreateDraft.about || "")}</textarea>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="subspaceCreateType">Subspace type</label>
+            <select id="subspaceCreateType" name="type_id">${communityTypeOptionsHtml(typeId)}</select>
+            <p class="settings-note" id="subspaceCreateTypeNote">${esc(communityTypeNote(typeId))}</p>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="subspaceCreateName">Subspace username (owner)</label>
+            <div class="subspace-key-line">
+              <input id="subspaceCreateName" name="username" type="text" maxlength="16" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="subspaceCreateNameNote" value="${esc(subspaceOwnerName(typeId, digits))}">
+              <button type="button" class="btn-ghost btn-compact" id="subspaceCreateNameCopy" aria-label="Copy username">Copy</button>
+            </div>
+            <p class="settings-note" id="subspaceCreateNameNote">hive-${typeId}xxxxx. The first digit is the subspace type. The username must be free.</p>
+            <p class="settings-note subspace-name-status" id="subspaceCreateNameStatus"></p>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="subspaceCreateKey">Master key</label>
+            <div class="subspace-key-line">
+              <input id="subspaceCreateKey" type="text" readonly spellcheck="false" autocomplete="off" autocapitalize="off" value="${esc(subspaceCreateDraft.password)}">
+              <button type="button" class="btn-ghost btn-compact" id="subspaceCreateCopy" aria-label="Copy master key">Copy</button>
+            </div>
+            <p class="settings-note">Owner password for this account. CyberSpace77 does not store it.</p>
+          </div>
+          <div class="settings-field">
+            <label class="cyber-toggle">
+              <input id="subspaceCreateSaved" type="checkbox">
+              <span class="cyber-toggle-track" aria-hidden="true"></span>
+              <span class="cyber-toggle-copy">
+                <span class="cyber-toggle-title">Backup confirmation</span>
+                <span class="cyber-toggle-sub">I have securely saved the owner username and password.</span>
+              </span>
+            </label>
+          </div>
+          <p class="settings-note" id="subspaceCreateFee">Checking the account creation fee…</p>
+          <div class="settings-actions">
+            <button type="submit" class="btn-primary" id="subspaceCreateSubmit">Create</button>
+          </div>
+          <p class="settings-status" id="subspaceCreateStatus"></p>
+        </div>
+      </form>
+    `;
+  }
+
+  function subspaceAuthority(pub) {
+    return {
+      weight_threshold: 1,
+      account_auths: [],
+      key_auths: [[pub, 1]],
+    };
+  }
+
+  function subspaceCreateOperation(creator, name, keys, choice) {
+    const body = {
+      creator: creator,
+      new_account_name: name,
+      owner: subspaceAuthority(keys.ownerPub),
+      active: subspaceAuthority(keys.activePub),
+      posting: subspaceAuthority(keys.postingPub),
+      memo_key: keys.memoPub,
+      json_metadata: "",
+    };
+    if (choice.mode === "token") {
+      body.extensions = [];
+      return ["create_claimed_account", body];
+    }
+    return ["account_create", Object.assign({ fee: choice.fee }, body)];
+  }
+
+  function subspaceSetupOperations(name, admin, title, about, typeId) {
+    return [
+      communityCustomOp(name, "setRole", {
+        community: name,
+        account: admin,
+        role: "admin",
+      }),
+      communityCustomOp(name, "updateProps", {
+        community: name,
+        props: {
+          title: title,
+          about: about,
+          lang: "en",
+          is_nsfw: false,
+          description: "",
+          flag_text: "",
+          type_id: typeId,
+        },
+      }),
+    ];
+  }
+
+  function subspaceWait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function subspaceCreationChoice(user) {
+    let fee = "";
+    try {
+      const props = await HiveApi.hiveRpc("condenser_api.get_chain_properties", []);
+      fee = formatHiveFee(props && props.account_creation_fee);
+    } catch {
+      fee = "";
+    }
+    const account = await hiveAccountRecord(user);
+    if (!account) throw new Error("Could not load @" + user + ".");
+    if (subspaceClaimedTokens(account) > 0) return { mode: "token", fee: fee, account: account };
+    if (!fee) throw new Error("Could not load the account creation fee.");
+    return { mode: "fee", fee: fee, account: account };
+  }
+
+  async function waitForSubspaceAccount(name) {
+    let last = null;
+    for (let i = 0; i < 20; i++) {
+      try {
+        last = await hiveAccountRecord(name);
+      } catch (err) {
+        last = null;
+        if (i === 19) throw err;
+      }
+      if (last) return last;
+      await subspaceWait(1500);
+    }
+    throw new Error("The subspace account was created, but the network has not shown it yet. Press Create to finish setting it up.");
+  }
+
+  async function copySubspaceMasterKey(input, button) {
+    if (!input || !button) return;
+    const value = String(input.value || "");
+    if (!value) return;
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied && input) {
+      input.focus();
+      input.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+    }
+    if (!button) return;
+    button.textContent = copied ? "Copied" : "Copy";
+    window.setTimeout(() => {
+      if (button.isConnected) button.textContent = "Copy";
+    }, 1600);
+  }
+
+  async function submitSubspaceCreate(event) {
+    if (event) event.preventDefault();
+    if (subspaceCreateBusy) return;
+    rememberSubspaceCreateDraft();
+    const title = String(($("#subspaceCreateTitle") || {}).value || "").trim();
+    const about = String(($("#subspaceCreateAbout") || {}).value || "").trim();
+    const typeId = communityTypeId(($("#subspaceCreateType") || {}).value);
+    const digits = subspaceOwnerDigits(($("#subspaceCreateName") || {}).value);
+    const password = String(($("#subspaceCreateKey") || {}).value || "");
+    const saved = Boolean(($("#subspaceCreateSaved") || {}).checked);
+    const name = subspaceOwnerName(typeId, digits);
+    if (title.length < 3 || title.length > 20) {
+      setSubspaceCreateStatus("Title must be 3 to 20 characters.", true);
+      return;
+    }
+    if (title[0] === "@" || title[0] === "#") {
+      setSubspaceCreateStatus("Title cannot start with @ or #.", true);
+      return;
+    }
+    if (about.length > 120) {
+      setSubspaceCreateStatus("About must be 120 characters or less.", true);
+      return;
+    }
+    if (!typeId) {
+      setSubspaceCreateStatus("Choose a subspace type.", true);
+      return;
+    }
+    if (!subspaceNameOk(name, typeId)) {
+      setSubspaceCreateStatus("The subspace owner username must look like hive-" + typeId + "xxxxx.", true);
+      return;
+    }
+    if (!password) {
+      setSubspaceCreateStatus("The master key is missing. Reload this page.", true);
+      return;
+    }
+    if (!saved) {
+      setSubspaceCreateStatus("Confirm that you have securely saved the subspace owner username and password.", true);
+      return;
+    }
+    const user = normalizeLoginUser(observer());
+    if (!user) {
+      setSubspaceCreateStatus("", false);
+      openLogin();
+      return;
+    }
+    const created = subspaceCreateDraft.created;
+    if (created && created !== name) {
+      setSubspaceCreateStatus("The account " + created + " was already created. Set that username again to finish setting it up.", true);
+      return;
+    }
+    window.clearTimeout(scheduleSubspaceNameCheck.timer);
+    subspaceCreateBusy = true;
+    paintSubspaceCreateLock();
+    setSubspaceCreateStatus("Checking that username…", false);
+    let keys = null;
+    try {
+      const checked = await checkSubspaceOwnerName();
+      if (checked.stale) {
+        if (subspacesPageName() === "create") {
+          setSubspaceCreateStatus("Could not check that username. Try again.", true);
+        }
+        return;
+      }
+      if (!checked.ok || checked.name !== name) {
+        setSubspaceCreateStatus(
+          checked.taken ? name + " is already taken." : "Choose a username that is still available.",
+          true
+        );
+        return;
+      }
+      if (!window.HiveAuth || typeof HiveAuth.keysFromLogin !== "function" || typeof HiveAuth.broadcastWif !== "function") {
+        throw new Error("Could not prepare the subspace keys.");
+      }
+      keys = await HiveAuth.keysFromLogin(name, password);
+      if (created !== name) {
+        const choice = await subspaceCreationChoice(user);
+        const operation = subspaceCreateOperation(user, name, keys, choice);
+        const feeNote = choice.mode === "token" ? "Uses one account creation token." : "Fee " + subspaceFeeWords(choice.fee) + ".";
+        if ($("#subspaceCreateFee")) {
+          $("#subspaceCreateFee").textContent = subspaceFeeLine(choice.fee, choice.account);
+        }
+        setSubspaceCreateStatus("Creating the subspace account…", false);
+        await signCommunityOwnerOps(user, [operation], {
+          source: "create",
+          authority: "Active",
+          title: "Create subspace",
+          lead: "Use Hive Keychain (recommended) or enter the active key of @" + user + ". " + feeNote,
+          cancelMessage: "Creation was cancelled.",
+          failMessage: "Could not create the subspace account.",
+        });
+        subspaceCreateDraft.created = name;
+        paintSubspaceCreateLock();
+      }
+      setSubspaceCreateStatus("Waiting for the new account…", false);
+      await waitForSubspaceAccount(name);
+      setSubspaceCreateStatus("Setting up the subspace…", false);
+      await HiveAuth.broadcastWif(
+        keys.posting,
+        subspaceSetupOperations(name, user, title, about, typeId)
+      );
+      setSubspaceCreateStatus("Opening the subspace…", false);
+      for (let i = 0; i < 12; i++) {
+        try {
+          const info = await HiveApi.getCommunity(name, user);
+          if (info && info.name) break;
+        } catch {
+          /* Hivemind may still be indexing the new subspace. */
+        }
+        await subspaceWait(2000);
+      }
+      clearSubspaceCreateDraft();
+      navigate(communityHref(name));
+    } catch (err) {
+      const cancelled = Boolean(err && err.ownerCancel);
+      const detail = (err && err.message) || "Could not create this subspace.";
+      if (subspaceCreateDraft.created === name) {
+        setSubspaceCreateStatus(
+          "The subspace account " + name + " was created. Setting it up did not finish. " + detail + " Press Create to try the setup again.",
+          true
+        );
+      } else {
+        setSubspaceCreateStatus(cancelled ? "Creation was cancelled." : detail, !cancelled);
+      }
+    } finally {
+      if (keys) {
+        keys.owner = "";
+        keys.active = "";
+        keys.posting = "";
+        keys.memo = "";
+      }
+      keys = null;
+      subspaceCreateBusy = false;
+      paintSubspaceCreateLock();
+    }
+  }
+
+  function bindSubspaceCreate(gen) {
+    paintSubspaceCreateType();
+    paintSubspaceCreateLock();
+    const form = $("#subspaceCreateForm");
+    const type = $("#subspaceCreateType");
+    const name = $("#subspaceCreateName");
+    const nameCopy = $("#subspaceCreateNameCopy");
+    const copy = $("#subspaceCreateCopy");
+    const title = $("#subspaceCreateTitle");
+    const about = $("#subspaceCreateAbout");
+    if (form) form.addEventListener("submit", submitSubspaceCreate);
+    if (type) {
+      type.addEventListener("change", () => {
+        rememberSubspaceCreateDraft();
+        paintSubspaceCreateType();
+        scheduleSubspaceNameCheck();
+      });
+    }
+    if (name) {
+      name.addEventListener("input", () => {
+        const typeId = communityTypeId((type && type.value) || 1) || 1;
+        const next = subspaceOwnerName(typeId, subspaceOwnerDigits(name.value));
+        if (name.value !== next) {
+          name.value = next;
+          if (name.setSelectionRange) name.setSelectionRange(next.length, next.length);
+        }
+        rememberSubspaceCreateDraft();
+        scheduleSubspaceNameCheck();
+      });
+    }
+    if (title) title.addEventListener("input", rememberSubspaceCreateDraft);
+    if (about) about.addEventListener("input", rememberSubspaceCreateDraft);
+    if (nameCopy) {
+      nameCopy.addEventListener("click", () => copySubspaceMasterKey(name, nameCopy));
+    }
+    if (copy) copy.addEventListener("click", () => copySubspaceMasterKey($("#subspaceCreateKey"), copy));
+    if (title && !isMobileViewport()) title.focus();
+    loadSubspaceCreateFee(gen);
+    fillFreeSubspaceNumber(gen);
+  }
+
   async function renderCommunitiesPage(page) {
-    const tab = page === "browse" || page === "newest" ? page : "search";
-    setPageMeta("Subspaces — CyberSpace77");
+    const tab = page === "browse" || page === "newest" || page === "create" ? page : "search";
+    setPageMeta(tab === "create" ? "Create subspace — CyberSpace77" : "Subspaces — CyberSpace77");
     communityDirState.gen += 1;
     const gen = communityDirState.gen;
     resetCommunityDirectory();
     view.innerHTML = subspacesShellHtml(tab);
     const host = $("#subspacesPanel");
     if (!host) return;
+    if (tab === "create") {
+      host.innerHTML = subspaceCreateHtml();
+      bindSubspaceCreate(gen);
+      return;
+    }
     if (tab === "browse" || tab === "newest") {
       host.innerHTML = subspacesBrowseHtml(tab);
       await loadMoreBrowseCommunities();
@@ -16188,11 +16862,38 @@ let CS77_FILTER_LOW_REP = 20;
     status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
   }
 
-  function restoreOwnerSignCopy() {
+  function ownerSignAuthority(opts) {
+    return opts && opts.authority === "Active" ? "Active" : "Posting";
+  }
+
+  function applyOwnerSignChrome(opts) {
+    const authority = ownerSignAuthority(opts);
     const title = $("#ownerSignTitle");
     const lead = $("#ownerSignLead");
-    if (title) title.textContent = "Sign owner settings";
-    if (lead) lead.textContent = "Use hive keychain (recommended) or enter the posting key of this subspace account.";
+    const label = $("#ownerSignKeyLabel");
+    const hint = $("#ownerSignHint");
+    const key = $("#ownerSignKey");
+    if (title) title.textContent = (opts && opts.title) || "Sign owner settings";
+    if (lead) {
+      lead.textContent =
+        (opts && opts.lead) ||
+        "Use hive keychain (recommended) or enter the posting key of this subspace account.";
+    }
+    if (label) {
+      const name = authority === "Active" ? "Active key" : "Posting key";
+      label.innerHTML = name + ' <span class="login-optional">optional</span>';
+    }
+    if (hint) {
+      hint.textContent =
+        authority === "Active"
+          ? "An active key entered here is used once and is not saved."
+          : "A posting key entered here is used once and is not saved.";
+    }
+    if (key) key.placeholder = authority === "Active" ? "active key" : "posting key";
+  }
+
+  function restoreOwnerSignCopy() {
+    applyOwnerSignChrome(null);
   }
 
   function hideOwnerSign() {
@@ -16220,13 +16921,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       hideOwnerSign();
       user.value = name;
-      const title = $("#ownerSignTitle");
-      const lead = $("#ownerSignLead");
-      if (title) title.textContent = opts.title || "Sign owner settings";
-      if (lead) {
-        lead.textContent =
-          opts.lead || "Use hive keychain (recommended) or enter the posting key of this subspace account.";
-      }
+      applyOwnerSignChrome(opts);
       el.hidden = false;
       // Desktop focus stays on the account so the subspace name is the emphasis.
       // Mobile leaves the inputs unfocused so the keyboard stays closed.
@@ -16237,6 +16932,7 @@ let CS77_FILTER_LOW_REP = 20;
         resolve,
         reject,
         source: opts.source || "",
+        authority: ownerSignAuthority(opts),
         failMessage: opts.failMessage || "",
         cancelMessage: opts.cancelMessage || "",
       };
@@ -16254,23 +16950,41 @@ let CS77_FILTER_LOW_REP = 20;
     ownerSignBusy = true;
     if (connect) connect.disabled = true;
     if (cancel) cancel.disabled = true;
+    const active = session.authority === "Active";
     try {
       if (wif) {
         setOwnerSignStatus("Signing…", false);
-        if (!window.HiveAuth || typeof HiveAuth.broadcastWithKey !== "function") {
-          throw new Error("Could not sign with that posting key.");
+        if (active) {
+          if (!window.HiveAuth || typeof HiveAuth.broadcastActiveKey !== "function") {
+            throw new Error("Could not sign with that active key.");
+          }
+          await HiveAuth.broadcastActiveKey(session.name, wif, session.operations);
+        } else {
+          if (!window.HiveAuth || typeof HiveAuth.broadcastWithKey !== "function") {
+            throw new Error("Could not sign with that posting key.");
+          }
+          await HiveAuth.broadcastWithKey(session.name, wif, session.operations);
         }
-        await HiveAuth.broadcastWithKey(session.name, wif, session.operations);
       } else if (!window.hive_keychain) {
-        setOwnerSignStatus("Enter the posting key. Hive Keychain is not available.", true);
+        setOwnerSignStatus(
+          active
+            ? "Enter the active key. Hive Keychain is not available."
+            : "Enter the posting key. Hive Keychain is not available.",
+          true
+        );
         return;
       } else {
         setOwnerSignStatus("Waiting for Keychain…", false);
         await new Promise((resolve, reject) => {
-          window.hive_keychain.requestBroadcast(session.name, session.operations, "Posting", (res) => {
-            if (res && res.success) resolve(res);
-            else reject(new Error((res && (res.message || res.error)) || "Broadcast was cancelled."));
-          });
+          window.hive_keychain.requestBroadcast(
+            session.name,
+            session.operations,
+            active ? "Active" : "Posting",
+            (res) => {
+              if (res && res.success) resolve(res);
+              else reject(new Error((res && (res.message || res.error)) || "Broadcast was cancelled."));
+            }
+          );
         });
       }
       const done = session;
@@ -18736,7 +19450,7 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (r.name === "tags") {
       setPageMeta("Spaces — CyberSpace77");
     } else if (r.name === "communities") {
-      setPageMeta("Subspaces — CyberSpace77");
+      setPageMeta(r.page === "create" ? "Create subspace — CyberSpace77" : "Subspaces — CyberSpace77");
     } else if (r.name === "welcome") {
       setPageMeta("CyberSpace77");
     } else if (r.name === "about") {

@@ -6838,6 +6838,37 @@ min-height: 0;
   text-shadow: var(--glow-yellow);
 }
 
+.subspace-key-line {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.55rem;
+}
+
+.settings-form .subspace-key-line input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  cursor: text;
+}
+
+.subspace-key-line .btn-compact {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.subspace-name-status.is-ok {
+  color: var(--yellow);
+}
+
+.subspace-name-status.is-bad {
+  color: var(--red-bright);
+}
+
+.subspace-name-status:empty {
+  display: none;
+}
+
 .cyber-toggle-sub {
   font-family: var(--font-mono);
   font-size: 0.68rem;
