@@ -123,7 +123,6 @@ let CS77_FILTER_LOW_REP = 20;
   let ownerSignSession = null;
   let ownerSignBusy = false;
   let communityMemberContext = null;
-  let communityMemberSeen = null;
   let communityRoleBusy = false;
   let communityRoleSession = null;
   let communityTitleSession = null;
@@ -14811,10 +14810,20 @@ let CS77_FILTER_LOW_REP = 20;
     const canChange = manage && communityCanChangeRole(viewerRole, viewer, name, role, community);
     const canTitle = manage && communityCanEditTitle(viewerRole, viewer, name, role, community);
     const canApprove = manage && section === "subscriber" && typeId === 3 && role === "guest";
-    const showActions = manage || Boolean(opts && opts.actionsColumn);
+    const showActions = section !== "subscriber" && (manage || Boolean(opts && opts.actionsColumn));
     const safeName = HiveMd.escapeHtml(name);
     const safeTitle = HiveMd.escapeHtml(title);
     const safeRole = HiveMd.escapeHtml(role);
+    // A subscription is not a role. The subscribers list is only the account,
+    // plus Approve when a council still needs a mod to accept that guest.
+    if (section === "subscriber") {
+      const approve = canApprove
+        ? `<button type="button" class="community-role-btn community-approve-btn" data-community-action="approve" data-account="${safeName}" data-title="${safeTitle}">Approve</button>`
+        : "";
+      return `<tr class="community-member" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}" data-section="subscriber">
+        <td class="community-member-who">${authorLinkHtml(name, "small")}${approve}</td>
+      </tr>`;
+    }
     const roleCell = canApprove
       ? `<button type="button" class="community-role-btn community-approve-btn" data-community-action="approve" data-account="${safeName}" data-title="${safeTitle}">Approve</button>`
       : role === "guest"
@@ -14839,7 +14848,7 @@ let CS77_FILTER_LOW_REP = 20;
           actions.length ? `<div class="community-member-actions-inner">${actions.join("")}</div>` : ""
         }</td>`
       : "";
-    return `<tr class="community-member" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}">
+    return `<tr class="community-member" data-account="${safeName}" data-role="${safeRole}" data-title="${safeTitle}" data-section="${HiveMd.escapeHtml(section)}">
         <td class="community-member-who">${authorLinkHtml(name, "small")}</td>
         <td class="community-member-title">${titleCell}</td>
         <td class="community-member-role">${roleCell}</td>
@@ -14849,16 +14858,20 @@ let CS77_FILTER_LOW_REP = 20;
 
   function communityTableHtml(bodyHtml, bodyId, withActions, kind) {
     const idAttr = bodyId ? ` id="${HiveMd.escapeHtml(bodyId)}"` : "";
+    const flow = kind === "flow";
     const actionsCol = withActions ? `<col class="community-col-actions">` : "";
-    const kindClass = kind === "team" ? " is-team" : "";
-    return `<div class="community-table-wrap">
-        <table class="community-table${withActions ? " has-actions" : ""}${kindClass}">
-          <colgroup>
+    const kindClass = kind === "team" ? " is-team" : flow ? " is-flow" : "";
+    const cols = flow
+      ? ""
+      : `<colgroup>
             <col class="community-col-who">
             <col class="community-col-title">
             <col class="community-col-role">
             ${actionsCol}
-          </colgroup>
+          </colgroup>`;
+    return `<div class="community-table-wrap">
+        <table class="community-table${withActions ? " has-actions" : ""}${kindClass}">
+          ${cols}
           <tbody${idAttr}>${bodyHtml || ""}</tbody>
         </table>
       </div>`;
@@ -16571,16 +16584,35 @@ let CS77_FILTER_LOW_REP = 20;
     ];
   }
 
-  function communityMemberSelector(account) {
+  function communityMemberSelector(account, section) {
     const name = normalizeLoginUser(account);
     if (!name) return "";
     const safe = window.CSS && CSS.escape ? CSS.escape(name) : name;
-    return 'tr.community-member[data-account="' + safe + '"]';
+    let sel = 'tr.community-member[data-account="' + safe + '"]';
+    if (section) {
+      const safeSection = window.CSS && CSS.escape ? CSS.escape(section) : section;
+      sel += '[data-section="' + safeSection + '"]';
+    }
+    return sel;
   }
 
-  function communityListedRole(account) {
+  function communityMemberRows(account) {
     const selector = communityMemberSelector(account);
-    const row = selector ? document.querySelector(selector) : null;
+    return selector ? Array.from(document.querySelectorAll(selector)) : [];
+  }
+
+  // A subscribed owner, admin, mod, or member has a role row and a subscriber row.
+  // Role lookups use the role row. Guest subscribers have only the subscriber row.
+  function communityListedRole(account) {
+    const rows = communityMemberRows(account);
+    let row = null;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute("data-section") !== "subscriber") {
+        row = rows[i];
+        break;
+      }
+      if (!row) row = rows[i];
+    }
     if (row) {
       return {
         role: communityNormalizeRole(row.getAttribute("data-role")),
@@ -16721,14 +16753,15 @@ let CS77_FILTER_LOW_REP = 20;
     const add = canAdd
       ? `<button type="button" class="btn-ghost btn-compact" data-community-add="${HiveMd.escapeHtml(role)}" aria-label="Add to ${HiveMd.escapeHtml(title)}">Add</button>`
       : "";
-    const kind = communitySectionIsTeam(section) ? "team" : "";
+    const flow = section === "subscriber";
+    const kind = flow ? "flow" : communitySectionIsTeam(section) ? "team" : "";
     return `<section class="community-people-section" id="${communityPeopleSectionDomId(section)}"${hidden}>
         <div class="community-people-head">
           <h2>${title}</h2>
           ${add}
         </div>
         ${note}
-        ${communityTableHtml(bodyHtml, communitySectionListId(section), Boolean(ctx && ctx.manage), kind)}
+        ${communityTableHtml(bodyHtml, communitySectionListId(section), Boolean(ctx && ctx.manage) && !flow, kind)}
         <div class="community-section-more">
           <div class="loading-row" data-community-loading="${section}" hidden><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
           <div class="feed-actions">
@@ -16739,34 +16772,62 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function placeCommunityMemberRow(name, html, listId) {
-    const selector = communityMemberSelector(name);
-    const existing = selector ? document.querySelector(selector) : null;
-    if (existing && (!existing.parentElement || existing.parentElement.id !== listId)) existing.remove();
     const list = listId ? $("#" + listId) : null;
-    const row = list && selector ? list.querySelector(selector) : null;
+    if (!list) return;
+    const selector = communityMemberSelector(name);
+    const row = selector ? list.querySelector(selector) : null;
     if (row) row.outerHTML = html;
-    else if (list) {
+    else {
       const empty = list.querySelector("tr.community-table-empty");
       if (empty) empty.remove();
       list.insertAdjacentHTML("beforeend", html);
     }
   }
 
-  function paintCommunityMember(account, role, title) {
+  function communityRowSection(row) {
+    if (!row) return "";
+    return row.getAttribute("data-section") || communitySectionId(row.getAttribute("data-role"));
+  }
+
+  // `opts.subscribed` forces the subscriber row on or off. When it is omitted,
+  // a subscriber row that is already on screen stays, including after a mute.
+  function paintCommunityMember(account, role, title, opts) {
     const ctx = communityMemberContext;
     const name = normalizeLoginUser(account);
     if (!ctx || !name) return;
+    if (isBlacklistedUser(name)) {
+      communityMemberRows(name).forEach((row) => row.remove());
+      communitySyncPeopleSections();
+      return;
+    }
     const nextRole = communityNormalizeRole(role);
     const nextTitle = String(title || "");
     communityUpdateTeamEntry(name, nextRole, nextTitle);
-    if (communityMemberSeen) communityMemberSeen.add(name);
-    const section = communitySectionId(nextRole);
-    const listId = communitySectionListId(section);
-    const html = communityMemberHtml(
-      { name, role: nextRole, title: nextTitle },
-      Object.assign({}, ctx, { section })
-    );
-    placeCommunityMemberRow(name, html, listId);
+    const roleSection = communitySectionId(nextRole);
+    const rows = communityMemberRows(name);
+    const hadSubscriber = rows.some((row) => communityRowSection(row) === "subscriber");
+    const explicit = Boolean(opts && Object.prototype.hasOwnProperty.call(opts, "subscribed"));
+    const subscribed = explicit ? Boolean(opts.subscribed) : hadSubscriber || Boolean(ctx.subscribed && ctx.subscribed.has(name));
+    if (explicit && ctx.subscribed) {
+      if (opts.subscribed) ctx.subscribed.add(name);
+      else ctx.subscribed.delete(name);
+    }
+    const showSubscriber = subscribed;
+    rows.forEach((row) => {
+      const section = communityRowSection(row);
+      const keepRole = section === roleSection && roleSection !== "subscriber";
+      const keepSub = section === "subscriber" && showSubscriber;
+      if (!keepRole && !keepSub) row.remove();
+    });
+    function paintOne(section) {
+      const html = communityMemberHtml(
+        { name, role: nextRole, title: nextTitle },
+        Object.assign({}, ctx, { section })
+      );
+      placeCommunityMemberRow(name, html, communitySectionListId(section));
+    }
+    if (roleSection !== "subscriber") paintOne(roleSection);
+    if (showSubscriber) paintOne("subscriber");
     communitySyncPeopleSections();
   }
 
@@ -16774,9 +16835,8 @@ let CS77_FILTER_LOW_REP = 20;
     const name = normalizeLoginUser(account);
     if (!name) return;
     communityUpdateTeamEntry(name, "guest", "");
-    const selector = communityMemberSelector(name);
-    const existing = selector ? document.querySelector(selector) : null;
-    if (existing) existing.remove();
+    if (communityMemberContext && communityMemberContext.subscribed) communityMemberContext.subscribed.delete(name);
+    communityMemberRows(name).forEach((row) => row.remove());
     communitySyncPeopleSections();
   }
 
@@ -16810,7 +16870,7 @@ let CS77_FILTER_LOW_REP = 20;
         const account = row.getAttribute("data-account");
         const rowRole = communityNormalizeRole(row.getAttribute("data-role"));
         const title = row.getAttribute("data-title") || "";
-        const section = communitySectionId(rowRole);
+        const section = communityRowSection(row);
         const html = communityMemberHtml(
           { name: account, role: rowRole, title },
           Object.assign({}, ctx, {
@@ -17142,7 +17202,7 @@ let CS77_FILTER_LOW_REP = 20;
           subscribed = false;
         }
         if (token !== communityRoleToken || !communityMembersStill(ctx.name)) return;
-        if (subscribed) paintCommunityMember(canonical, "guest", fresh.title);
+        if (subscribed) paintCommunityMember(canonical, "guest", fresh.title, { subscribed: true });
         else dropCommunityMember(canonical);
       } else {
         paintCommunityMember(canonical, nextRole, fresh.title);
@@ -17288,11 +17348,14 @@ let CS77_FILTER_LOW_REP = 20;
       typeId: Number(info && info.type_id) || 0,
       manage: communityCanManageMembers(info),
       done: false,
+      subscribed: new Set(),
     };
     communityMemberContext = ctx;
     const team = communityTeamRows(info);
     const groups = { owner: [], admin: [], mod: [], member: [], subscriber: [], muted: [] };
     team.forEach((row) => {
+      const account = normalizeLoginUser(row.name);
+      if (!account || isBlacklistedUser(account)) return;
       const section = communitySectionId(row.role);
       groups[section].push(communityMemberHtml(row, Object.assign({}, ctx, { section })));
     });
@@ -17309,12 +17372,10 @@ let CS77_FILTER_LOW_REP = 20;
         <p>Be the first to subscribe.</p>
       </div>
       <div class="community-people-more">
-        <div id="communityMemberStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading members…</div>
+        <div id="communityMemberStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
       </div>
     `;
     const status = $("#communityMemberStatus");
-    const seen = new Set(team.map((row) => normalizeLoginUser(row.name)).filter(Boolean));
-    communityMemberSeen = seen;
     let roleLast = "";
     let roleMore = "";
     let rolesDone = false;
@@ -17325,9 +17386,18 @@ let CS77_FILTER_LOW_REP = 20;
     let subsBusy = false;
     let opening = true;
 
-    function placeMemberBatch(batch, room) {
+    function sectionHasAccount(section, account) {
+      const list = document.getElementById(communitySectionListId(section));
+      if (!list) return false;
+      const selector = communityMemberSelector(account);
+      return Boolean(selector && list.querySelector(selector));
+    }
+
+    function placeMemberBatch(batch, room, listKind) {
       const buckets = {};
       const cap = room > 0 ? room : 0;
+      const subscribers = listKind === "subscribers";
+      const queued = new Set();
       let placed = 0;
       let scanned = 0;
       let lastName = "";
@@ -17338,9 +17408,14 @@ let CS77_FILTER_LOW_REP = 20;
         const key = normalizeLoginUser(row.name);
         if (key) lastName = key;
         lastRole = String((row && row.role) || "");
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        const section = communitySectionId(row.role);
+        if (!key || isBlacklistedUser(key)) continue;
+        const role = communityNormalizeRole(row.role);
+        const section = subscribers ? "subscriber" : communitySectionId(role);
+        if (subscribers && ctx.subscribed) ctx.subscribed.add(key);
+        const token = section + "\n" + key;
+        // The team is already on screen, and a cursor page can repeat its boundary account.
+        if (queued.has(token) || sectionHasAccount(section, key)) continue;
+        queued.add(token);
         if (!buckets[section]) buckets[section] = [];
         buckets[section].push(communityMemberHtml(row, Object.assign({}, ctx, { section })));
         placed += 1;
@@ -17394,7 +17469,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     // Roles are one Hivemind cursor (owner through muted). Subscribers are a second cursor.
-    // A page of names already shown, such as the team, is skipped and the cursor keeps moving.
+    // A subscribed account is listed under Subscribers with its role, including muted.
+    // Blacklisted accounts are left out only while content moderation is on.
     // Hivemind returns at most 100 names per request. `want` is how many new rows to add.
     async function pullRoles(want) {
       if (rolesDone || communityMemberContext !== ctx) return;
@@ -17407,7 +17483,7 @@ let CS77_FILTER_LOW_REP = 20;
         const roles = await HiveApi.listCommunityRoles(name, roleLast, 100);
         if (communityMemberContext !== ctx) return;
         const room = goal > 1 ? goal - gained : 0;
-        const step = placeMemberBatch(roles, room);
+        const step = placeMemberBatch(roles, room, "roles");
         gained += step.placed;
         if (room && step.scanned < roles.length) {
           if (step.lastName) roleLast = step.lastName;
@@ -17431,7 +17507,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     function takeSubsPage(batch, room) {
-      const step = placeMemberBatch(batch, room);
+      const step = placeMemberBatch(batch, room, "subscribers");
       if (room > 0 && step.scanned < batch.length) {
         if (step.lastName) subLast = step.lastName;
         subMore = true;
@@ -17735,7 +17811,6 @@ let CS77_FILTER_LOW_REP = 20;
     invalidateCommunityRoleWork();
     if (ownerSignSession && ownerSignSession.source === "role" && !ownerSignBusy) cancelOwnerSign();
     communityMemberContext = null;
-    communityMemberSeen = null;
     const id = normalizeCommunityName(name);
     const tab = normalizeCommunityPage(page) || "latest";
     noteCommunityEditCommunity(id);

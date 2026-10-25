@@ -3957,6 +3957,59 @@ a.tag:hover {
   overflow-x: auto;
 }
 
+/* Subscribers are one full-width name per row. */
+.community-table.is-flow {
+  display: block;
+  width: 100%;
+}
+
+.community-table.is-flow tbody {
+  display: block;
+}
+
+.community-table.is-flow tr.community-member {
+  display: block;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.community-table.is-flow td {
+  border-bottom: none;
+  padding: 0.2rem 0;
+  text-align: left;
+}
+
+.community-table.is-flow tr.community-member td:first-child {
+  padding-top: 0.7rem;
+}
+
+.community-table.is-flow tr.community-member td:last-child {
+  padding-right: 0;
+  padding-bottom: 0.7rem;
+  text-align: left;
+}
+
+.community-table.is-flow .community-member-who:has(.community-approve-btn) {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.community-table.is-flow .community-member-who:has(.community-approve-btn) .author-link {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+.community-table.is-flow .community-member-title,
+.community-table.is-flow .community-member-role {
+  padding-top: 0;
+}
+
+.community-table.is-flow .community-member-role,
+.community-table.is-flow .community-member-actions {
+  text-align: right;
+}
+
 .community-table {
   width: 100%;
   border-collapse: collapse;
@@ -6192,6 +6245,21 @@ body:has(#publishOverlay:not([hidden])) {
     justify-self: end;
     align-self: center;
     text-align: right;
+  }
+
+  .community-table.is-flow,
+  .community-table.is-flow tbody {
+    display: block;
+  }
+
+  .community-table.is-flow tr.community-member {
+    display: grid;
+    height: auto;
+  }
+
+  .community-table.is-flow tr.community-member:not(:has(.community-member-title, .community-member-role, .community-member-actions)) {
+    grid-template-areas: "who who";
+    grid-template-rows: auto;
   }
 
   .community-table tr.community-table-empty {
