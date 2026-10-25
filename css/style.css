@@ -3859,6 +3859,10 @@ a.tag:hover {
   background: transparent;
 }
 
+.community-about-beneficiary + .post-body {
+  margin-top: 0.85rem;
+}
+
 .community-panel h2 {
   font-family: var(--font-display);
   font-size: 0.68rem;

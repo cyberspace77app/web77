@@ -14770,10 +14770,13 @@ let CS77_FILTER_LOW_REP = 20;
     if (account) {
       const href = HiveMd.escapeHtml(profilePath(account));
       const reward = HiveMd.escapeHtml(percent) + "%";
+      const shareNote = percent
+        ? `<div class="post-body"><p>This subspace asks for a ${reward} share on new posts.</p></div>`
+        : "";
       sections.push(
         communityAboutSection(
           "Beneficiary",
-          `<table class="community-about-beneficiary"><tbody><tr><td><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a></td><td>${reward}</td></tr></tbody></table>`
+          `<table class="community-about-beneficiary"><tbody><tr><td><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a></td><td>${reward}</td></tr></tbody></table>${shareNote}`
         )
       );
     }
