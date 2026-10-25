@@ -16704,8 +16704,10 @@ let CS77_FILTER_LOW_REP = 20;
     return "communitySubscriberSection";
   }
 
+  // On a narrow screen these sections share the admin row: role beside the name,
+  // title on the next line, and the taller padding. Subscribers stay a name list.
   function communitySectionIsTeam(section) {
-    return section === "owner" || section === "admin" || section === "mod";
+    return section === "owner" || section === "admin" || section === "mod" || section === "member" || section === "muted";
   }
 
   function communityAddLead(role) {
