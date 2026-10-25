@@ -10128,7 +10128,7 @@ let CS77_FILTER_LOW_REP = 20;
             <p class="settings-note" id="subspaceCreateTypeNote">${esc(communityTypeNote(typeId))}</p>
           </div>
           <div class="settings-field subspace-account-start">
-            <label class="settings-label" for="subspaceCreateName">Subspace username (owner)</label>
+            <label class="settings-label settings-section-line" for="subspaceCreateName"><span>Subspace username (owner)</span></label>
             <div class="subspace-key-line">
               <input id="subspaceCreateName" name="username" type="text" maxlength="16" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="subspaceCreateNameNote" value="${esc(subspaceOwnerName(typeId, digits))}">
               <button type="button" class="btn-ghost btn-compact" id="subspaceCreateNameCopy" aria-label="Copy username">Copy</button>

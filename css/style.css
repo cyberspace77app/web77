@@ -6842,6 +6842,24 @@ min-height: 0;
   padding-top: 1.35rem;
 }
 
+.subspace-create .settings-label.settings-section-line {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.subspace-create .settings-label.settings-section-line span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.subspace-create .settings-label.settings-section-line::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 0;
+  border-top: 1px solid #fff;
+}
+
 .subspace-create .subspace-account-end {
   margin-bottom: 2.85rem;
 }
