@@ -6288,6 +6288,8 @@ body:has(#publishOverlay:not([hidden])) {
 
   .community-table.is-team .community-member-title {
     padding-top: 0;
+    /* 28px avatar plus the author-link gap, so the title sits under @username. */
+    padding-left: calc(28px + 0.55rem);
     padding-bottom: 1.2rem;
   }
 
@@ -6295,6 +6297,24 @@ body:has(#publishOverlay:not([hidden])) {
   .community-table.is-team tr.community-member:not(:has(.community-member-title:not(:empty))) .community-member-role,
   .community-table.is-team tr.community-member:not(:has(.community-member-title:not(:empty))) .community-member-actions {
     padding-bottom: 1.2rem;
+  }
+
+  /* An empty title cell stays in the grid (display:none loses to td { display:block }).
+     Muted rows with no title drop that blank line. */
+  .community-table.is-team tr.community-member[data-section="muted"]:not(:has(.community-member-title:not(:empty))) {
+    grid-template-areas: "who role actions";
+    grid-template-rows: auto;
+    row-gap: 0;
+  }
+
+  .community-table.is-team tr.community-member[data-section="muted"]:not(:has(.community-member-title:not(:empty))) .community-member-title {
+    display: none;
+  }
+
+  .community-table.is-team tr.community-member[data-section="muted"]:not(:has(.community-member-title:not(:empty))) .community-member-who,
+  .community-table.is-team tr.community-member[data-section="muted"]:not(:has(.community-member-title:not(:empty))) .community-member-role,
+  .community-table.is-team tr.community-member[data-section="muted"]:not(:has(.community-member-title:not(:empty))) .community-member-actions {
+    padding-bottom: 0.75rem;
   }
 
   .community-table.is-team .community-member-role {
