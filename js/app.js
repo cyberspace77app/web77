@@ -61,6 +61,10 @@ let CS77_FILTER_LOW_REP = 20;
   const TRENDING_TAGS_MS = 5 * 60 * 1000;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
+  // One unfinished comment or reply per account. A newer box replaces it.
+  const COMMENT_DRAFT_KEY = "cs77_comment_draft";
+  const COMMENT_DRAFT_SAVE_MS = 1000;
+  const COMMENT_DRAFT_INTERVAL_MS = 2000;
   const LOGO_FAVORITES_SHOW = 10;
   const SUGGESTED_TAGS_SHOW = 24;
   const PINNED_SUGGESTED_TAGS = ["bitcoin", "crypto"];
@@ -245,6 +249,11 @@ let CS77_FILTER_LOW_REP = 20;
   let publishStash = null;
   let publishDraftTimer = 0;
   let publishDraftSaveSoon = 0;
+  let commentDraftTimer = 0;
+  let commentDraftInterval = 0;
+  let commentDraftGen = 0;
+  let commentDraftComposer = null;
+  let commentDraftURL = "";
   let notifGen = 0;
   let notifTimer = 0;
   const notifState = {
@@ -3200,6 +3209,7 @@ let CS77_FILTER_LOW_REP = 20;
       wrap.innerHTML = String(renderComment(node) || "").trim();
       const next = wrap.firstElementChild;
       if (next) comment.replaceWith(next);
+      restoreCommentDraft();
     };
     HiveMd.whenMarkdownReady().then(paint, paint);
   }
@@ -5227,10 +5237,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function logout() {
+    stopPublishDraftAutosave();
+    clearStoredPublishDraft();
+    clearStoredCommentDraft();
+    const loginKey = $("#loginKey");
+    if (loginKey) loginKey.value = "";
+    const ownerKey = $("#ownerSignKey");
+    if (ownerKey) ownerKey.value = "";
     closeLogoMenu();
+    if (window.HiveAuth) HiveAuth.clear();
     sessionStorage.removeItem(SESSION_KEY);
     clearKeychainUser();
-    if (window.HiveAuth) HiveAuth.clear();
     localVotes.clear();
     votesCache.clear();
     localReblogs.clear();
@@ -6958,6 +6975,268 @@ let CS77_FILTER_LOW_REP = 20;
     if (publishEdit) return;
     const stored = readStoredPublishDraft();
     if (stored) applyPublishForm(stored);
+  }
+
+  function commentDraftStorageKey() {
+    const user = observer();
+    return user ? COMMENT_DRAFT_KEY + ":" + user : "";
+  }
+
+  function commentDraftPageUrl() {
+    let path = currentPath() || "/";
+    path = path.split("#")[0].split("?")[0];
+    if (path.length > 1) path = path.replace(/\/+$/, "");
+    return path || "/";
+  }
+
+  function isRootCommentComposer(composer) {
+    const section = document.getElementById("comments");
+    return Boolean(composer && section && composer.parentElement === section);
+  }
+
+  function commentDraftTarget(composer) {
+    const parentAuthor = String((composer && composer.getAttribute("data-parent-author")) || "")
+      .replace(/^@/, "")
+      .trim();
+    const parentPermlink = String((composer && composer.getAttribute("data-parent-permlink")) || "").trim();
+    let position = "";
+    if (isRootCommentComposer(composer)) position = "root";
+    else if (parentAuthor && parentPermlink) position = "@" + parentAuthor + "/" + parentPermlink;
+    return { position, parentAuthor, parentPermlink };
+  }
+
+  function sameDraftParent(stored, target) {
+    if (!stored || !target || stored.position !== target.position) return false;
+    const storedAuthor = String(stored.parentAuthor || "").replace(/^@/, "").toLowerCase();
+    const targetAuthor = String(target.parentAuthor || "").replace(/^@/, "").toLowerCase();
+    if (!storedAuthor || storedAuthor !== targetAuthor) return false;
+    const storedPerm = String(stored.parentPermlink || "");
+    const targetPerm = String(target.parentPermlink || "");
+    return storedPerm === targetPerm || storedPerm.toLowerCase() === targetPerm.toLowerCase();
+  }
+
+  function commentDraftMatchesPage(draft) {
+    if (!draft || !draft.url) return false;
+    const here = commentDraftPageUrl();
+    if (draft.url === here) return true;
+    const route = parseRoute();
+    const saved = parseRoute(draft.url);
+    if (!route || route.name !== "post" || !saved || saved.name !== "post") return false;
+    return saved.author === route.author && String(saved.permlink) === String(route.permlink);
+  }
+
+  function readStoredCommentDraft() {
+    const key = commentDraftStorageKey();
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      const url = typeof parsed.url === "string" ? parsed.url : "";
+      const position = parsed.position === "root" ? "root" : typeof parsed.position === "string" ? parsed.position : "";
+      const parentAuthor = String(parsed.parentAuthor || "").replace(/^@/, "").trim();
+      const parentPermlink = String(parsed.parentPermlink || "").trim();
+      const body = typeof parsed.body === "string" ? parsed.body : "";
+      if (!url || !body.trim() || !parentAuthor || !parentPermlink) return null;
+      if (position !== "root" && position.charAt(0) !== "@") return null;
+      return { url, position, parentAuthor, parentPermlink, body };
+    } catch {
+      return null;
+    }
+  }
+
+  function storeCommentDraft(state) {
+    const key = commentDraftStorageKey();
+    if (!key || !state || !String(state.body || "").trim()) return;
+    try {
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          url: state.url || "",
+          position: state.position || "",
+          parentAuthor: state.parentAuthor || "",
+          parentPermlink: state.parentPermlink || "",
+          body: state.body,
+        })
+      );
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function stopCommentDraftAutosave() {
+    if (commentDraftTimer) {
+      clearTimeout(commentDraftTimer);
+      commentDraftTimer = 0;
+    }
+    if (commentDraftInterval) {
+      clearInterval(commentDraftInterval);
+      commentDraftInterval = 0;
+    }
+  }
+
+  function clearStoredCommentDraft() {
+    commentDraftGen += 1;
+    stopCommentDraftAutosave();
+    commentDraftComposer = null;
+    commentDraftURL = "";
+    const key = commentDraftStorageKey();
+    if (!key) return;
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function startCommentDraftAutosave() {
+    if (commentDraftInterval) return;
+    commentDraftInterval = setInterval(persistCommentDraftNow, COMMENT_DRAFT_INTERVAL_MS);
+  }
+
+  function commentDraftUrlForSave() {
+    if (commentDraftURL) return commentDraftURL;
+    const route = parseRoute();
+    if (!route || route.name !== "post") return "";
+    return commentDraftPageUrl();
+  }
+
+  function persistCommentDraftNow() {
+    const composer = commentDraftComposer;
+    if (!composer || !composer.isConnected) {
+      if (commentDraftInterval || commentDraftTimer) stopCommentDraftAutosave();
+      commentDraftComposer = null;
+      return;
+    }
+    if (composer.getAttribute("data-edit-author") || composer.id === "publishComposer") return;
+    const target = commentDraftTarget(composer);
+    const textarea = composer.querySelector(".composer-input");
+    const body = textarea ? String(textarea.value || "") : "";
+    const url = commentDraftUrlForSave();
+    if (!target.position || !body.trim()) {
+      const stored = readStoredCommentDraft();
+      if (url && stored && stored.url === url && sameDraftParent(stored, target)) clearStoredCommentDraft();
+      else stopCommentDraftAutosave();
+      return;
+    }
+    if (!url) return;
+    storeCommentDraft({
+      url,
+      position: target.position,
+      parentAuthor: target.parentAuthor,
+      parentPermlink: target.parentPermlink,
+      body,
+    });
+  }
+
+  function scheduleCommentDraftSave(composer) {
+    if (!composer || composer.getAttribute("data-edit-author") || composer.id === "publishComposer") return;
+    const section = document.getElementById("comments");
+    if (!section || !section.contains(composer)) return;
+    commentDraftComposer = composer;
+    commentDraftURL = commentDraftPageUrl();
+    startCommentDraftAutosave();
+    if (commentDraftTimer) clearTimeout(commentDraftTimer);
+    const gen = ++commentDraftGen;
+    commentDraftTimer = setTimeout(() => {
+      commentDraftTimer = 0;
+      if (gen !== commentDraftGen) return;
+      persistCommentDraftNow();
+    }, COMMENT_DRAFT_SAVE_MS);
+  }
+
+  function findDraftComment(author, permlink) {
+    const comments = document.getElementById("comments");
+    if (!comments) return null;
+    const wantAuthor = String(author || "").replace(/^@/, "").toLowerCase();
+    const wantPerm = String(permlink || "");
+    const nodes = comments.querySelectorAll(".comment");
+    let loose = null;
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (String(el.getAttribute("data-author") || "").replace(/^@/, "").toLowerCase() !== wantAuthor) continue;
+      const perm = String(el.getAttribute("data-permlink") || "");
+      if (perm === wantPerm) return el;
+      if (!loose && perm.toLowerCase() === wantPerm.toLowerCase()) loose = el;
+    }
+    return loose;
+  }
+
+  function applyCommentDraftBody(composer, body) {
+    if (!composer || composer.getAttribute("data-edit-author")) return false;
+    if (composer.classList.contains("is-pending") || composer.classList.contains("is-uploading")) return false;
+    const textarea = composer.querySelector(".composer-input");
+    if (!textarea || textarea.value) return false;
+    textarea.value = body;
+    return true;
+  }
+
+  function commentDraftScrollBlocked() {
+    if (location.hash === "#comments") return true;
+    return Boolean(commentHashFromLocation());
+  }
+
+  function revealRestoredComposer(composer) {
+    if (!composer || commentDraftScrollBlocked()) return;
+    const layer = document.getElementById("postLayer");
+    if (layer && layer.contains(composer) && (layer.hidden || !postLayer.open)) return;
+    requestAnimationFrame(() => {
+      if (!composer.isConnected) return;
+      try {
+        composer.scrollIntoView({ block: "nearest" });
+      } catch {
+        composer.scrollIntoView();
+      }
+    });
+  }
+
+  function openDraftReply(comment, body) {
+    const slot = comment.querySelector(":scope > .comment-reply-slot");
+    if (!slot) return null;
+    const author = comment.getAttribute("data-author");
+    const permlink = comment.getAttribute("data-permlink");
+    if (!author || !permlink) return null;
+    let composer = slot.querySelector(":scope > .comment-composer");
+    if (slot.hidden || !composer) {
+      slot.innerHTML = composerHtml(author, permlink, {
+        placeholder: "Write a reply…",
+        submitLabel: "Reply",
+      });
+      composer = slot.querySelector(":scope > .comment-composer");
+      if (!composer) {
+        slot.hidden = true;
+        slot.innerHTML = "";
+        return null;
+      }
+      slot.hidden = false;
+      const btn = comment.querySelector(":scope > .comment-actions .comment-reply-btn");
+      if (btn) btn.classList.add("is-open");
+    }
+    const filled = applyCommentDraftBody(composer, body);
+    beginCommentCouncilCheck(composer);
+    if (filled) revealRestoredComposer(composer);
+    return composer;
+  }
+
+  function restoreCommentDraft() {
+    const draft = readStoredCommentDraft();
+    if (!draft || !commentDraftMatchesPage(draft)) return;
+    const section = document.getElementById("comments");
+    if (!section) return;
+    if (draft.position === "root") {
+      const rootAuthor = String(section.getAttribute("data-root-author") || "").replace(/^@/, "").toLowerCase();
+      const rootPerm = String(section.getAttribute("data-root-permlink") || "");
+      const sameAuthor = draft.parentAuthor.replace(/^@/, "").toLowerCase() === rootAuthor;
+      const samePerm =
+        draft.parentPermlink === rootPerm || draft.parentPermlink.toLowerCase() === rootPerm.toLowerCase();
+      if (!sameAuthor || !samePerm) return;
+      applyCommentDraftBody(section.querySelector(":scope > .comment-composer"), draft.body);
+      return;
+    }
+    const comment = findDraftComment(draft.parentAuthor, draft.parentPermlink);
+    if (!comment || !section.contains(comment)) return;
+    openDraftReply(comment, draft.body);
   }
 
   function publishDiscardOpen() {
@@ -12167,6 +12446,8 @@ let CS77_FILTER_LOW_REP = 20;
 
     try {
       await promise;
+      clearStoredCommentDraft();
+      if (textarea) textarea.value = "";
       if (!accountReputation(user)) await loadAccountResources();
       try {
         await HiveMd.whenMarkdownReady();
@@ -12188,7 +12469,6 @@ let CS77_FILTER_LOW_REP = 20;
       });
       appendPostedComment(parentAuthor, parentPermlink, html);
       bumpCommentCount(1);
-      if (textarea) textarea.value = "";
       composerStatus(composer, "");
       const slot = composer.closest(".comment-reply-slot");
       if (slot) {
@@ -12886,10 +13166,12 @@ let CS77_FILTER_LOW_REP = 20;
   function fillCommentList(html) {
     const section = document.getElementById("comments");
     if (!section || !postLayer.open) return;
+    persistCommentDraftNow();
     const openMore = document.querySelector(".content-more.is-open");
     if (openMore && section.contains(openMore)) closeContentMore();
     const list = section.querySelector(".comment-list");
     if (list) list.innerHTML = html;
+    restoreCommentDraft();
   }
 
   function refreshArticleCommunity(root) {
@@ -12956,11 +13238,13 @@ let CS77_FILTER_LOW_REP = 20;
   function paintArticle(root, opts) {
     const pv = postViewEl();
     if (!pv || !root) return false;
+    persistCommentDraftNow();
     const options = opts || {};
     currentPost = root;
     rememberContent(root);
     pv.innerHTML = articleHtml(root, options);
     setPostTitle(root);
+    restoreCommentDraft();
     return true;
   }
 
@@ -12993,6 +13277,7 @@ let CS77_FILTER_LOW_REP = 20;
   function showPostSnap(snap) {
     const pv = postViewEl();
     if (!pv || !snap || !snap.html) return false;
+    persistCommentDraftNow();
     pv.innerHTML = snap.html;
     if (snap.root) {
       currentPost = snap.root;
@@ -13001,6 +13286,7 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (snap.title) {
       setPageMeta(snap.title);
     }
+    restoreCommentDraft();
     return true;
   }
 
@@ -20021,6 +20307,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function route() {
+    persistCommentDraftNow();
     const fromPop = routeFromPop;
     const pushed = routePushed;
     routeFromPop = false;
@@ -20618,6 +20905,10 @@ let CS77_FILTER_LOW_REP = 20;
         if (isDown) storeDownvoteWeight(slider.value, voteKindFromEl(slider));
         else storeWeight(slider.value, voteKindFromEl(slider));
         return;
+      }
+      if (e.target && e.target.classList && e.target.classList.contains("composer-input")) {
+        const composer = e.target.closest(".comment-composer");
+        if (composer) scheduleCommentDraftSave(composer);
       }
       if (e.target && e.target.closest && e.target.closest("#settingsProfileForm")) {
         rememberSettingsProfileDraft();
@@ -21437,9 +21728,14 @@ let CS77_FILTER_LOW_REP = 20;
         }
       });
     }
-    window.addEventListener("pagehide", persistPublishDraftNow);
+    window.addEventListener("pagehide", () => {
+      persistPublishDraftNow();
+      persistCommentDraftNow();
+    });
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") persistPublishDraftNow();
+      if (document.visibilityState !== "hidden") return;
+      persistPublishDraftNow();
+      persistCommentDraftNow();
     });
     document.addEventListener("click", (e) => {
       if (mdMenuOpen() && !e.target.closest("#publishMd")) closeMdMenu();

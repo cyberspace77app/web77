@@ -9,6 +9,8 @@
   const DB_VERSION = 1;
   const STORE = "keys";
   const RECORD_ID = "posting";
+  // Set before the IndexedDB delete so a reload mid-logout still drops the key.
+  const AUTH_LOGOUT_KEY = "cs77_auth_logout";
   const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2/dist/index.mjs";
 
   let sessionBytes = null;
@@ -16,6 +18,7 @@
   let hiveTxMod = null;
   let hiveTxPromise = null;
   let readyPromise = null;
+  let clearPromise = null;
 
   function wipe(bytes) {
     if (bytes && bytes.fill) bytes.fill(0);
@@ -99,6 +102,30 @@
 
   function idbDelete() {
     return idbRequest("readwrite", (store) => store.delete(RECORD_ID));
+  }
+
+  function markAuthLogout() {
+    try {
+      localStorage.setItem(AUTH_LOGOUT_KEY, "1");
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function authLogoutMarked() {
+    try {
+      return localStorage.getItem(AUTH_LOGOUT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function unmarkAuthLogout() {
+    try {
+      localStorage.removeItem(AUTH_LOGOUT_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 
   async function wrapBytes(bytes) {
@@ -252,6 +279,8 @@
   async function login(username, wif) {
     const checked = await checkedPostingKey(username, wif);
     try {
+      if (clearPromise) await clearPromise.catch(() => {});
+      unmarkAuthLogout();
       await persist(checked.name, checked.bytes);
     } catch (err) {
       wipe(checked.bytes);
@@ -266,6 +295,16 @@
   async function ready() {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
+      if (authLogoutMarked()) {
+        lockMemory();
+        try {
+          await idbDelete();
+          unmarkAuthLogout();
+        } catch {
+          /* marker stays so the next load tries the delete again */
+        }
+        return;
+      }
       let record;
       try {
         record = await idbGet();
@@ -293,7 +332,14 @@
 
   function clear() {
     lockMemory();
-    return idbDelete().catch(() => {});
+    markAuthLogout();
+    const job = idbDelete()
+      .then(() => {
+        if (!sessionUser) unmarkAuthLogout();
+      })
+      .catch(() => {});
+    clearPromise = job;
+    return job;
   }
 
   async function signBytes(bytes, username) {
