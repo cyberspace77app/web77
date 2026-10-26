@@ -2140,6 +2140,69 @@
     return out;
   }
 
+  // The feed excerpt path does not use these. The first post, comment, or
+  // preview inserts them. Until both are ready, renderMarkdown escapes the
+  // source instead of returning HTML.
+  const MARKED_SRC = "https://cdn.jsdelivr.net/npm/marked@18/lib/marked.umd.min.js";
+  const PURIFY_SRC = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js";
+  let markdownEnginesPromise = null;
+
+  function markdownEnginesReady() {
+    return Boolean(
+      global.marked &&
+        typeof global.marked.parse === "function" &&
+        global.DOMPurify &&
+        typeof global.DOMPurify.sanitize === "function"
+    );
+  }
+
+  function loadClassicScript(src, name) {
+    return new Promise((resolve, reject) => {
+      const prior = document.querySelector('script[data-cs77-lib="' + name + '"]');
+      if (prior && prior.getAttribute("data-cs77-loaded") === "1") {
+        resolve();
+        return;
+      }
+      const script = prior || document.createElement("script");
+      const finish = () => {
+        script.setAttribute("data-cs77-loaded", "1");
+        resolve();
+      };
+      const fail = () => {
+        if (script.parentNode) script.remove();
+        reject(new Error("Could not load " + src));
+      };
+      script.addEventListener("load", finish, { once: true });
+      script.addEventListener("error", fail, { once: true });
+      if (!prior) {
+        script.src = src;
+        script.async = true;
+        script.setAttribute("data-cs77-lib", name);
+        document.head.appendChild(script);
+      }
+    });
+  }
+
+  function whenMarkdownReady() {
+    if (markdownEnginesReady()) return Promise.resolve();
+    if (!markdownEnginesPromise) {
+      markdownEnginesPromise = Promise.all([
+        loadClassicScript(MARKED_SRC, "marked"),
+        loadClassicScript(PURIFY_SRC, "purify"),
+      ])
+        .then(() => {
+          if (!markdownEnginesReady()) throw new Error("Could not start the markdown renderer.");
+          ensureMarked();
+          ensurePostSanitizeHooks();
+        })
+        .catch((err) => {
+          markdownEnginesPromise = null;
+          throw err;
+        });
+    }
+    return markdownEnginesPromise;
+  }
+
   let markedReady = false;
 
   function ensureMarked() {
@@ -2592,7 +2655,8 @@
   }
 
   function sanitizePostHtml(html) {
-    if (!global.DOMPurify || typeof global.DOMPurify.sanitize !== "function") return String(html || "");
+    // A missing sanitizer must not pass author HTML through.
+    if (!global.DOMPurify || typeof global.DOMPurify.sanitize !== "function") return "";
     ensurePostSanitizeHooks();
     try {
       return global.DOMPurify.sanitize(String(html || ""), POST_SANITIZE_CONFIG);
@@ -2601,7 +2665,12 @@
     }
   }
 
+  function plainMarkdownHtml(src) {
+    return `<p>${escapeHtml(String(src || "")).replace(/\n/g, "<br>")}</p>`;
+  }
+
   function renderMarkdown(src) {
+    if (!markdownEnginesReady()) return plainMarkdownHtml(src);
     ensureMarked();
     // 1. Markdown to HTML. Hive prep rewrites players and bare image URLs,
     //    and turns markdown images into <img> so a caption under the photo
@@ -2647,6 +2716,8 @@
     proxyImage,
     avatarUrl,
     excerpt,
+    markdownReady: markdownEnginesReady,
+    whenMarkdownReady,
     renderMarkdown,
   };
 })(window);

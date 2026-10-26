@@ -3184,10 +3184,14 @@ let CS77_FILTER_LOW_REP = 20;
     markMutedRevealed(author, permlink);
     const node = findContentNode(author, permlink);
     if (!node) return;
-    const wrap = document.createElement("div");
-    wrap.innerHTML = String(renderComment(node) || "").trim();
-    const next = wrap.firstElementChild;
-    if (next) comment.replaceWith(next);
+    const paint = () => {
+      if (!comment.isConnected) return;
+      const wrap = document.createElement("div");
+      wrap.innerHTML = String(renderComment(node) || "").trim();
+      const next = wrap.firstElementChild;
+      if (next) comment.replaceWith(next);
+    };
+    HiveMd.whenMarkdownReady().then(paint, paint);
   }
 
   function isBlacklistedUser(name) {
@@ -6900,17 +6904,30 @@ let CS77_FILTER_LOW_REP = 20;
     closePublish({ persist: false });
   }
 
+  let publishPreviewToken = 0;
+
   function updatePublishPreview() {
     const preview = $("#publishPreview");
     if (!preview) return;
+    const token = ++publishPreviewToken;
     const title = (($("#publishTitle") && $("#publishTitle").value) || "").trim();
     const body = ($("#publishBody") && $("#publishBody").value) || "";
     const heading = !editingComment() && title ? `<h1>${HiveMd.escapeHtml(title)}</h1>` : "";
-    const html = body.trim()
-      ? HiveMd.renderMarkdown(body)
-      : `<p class="feed-hint">Start writing to see a preview.</p>`;
-    preview.innerHTML = heading + html;
+    const paint = () => {
+      if (token !== publishPreviewToken || !preview.isConnected) return;
+      const html = body.trim()
+        ? HiveMd.renderMarkdown(body)
+        : `<p class="feed-hint">Start writing to see a preview.</p>`;
+      preview.innerHTML = heading + html;
+      paintPublishLocationBtn();
+    };
+    if (!body.trim() || HiveMd.markdownReady()) {
+      paint();
+      return;
+    }
+    preview.innerHTML = heading + `<p class="feed-hint">Loading preview…</p>`;
     paintPublishLocationBtn();
+    HiveMd.whenMarkdownReady().then(paint, paint);
   }
 
   const WORLDMAPPIN_INNER =
@@ -7781,6 +7798,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const fromCommunityWrite = applyPublishDestRequest();
     ov.hidden = false;
+    HiveMd.whenMarkdownReady();
     paintPublishChrome();
     fitPublishTitle();
     requestAnimationFrame(() => fitPublishTitle());
@@ -7999,7 +8017,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (!article) return;
     paintArticleTitle(article, Object.assign({}, currentPost || {}, { title: title || "" }));
     const bodyEl = article.querySelector(":scope > .post-body");
-    if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
+    const paintBody = () => {
+      if (!bodyEl || !bodyEl.isConnected) return;
+      bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
+    };
+    if (bodyEl && !HiveMd.markdownReady()) HiveMd.whenMarkdownReady().then(paintBody, paintBody);
+    else paintBody();
     syncArticleTags(article, currentPost);
     if (currentPost) setPostTitle(currentPost);
     else setPageMeta(`${title || "Post"} — CyberSpace77`);
@@ -11958,6 +11981,11 @@ let CS77_FILTER_LOW_REP = 20;
     try {
       await promise;
       if (!accountReputation(user)) await loadAccountResources();
+      try {
+        await HiveMd.whenMarkdownReady();
+      } catch {
+        // renderComment escapes the body when the markdown scripts fail.
+      }
       const html = renderComment({
         author: user,
         permlink,
@@ -12056,7 +12084,14 @@ let CS77_FILTER_LOW_REP = 20;
       });
       const comment = composer.closest(".comment");
       const bodyEl = comment && comment.querySelector(":scope > .comment-body");
-      if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(body);
+      if (bodyEl) {
+        try {
+          await HiveMd.whenMarkdownReady();
+        } catch {
+          // renderMarkdown escapes the source when the CDN scripts fail.
+        }
+        bodyEl.innerHTML = HiveMd.renderMarkdown(body);
+      }
       closeCommentEditor(comment);
     } catch (err) {
       composerStatus(composer, err.message || String(err), true);
@@ -13235,12 +13270,15 @@ let CS77_FILTER_LOW_REP = 20;
     postLayer.permlink = p;
     const snap = postSnaps.get(snapKey(a, p));
     const useSnap = Boolean(snap && snap.html);
+    // Overlap the CDN scripts with the discussion request. A cached body waits
+    // so author HTML is not inserted before DOMPurify is loaded.
+    const markdownReady = HiveMd.whenMarkdownReady();
     let restoreScroll = null;
     if (useSnap) {
       showPostSnap(snap);
       if (!options.jumpComments && !options.anchor) restoreScroll = snap.scroll || 0;
     } else {
-      const cached = findLoadedPost(a, p);
+      const cached = HiveMd.markdownReady() ? findLoadedPost(a, p) : null;
       if (cached && (cached.title || cached.body)) {
         paintArticle(cached, {
           commentCount: Number(cached.children) || 0,
@@ -13274,7 +13312,20 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     try {
-      const discussion = await HiveApi.getDiscussion(a, p, observer());
+      const discussionPromise = HiveApi.getDiscussion(a, p, observer());
+      if (!useSnap && !activeArticle()) {
+        const cachedNow = findLoadedPost(a, p);
+        if (cachedNow && (cachedNow.title || cachedNow.body)) {
+          markdownReady.then(() => {
+            if (!postStill(gen, a, p) || activeArticle()) return;
+            paintArticle(cachedNow, {
+              commentCount: Number(cachedNow.children) || 0,
+              commentsHtml: commentsPendingHtml(),
+            });
+          }, () => {});
+        }
+      }
+      const discussion = await discussionPromise;
       if (!postStill(gen, a, p)) return;
       setNodeLabel();
       const root = buildCommentTree(discussion, a, p);
@@ -13293,6 +13344,12 @@ let CS77_FILTER_LOW_REP = 20;
       currentPost = root;
       rememberContent(root);
       const count = discussionCommentCount(discussion, root);
+      try {
+        await markdownReady;
+      } catch {
+        // renderMarkdown escapes the source when the CDN scripts fail.
+      }
+      if (!postStill(gen, a, p)) return;
       const commentsHtml = renderedCommentsHtml(root);
       const article = activeArticle();
       if (!article) {
@@ -18484,7 +18541,14 @@ let CS77_FILTER_LOW_REP = 20;
     if (!info) return;
 
     if (tab === "about") {
+      const markdownReady = HiveMd.whenMarkdownReady();
       const extras = await communityAboutExtras(id, info);
+      if (!communityRouteStill(id, tab) || communityState.name !== id) return;
+      try {
+        await markdownReady;
+      } catch {
+        // communityAboutHtml escapes description and rules when the scripts fail.
+      }
       if (!communityRouteStill(id, tab) || communityState.name !== id) return;
       communitySubpageHtml(communityAboutHtml(info, extras));
       bindCommunityAboutCover();
@@ -19757,6 +19821,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!fromAccountProfile) accountMenuProfile = false;
     syncAccountMenuBanner(accountBannerMode(r, fromAccountMenu, fromAccountProfile, fromProfileNav));
     if (r.name === "post") {
+      HiveMd.whenMarkdownReady();
       ensureHistoryNav();
       noteProfileReturnStep(fromPop, pushed, "post");
       noteFeedStack(fromPop, pushed, "post");
