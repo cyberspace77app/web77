@@ -1536,6 +1536,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   let openSlider = null;
+  // Set for the keyboard upvote so a hidden vote button docks the panel.
+  let feedKeyDockSlider = false;
 
   function sliderModeForBtn(btn) {
     return btn && btn.classList.contains("downvote-btn") ? "down" : "up";
@@ -1612,18 +1614,43 @@ let CS77_FILTER_LOW_REP = 20;
   function clearVoteSliderPos(panel) {
     panel.style.position = "";
     panel.style.top = "";
+    panel.style.bottom = "";
     panel.style.left = "";
     panel.style.right = "";
+    panel.style.transform = "";
     panel.style.zIndex = "";
+  }
+
+  function voteBtnVisible(rect) {
+    if (!rect || rect.width < 1 || rect.height < 1) return false;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.bottom > 0 && rect.top < vh;
   }
 
   function placeVoteSlider(btn, panel) {
     const rect = btn.getBoundingClientRect();
+    const dock =
+      openSlider &&
+      openSlider.panel === panel &&
+      openSlider.dockWhenHidden &&
+      !voteBtnVisible(rect);
     panel.style.position = "fixed";
     panel.style.zIndex = "64";
+    panel.style.transform = "";
+    panel.style.right = "auto";
+    if (dock) {
+      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+      panel.style.top = "auto";
+      panel.style.bottom = "16px";
+      panel.style.left = "0px";
+      const width = panel.offsetWidth || panel.getBoundingClientRect().width;
+      const left = Math.max(8, Math.round((vw - width) / 2));
+      panel.style.left = Math.min(left, Math.max(8, vw - width - 8)) + "px";
+      return;
+    }
+    panel.style.bottom = "";
     panel.style.top = Math.round(rect.bottom + 18) + "px";
     panel.style.left = Math.round(rect.left + 6) + "px";
-    panel.style.right = "auto";
     const box = panel.getBoundingClientRect();
     const maxRight = window.innerWidth - 8;
     if (box.right > maxRight) {
@@ -2565,6 +2592,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function showVotePanel(btn, mode) {
+    const dockWhenHidden = feedKeyDockSlider;
+    feedKeyDockSlider = false;
     hideReblogConfirm();
     hideVoteVoters();
     hideVoteSlider();
@@ -2588,7 +2617,7 @@ let CS77_FILTER_LOW_REP = 20;
       releaseVoteColor(btn);
       btn.classList.add("is-confirming");
     }
-    openSlider = { wrap, btn, panel, mode };
+    openSlider = { wrap, btn, panel, mode, dockWhenHidden };
     document.body.appendChild(panel);
     panel.hidden = false;
     placeVoteSlider(btn, panel);
@@ -3089,6 +3118,7 @@ let CS77_FILTER_LOW_REP = 20;
       queueVote(author, permlink, percent);
     } finally {
       voteClickBusy = false;
+      feedKeyDockSlider = false;
     }
   }
 
@@ -21231,6 +21261,276 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // j and k move through the feed. l opens the upvote panel, and l again casts it.
+  // A text field or an open dialog keeps those keys. The vote slider does not.
+  const FEED_KEY_GAP = 12;
+  const FEED_KEY_SLACK = 24;
+  let feedKeyItem = null;
+  let feedKeyNavigating = false;
+  let feedKeyNavTimer = 0;
+
+  function feedKeyTyping(e) {
+    const nodes = [eventElement(e.target), eventElement(document.activeElement)];
+    for (let n = 0; n < nodes.length; n++) {
+      let el = nodes[n];
+      while (el && el !== document.body && el !== document.documentElement) {
+        const tag = el.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "FORM") return true;
+        if (el.isContentEditable) return true;
+        const role = el.getAttribute("role");
+        if (role === "textbox" || role === "searchbox") return true;
+        el = el.parentElement;
+      }
+    }
+    return false;
+  }
+
+  function feedKeySliderFocused(e) {
+    const nodes = [eventElement(e.target), eventElement(document.activeElement)];
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (el && el.closest && el.closest(".vote-slider-panel, .downvote-slider-panel")) return true;
+    }
+    return false;
+  }
+
+  function feedKeyDialogOpen() {
+    const overlays = document.querySelectorAll(".overlay");
+    for (let i = 0; i < overlays.length; i++) {
+      if (!overlays[i].hidden) return true;
+    }
+    const el = eventElement(document.activeElement);
+    return Boolean(el && el.closest("[role='dialog'], [aria-modal='true']"));
+  }
+
+  function feedKeyItems() {
+    if (document.body.classList.contains("is-post-open")) return [];
+    const list = document.getElementById("feedList");
+    if (!list) return [];
+    const nodes = list.children;
+    const items = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (!el.classList || !el.classList.contains("feed-item")) continue;
+      if (el.closest("[hidden]")) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.height < 1 || rect.width < 1) continue;
+      items.push(el);
+    }
+    return items;
+  }
+
+  function feedKeyAnchor() {
+    const header = siteHeaderEl();
+    if (
+      header &&
+      header.classList.contains("is-smart") &&
+      header.classList.contains("is-shown")
+    ) {
+      const bottom = header.getBoundingClientRect().bottom;
+      if (bottom > 0) return bottom + FEED_KEY_GAP;
+    }
+    return FEED_KEY_GAP;
+  }
+
+  function clearFeedKeyCurrent() {
+    feedKeyItem = null;
+    const nodes = document.querySelectorAll(".feed-item.is-kbd-current");
+    for (let i = 0; i < nodes.length; i++) nodes[i].classList.remove("is-kbd-current");
+  }
+
+  function markFeedKeyCurrent(el) {
+    const nodes = document.querySelectorAll(".feed-item.is-kbd-current");
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i] !== el) nodes[i].classList.remove("is-kbd-current");
+    }
+    if (!el) return;
+    feedKeyItem = el;
+    el.classList.add("is-kbd-current");
+  }
+
+  function beginOwnedFeedScroll() {
+    feedKeyNavigating = true;
+    if (feedKeyNavTimer) clearTimeout(feedKeyNavTimer);
+    feedKeyNavTimer = setTimeout(() => {
+      feedKeyNavigating = false;
+      feedKeyNavTimer = 0;
+    }, 200);
+  }
+
+  function onFeedKeyPageScroll() {
+    if (!feedKeyNavigating) {
+      clearFeedKeyCurrent();
+      return;
+    }
+    if (feedKeyNavTimer) clearTimeout(feedKeyNavTimer);
+    feedKeyNavTimer = setTimeout(() => {
+      feedKeyNavigating = false;
+      feedKeyNavTimer = 0;
+    }, 180);
+  }
+
+  function scrollFeedItemToAnchor(el, behavior) {
+    if (!el) return;
+    beginOwnedFeedScroll();
+    quietSmartHeader();
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const chosen = behavior || (reduce ? "instant" : "smooth");
+    const top = Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
+    try {
+      window.scrollTo({
+        top: top,
+        left: 0,
+        behavior: chosen === "instant" ? "instant" : "smooth",
+      });
+    } catch (err) {
+      window.scrollTo(0, top);
+    }
+  }
+
+  function feedKeyLocked(items) {
+    if (!feedKeyItem || !feedKeyItem.isConnected) return null;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i] === feedKeyItem) return feedKeyItem;
+    }
+    return null;
+  }
+
+  function feedKeyNextItem(items) {
+    const line = feedKeyAnchor() + FEED_KEY_SLACK;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].getBoundingClientRect().top > line) return items[i];
+    }
+    return null;
+  }
+
+  function feedKeyPrevItem(items) {
+    const line = feedKeyAnchor() + FEED_KEY_SLACK;
+    let current = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].getBoundingClientRect().top <= line) current = i;
+      else break;
+    }
+    if (current <= 0) return null;
+    return items[current - 1];
+  }
+
+  function feedKeyCurrentItem(items) {
+    const anchor = feedKeyAnchor();
+    const line = anchor + FEED_KEY_SLACK;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    let current = null;
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      if (rect.bottom <= anchor) continue;
+      if (rect.top <= line) current = items[i];
+      else break;
+    }
+    if (current) return current;
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      if (rect.bottom > anchor && rect.top < vh) return items[i];
+    }
+    return null;
+  }
+
+  function feedKeyMove(dir) {
+    const items = feedKeyItems();
+    if (!items.length) return false;
+    const locked = feedKeyLocked(items);
+    let target = null;
+    if (locked) {
+      let idx = -1;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i] === locked) {
+          idx = i;
+          break;
+        }
+      }
+      const next = idx + dir;
+      if (next < 0 || next >= items.length) return false;
+      target = items[next];
+    } else {
+      target = dir > 0 ? feedKeyNextItem(items) : feedKeyPrevItem(items);
+    }
+    if (!target || target === locked) return false;
+    markFeedKeyCurrent(target);
+    scrollFeedItemToAnchor(target);
+    return true;
+  }
+
+  function feedKeyUpvote() {
+    const items = feedKeyItems();
+    if (!items.length) return false;
+    const item = feedKeyLocked(items) || feedKeyCurrentItem(items);
+    if (!item) return false;
+    const card = item.querySelector("article.post-card");
+    const btn = card && card.querySelector(".vote-btn");
+    markFeedKeyCurrent(item);
+    if (
+      !btn ||
+      btn.disabled ||
+      btn.classList.contains("is-pending") ||
+      btn.classList.contains("is-voted")
+    ) {
+      return true;
+    }
+    if (
+      openSlider &&
+      openSlider.mode === "up" &&
+      openSlider.btn === btn &&
+      openSlider.panel &&
+      !openSlider.panel.hidden
+    ) {
+      onVoteClick(btn);
+      return true;
+    }
+    feedKeyDockSlider = true;
+    onVoteClick(btn);
+    return true;
+  }
+
+  function onFeedKeyDown(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
+    const key = String(e.key || "").toLowerCase();
+    if (key !== "j" && key !== "k" && key !== "l") return;
+    if (e.repeat && key === "l") return;
+    if (feedKeyDialogOpen()) return;
+    if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
+    if (!feedKeyItems().length) return;
+    if (key === "j" || key === "k") {
+      if (openSlider) hideVoteSlider();
+      feedKeyMove(key === "j" ? 1 : -1);
+    } else feedKeyUpvote();
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function onFeedKeyUserScroll(e) {
+    const el = eventElement(e.target);
+    if (
+      el &&
+      el.closest(
+        ".vote-voters-panel, .vote-slider-panel, .downvote-slider-panel, .reblog-confirm-panel, .overlay"
+      )
+    ) {
+      return;
+    }
+    feedKeyNavigating = false;
+    if (feedKeyNavTimer) {
+      clearTimeout(feedKeyNavTimer);
+      feedKeyNavTimer = 0;
+    }
+    clearFeedKeyCurrent();
+  }
+
+  function bindFeedKeys() {
+    document.addEventListener("keydown", onFeedKeyDown, true);
+    window.addEventListener("scroll", onFeedKeyPageScroll, { passive: true });
+    window.addEventListener("wheel", onFeedKeyUserScroll, { passive: true, capture: true });
+    window.addEventListener("touchmove", onFeedKeyUserScroll, { passive: true, capture: true });
+  }
+
   function boot() {
     if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     bindRootLinks();
@@ -21249,6 +21549,7 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
     window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
+    bindFeedKeys();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");
     if (versionEl) versionEl.textContent = "version " + APP_VERSION;
