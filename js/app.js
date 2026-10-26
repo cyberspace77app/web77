@@ -5551,10 +5551,56 @@ let CS77_FILTER_LOW_REP = 20;
     closeLogoMenu();
   });
 
+  function defaultAuthMethod() {
+    return isMobileViewport() ? "password" : "keychain";
+  }
+
+  function authMethod(root) {
+    if (!root) return "keychain";
+    const active = root.querySelector("[data-auth-method].is-active");
+    return active && active.getAttribute("data-auth-method") === "password" ? "password" : "keychain";
+  }
+
+  function setAuthMethod(root, method) {
+    if (!root) return;
+    const next = method === "password" ? "password" : "keychain";
+    const previous = authMethod(root);
+    root.querySelectorAll("[data-auth-method]").forEach((btn) => {
+      const on = btn.getAttribute("data-auth-method") === next;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    const card = root.closest(".login-card");
+    const keyBlock = card && card.querySelector("[data-auth-key]");
+    if (keyBlock) keyBlock.hidden = next !== "password";
+    if (previous === "password" && next !== "password") {
+      const keyInput = keyBlock && keyBlock.querySelector("input");
+      if (keyInput) keyInput.value = "";
+    }
+    if (previous !== next) {
+      const status = card && card.querySelector("[id$='Status']");
+      if (status && status.textContent) {
+        status.textContent = "";
+        status.classList.remove("is-error");
+      }
+    }
+  }
+
+  function bindAuthMethod(root) {
+    if (!root || root.dataset.authBound === "1") return;
+    root.dataset.authBound = "1";
+    root.querySelectorAll("[data-auth-method]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setAuthMethod(root, btn.getAttribute("data-auth-method"));
+      });
+    });
+  }
+
   function openLogin() {
-    overlay.hidden = false;
     const status = $("#loginStatus");
     if (status) status.textContent = "";
+    setAuthMethod($("#loginMethod"), defaultAuthMethod());
+    overlay.hidden = false;
     const input = $("#loginUser");
     if (input) input.focus();
   }
@@ -5623,7 +5669,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!window.hive_keychain) {
       loginBusy = false;
       status.textContent =
-        "Enter a posting key to sign in. The public feed stays available.";
+        "Hive Keychain is not available. Choose Password to sign in with a posting key.";
       return;
     }
     status.textContent = "Waiting for Keychain…";
@@ -5656,13 +5702,19 @@ let CS77_FILTER_LOW_REP = 20;
     const status = $("#loginStatus");
     const keyInput = $("#loginKey");
     const connectBtn = $("#loginConnect");
-    const wif = ((keyInput && keyInput.value) || "").replace(/\s+/g, "");
+    const method = authMethod($("#loginMethod"));
     if (!status) return;
     if (!validLoginUser(username)) {
       status.textContent = "Enter a valid Hive username.";
       return;
     }
-    if (wif) {
+    if (method === "password") {
+      const wif = ((keyInput && keyInput.value) || "").replace(/\s+/g, "");
+      if (!wif) {
+        if (keyInput) keyInput.value = "";
+        status.textContent = "Enter a posting key.";
+        return;
+      }
       loginBusy = true;
       if (connectBtn) connectBtn.disabled = true;
       status.textContent = "Checking posting key…";
@@ -5675,6 +5727,11 @@ let CS77_FILTER_LOW_REP = 20;
         loginBusy = false;
         if (connectBtn) connectBtn.disabled = false;
       }
+      return;
+    }
+    if (!window.hive_keychain) {
+      status.textContent =
+        "Hive Keychain is not available. Choose Password to sign in with a posting key.";
       return;
     }
     loginBusy = true;
@@ -16936,17 +16993,15 @@ let CS77_FILTER_LOW_REP = 20;
         (opts && opts.lead) ||
         "Use hive keychain (recommended) or enter the posting key of this subspace account.";
     }
-    if (label) {
-      const name = authority === "Active" ? "Active key" : "Posting key";
-      label.innerHTML = name + ' <span class="login-optional">optional</span>';
-    }
+    if (label) label.textContent = authority === "Active" ? "Active key" : "Posting key";
     if (hint) {
       hint.textContent =
         authority === "Active"
-          ? "An active key entered here is used once and is not saved."
-          : "A posting key entered here is used once and is not saved.";
+          ? "The active key is used once and is not saved."
+          : "The posting key is used once and is not saved.";
     }
     if (key) key.placeholder = authority === "Active" ? "active key" : "posting key";
+    setAuthMethod($("#ownerSignMethod"), defaultAuthMethod());
   }
 
   function restoreOwnerSignCopy() {
@@ -17002,14 +17057,31 @@ let CS77_FILTER_LOW_REP = 20;
     const key = $("#ownerSignKey");
     const connect = $("#ownerSignConnect");
     const cancel = $("#ownerSignCancel");
-    let wif = ((key && key.value) || "").replace(/\s+/g, "");
-    if (key) key.value = "";
+    const active = session.authority === "Active";
+    const method = authMethod($("#ownerSignMethod"));
+    let wif = "";
+    if (method === "password") {
+      wif = ((key && key.value) || "").replace(/\s+/g, "");
+      if (!wif) {
+        if (key) key.value = "";
+        setOwnerSignStatus(active ? "Enter the active key." : "Enter the posting key.", true);
+        return;
+      }
+      if (key) key.value = "";
+    } else if (!window.hive_keychain) {
+      setOwnerSignStatus(
+        active
+          ? "Hive Keychain is not available. Choose Password and enter the active key."
+          : "Hive Keychain is not available. Choose Password and enter the posting key.",
+        true
+      );
+      return;
+    }
     ownerSignBusy = true;
     if (connect) connect.disabled = true;
     if (cancel) cancel.disabled = true;
-    const active = session.authority === "Active";
     try {
-      if (wif) {
+      if (method === "password") {
         setOwnerSignStatus("Signing…", false);
         if (active) {
           if (!window.HiveAuth || typeof HiveAuth.broadcastActiveKey !== "function") {
@@ -17022,14 +17094,6 @@ let CS77_FILTER_LOW_REP = 20;
           }
           await HiveAuth.broadcastWithKey(session.name, wif, session.operations);
         }
-      } else if (!window.hive_keychain) {
-        setOwnerSignStatus(
-          active
-            ? "Enter the active key. Hive Keychain is not available."
-            : "Enter the posting key. Hive Keychain is not available.",
-          true
-        );
-        return;
       } else {
         setOwnerSignStatus("Waiting for Keychain…", false);
         await new Promise((resolve, reject) => {
@@ -20915,6 +20979,8 @@ let CS77_FILTER_LOW_REP = 20;
 
     $("#loginCancel").addEventListener("click", closeLogin);
     $("#loginConnect").addEventListener("click", connectLogin);
+    bindAuthMethod($("#loginMethod"));
+    bindAuthMethod($("#ownerSignMethod"));
     const ownerSignConnect = $("#ownerSignConnect");
     const ownerSignCancel = $("#ownerSignCancel");
     const ownerSignKey = $("#ownerSignKey");

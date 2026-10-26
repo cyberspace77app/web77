@@ -4601,6 +4601,47 @@ a.wallet-tx-time:hover {
   margin-bottom: 1rem;
 }
 
+.login-method {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 1.15rem;
+  flex-wrap: wrap;
+}
+
+.login-method button {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+  padding: 0.6rem 1.05rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  line-height: 1.2;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.login-method button:hover {
+  color: var(--yellow);
+  text-shadow: none;
+}
+
+.login-method button.is-active {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+  background: rgba(227, 19, 55, 0.1);
+  text-shadow: var(--glow-yellow);
+}
+
+.login-method button:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
 .login-label {
   display: block;
   font-family: var(--font-display);
@@ -4610,13 +4651,6 @@ a.wallet-tx-time:hover {
   text-transform: uppercase;
   color: var(--gray);
   margin-bottom: 0.35rem;
-}
-
-.login-optional {
-  letter-spacing: 0.08em;
-  font-weight: 400;
-  text-transform: none;
-  opacity: 0.7;
 }
 
 .login-card input,
