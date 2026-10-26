@@ -4486,6 +4486,20 @@ a.tag:hover {
   text-overflow: ellipsis;
 }
 
+.wallet-tx-detail a.mention,
+.wallet-tx-memo a.mention {
+  color: inherit;
+  text-shadow: none;
+}
+
+.wallet-tx-detail a.mention:hover,
+.wallet-tx-detail a.mention:focus-visible,
+.wallet-tx-memo a.mention:hover,
+.wallet-tx-memo a.mention:focus-visible {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
 .wallet-tx-memo {
   display: block;
   margin-top: 0.28rem;

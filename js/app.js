@@ -14680,34 +14680,131 @@ let CS77_FILTER_LOW_REP = 20;
     return parts.filter(Boolean).join(" · ");
   }
 
+  function walletHiveName(name) {
+    const raw = String(name || "")
+      .trim()
+      .replace(/^@/, "");
+    if (raw.length < 3 || raw.length > 16) return "";
+    if (!/^[a-z][a-z0-9.-]*[a-z0-9]$/i.test(raw)) return "";
+    return raw.toLowerCase();
+  }
+
+  function walletSameAccount(a, b) {
+    const left = walletHiveName(a) || String(a || "").trim().toLowerCase();
+    const right = walletHiveName(b) || String(b || "").trim().toLowerCase();
+    return Boolean(left) && left === right;
+  }
+
+  // `at` keeps the memo's own @ character and spelling. Chain fields use the canonical name.
+  function walletAccountHtml(name, at) {
+    const raw = String(name || "")
+      .trim()
+      .replace(/^@/, "");
+    if (!raw) return "";
+    const user = walletHiveName(raw);
+    const mark = at || "@";
+    if (!user) return HiveMd.escapeHtml(mark + raw);
+    const href = HiveMd.escapeHtml(profileHref(user));
+    const label = at ? raw : user;
+    return `<a class="mention" href="${href}">${HiveMd.escapeHtml(mark + label)}</a>`;
+  }
+
+  function walletAccountPair(left, right) {
+    const a = walletAccountHtml(left);
+    const b = walletAccountHtml(right);
+    if (a && b) return a + " → " + b;
+    return a || b;
+  }
+
+  function walletOtherAccount(payload) {
+    if (!payload || payload.to == null || payload.to === "") return "";
+    if (walletSameAccount(payload.to, payload.from)) return "";
+    return walletAccountHtml(payload.to);
+  }
+
+  function walletMemoPermlink(s, index) {
+    if (s.charAt(index) !== "/") return "";
+    const m = /^[a-z0-9](?:[a-z0-9-]{0,254}[a-z0-9])?/i.exec(s.slice(index + 1));
+    if (!m) return "";
+    const perm = m[0];
+    const next = s.charAt(index + 1 + perm.length);
+    if (next && /[a-z0-9_-]/i.test(next)) return "";
+    return perm;
+  }
+
+  function walletPostHtml(name, permlink, at) {
+    const user = walletHiveName(name);
+    const perm = String(permlink || "");
+    if (!user || !perm) return walletAccountHtml(name, at);
+    const href = HiveMd.escapeHtml(appHref("/@" + user + "/" + perm.toLowerCase()));
+    const mark = at || "@";
+    const raw = String(name || "")
+      .trim()
+      .replace(/^@/, "");
+    return `<a class="mention" href="${href}">${HiveMd.escapeHtml(mark + raw + "/" + perm)}</a>`;
+  }
+
+  function walletMemoHtml(text) {
+    const s = String(text || "");
+    if (!s) return "";
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      const at = s.charAt(i);
+      const prev = i > 0 ? s.charAt(i - 1) : "";
+      const boundary = !prev || !/[a-zA-Z0-9@＠/]/.test(prev);
+      if ((at === "@" || at === "＠") && boundary) {
+        const m = /^([a-z][a-z0-9.\-]*[a-z0-9])/i.exec(s.slice(i + 1));
+        if (m && walletHiveName(m[1])) {
+          const perm = walletMemoPermlink(s, i + 1 + m[1].length);
+          if (perm) {
+            out += walletPostHtml(m[1], perm, at);
+            i += 1 + m[1].length + 1 + perm.length;
+            continue;
+          }
+          out += walletAccountHtml(m[1], at);
+          i += 1 + m[1].length;
+          continue;
+        }
+      }
+      const next = s.slice(i + 1).search(/[@＠]/);
+      const end = next < 0 ? s.length : i + 1 + next;
+      out += HiveMd.escapeHtml(s.slice(i, end));
+      i = end;
+    }
+    return out;
+  }
+
   function walletTxDetail(type, payload) {
     if (!payload) return "";
-    if (type === "transfer") {
-      return "@" + (payload.from || "") + " → @" + (payload.to || "");
-    }
+    if (type === "transfer") return walletAccountPair(payload.from, payload.to);
     if (type === "transfer_to_vesting") {
-      return payload.to && payload.to !== payload.from
-        ? "staked hive for @" + payload.to
-        : "staked hive";
+      const who = walletOtherAccount(payload);
+      return who ? "staked hive for " + who : "staked hive";
     }
     if (type === "withdraw_vesting") return "power down";
     if (type === "fill_vesting_withdraw") {
-      return "@" + (payload.from_account || "") + " → @" + (payload.to_account || "");
+      return walletAccountPair(payload.from_account, payload.to_account);
     }
-    if (type === "transfer_to_savings") {
+    if (
+      type === "transfer_to_savings" ||
+      type === "transfer_from_savings" ||
+      type === "fill_transfer_from_savings"
+    ) {
       const unit = /hbd/i.test(String(payload.amount || "")) ? "hbd" : "hive";
-      return "staked " + unit;
-    }
-    if (type === "transfer_from_savings" || type === "fill_transfer_from_savings") {
-      const unit = /hbd/i.test(String(payload.amount || "")) ? "hbd" : "hive";
-      return "unstake " + unit;
+      const verb = type === "transfer_to_savings" ? "staked" : "unstake";
+      const who = walletOtherAccount(payload);
+      if (!who) return verb + " " + unit;
+      return type === "transfer_to_savings" ? verb + " " + unit + " for " + who : verb + " " + unit + " to " + who;
     }
     if (type === "delegate_vesting_shares") {
-      return "@" + (payload.delegator || "") + " → @" + (payload.delegatee || "");
+      return walletAccountPair(payload.delegator, payload.delegatee);
     }
-    if (type === "author_reward") return payload.permlink ? String(payload.permlink) : "";
+    if (type === "author_reward") {
+      return payload.permlink ? HiveMd.escapeHtml(String(payload.permlink)) : "";
+    }
     if (type === "curation_reward") {
-      return payload.comment_author ? "@" + payload.comment_author : "";
+      return payload.comment_author ? walletAccountHtml(payload.comment_author) : "";
     }
     if (type === "claim_reward_balance") return "pending rewards claimed";
     return "";
@@ -14868,7 +14965,7 @@ let CS77_FILTER_LOW_REP = 20;
     const payload = op[1] || {};
     const amount = walletTxAmounts(type, payload, props);
     const detail = walletTxDetail(type, payload);
-    const memo = walletTxMemo(type, payload);
+    const memo = walletMemoHtml(walletTxMemo(type, payload));
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
     const abs = rec.timestamp ? formatCreatedUtc(rec.timestamp) : "";
     const pop = abs
@@ -14883,8 +14980,8 @@ let CS77_FILTER_LOW_REP = 20;
     return `<div class="wallet-tx">
       <div class="wallet-tx-main">
         <span class="wallet-tx-type">${HiveMd.escapeHtml(WALLET_TX_TYPES[type])}</span>
-        ${detail ? `<span class="wallet-tx-detail">${HiveMd.escapeHtml(detail)}</span>` : ""}
-        ${memo ? `<span class="wallet-tx-memo">${HiveMd.escapeHtml(memo)}</span>` : ""}
+        ${detail ? `<span class="wallet-tx-detail">${detail}</span>` : ""}
+        ${memo ? `<span class="wallet-tx-memo">${memo}</span>` : ""}
       </div>
       <div class="wallet-tx-side">
         ${amount ? `<span class="wallet-tx-amount">${HiveMd.escapeHtml(amount)}</span>` : ""}
