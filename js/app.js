@@ -130,6 +130,9 @@ let CS77_FILTER_LOW_REP = 20;
   let communityEditBusy = false;
   let ownerSignSession = null;
   let ownerSignBusy = false;
+  // Decrypted transfer memos for this tab. The key is the # ciphertext.
+  const walletMemoPlain = new Map();
+  let walletMemoBusy = false;
   let communityMemberContext = null;
   let communityRoleBusy = false;
   let communityRoleSession = null;
@@ -5281,6 +5284,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (window.HiveAuth) HiveAuth.clear();
     sessionStorage.removeItem(SESSION_KEY);
     clearKeychainUser();
+    walletMemoPlain.clear();
     localVotes.clear();
     votesCache.clear();
     localReblogs.clear();
@@ -14744,6 +14748,39 @@ let CS77_FILTER_LOW_REP = 20;
     return `<a class="mention" href="${href}">${HiveMd.escapeHtml(mark + raw + "/" + perm)}</a>`;
   }
 
+  function walletMemoEncrypted(text) {
+    return String(text || "").charAt(0) === "#";
+  }
+
+  function walletMemoDisplay(text) {
+    const s = String(text || "");
+    return s.charAt(0) === "#" ? s.slice(1) : s;
+  }
+
+  function walletMemoLockSvg(open) {
+    const shackle = open
+      ? '<path d="M5.2 6.15V4.15a2.8 2.8 0 0 1 5.6 0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+      : '<path d="M5.2 7.1V5.05a2.8 2.8 0 0 1 5.6 0V7.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>';
+    return (
+      '<svg class="wallet-memo-lock' +
+      (open ? " wallet-memo-lock-open" : "") +
+      '" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">' +
+      '<rect x="3.15" y="7.1" width="9.7" height="6.4" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+      shackle +
+      "</svg>"
+    );
+  }
+
+  function walletMemoRevealedHtml(plain) {
+    return (
+      '<span class="wallet-tx-memo wallet-tx-memo-open">' +
+      walletMemoLockSvg(true) +
+      '<span class="wallet-memo-cipher">' +
+      walletMemoHtml(plain) +
+      "</span></span>"
+    );
+  }
+
   function walletMemoHtml(text) {
     const s = String(text || "");
     if (!s) return "";
@@ -14820,6 +14857,27 @@ let CS77_FILTER_LOW_REP = 20;
       return "";
     }
     return String((payload && payload.memo) || "").trim();
+  }
+
+  function walletTxMemoHtml(type, payload) {
+    const raw = walletTxMemo(type, payload);
+    if (!raw) return "";
+    if (!walletMemoEncrypted(raw)) {
+      return `<span class="wallet-tx-memo">${walletMemoHtml(raw)}</span>`;
+    }
+    if (walletMemoPlain.has(raw)) {
+      const plain = walletMemoPlain.get(raw);
+      if (!plain) return "";
+      return walletMemoRevealedHtml(plain);
+    }
+    const to = HiveMd.escapeHtml(String((payload && payload.to) || ""));
+    const from = HiveMd.escapeHtml(String((payload && payload.from) || ""));
+    return (
+      `<button type="button" class="wallet-tx-memo wallet-tx-memo-locked" data-memo="${HiveMd.escapeHtml(raw)}" data-memo-to="${to}" data-memo-from="${from}" aria-label="Decrypt memo">` +
+      walletMemoLockSvg() +
+      `<span class="wallet-memo-cipher">${HiveMd.escapeHtml(raw)}</span>` +
+      "</button>"
+    );
   }
 
   function walletTxUrl(rec) {
@@ -14965,7 +15023,7 @@ let CS77_FILTER_LOW_REP = 20;
     const payload = op[1] || {};
     const amount = walletTxAmounts(type, payload, props);
     const detail = walletTxDetail(type, payload);
-    const memo = walletMemoHtml(walletTxMemo(type, payload));
+    const memo = walletTxMemoHtml(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
     const abs = rec.timestamp ? formatCreatedUtc(rec.timestamp) : "";
     const pop = abs
@@ -14981,13 +15039,123 @@ let CS77_FILTER_LOW_REP = 20;
       <div class="wallet-tx-main">
         <span class="wallet-tx-type">${HiveMd.escapeHtml(WALLET_TX_TYPES[type])}</span>
         ${detail ? `<span class="wallet-tx-detail">${detail}</span>` : ""}
-        ${memo ? `<span class="wallet-tx-memo">${memo}</span>` : ""}
+        ${memo || ""}
       </div>
       <div class="wallet-tx-side">
         ${amount ? `<span class="wallet-tx-amount">${HiveMd.escapeHtml(amount)}</span>` : ""}
         ${timeHtml}
       </div>
     </div>`;
+  }
+
+  // A Keychain login can decrypt memos sent to that account without typing the key.
+  function keychainLoginActive() {
+    const user = observer();
+    if (!user || !window.hive_keychain) return "";
+    if (window.HiveAuth && HiveAuth.hasKey(user)) return "";
+    return readKeychainUser() === user ? user : "";
+  }
+
+  function walletMemoDialogAccount(to, from) {
+    const user = observer();
+    if (user && (walletSameAccount(to, user) || walletSameAccount(from, user))) return user;
+    const page = walletHiveName(profileState.author);
+    if (page && (walletSameAccount(to, page) || walletSameAccount(from, page))) return page;
+    return walletHiveName(to) || walletHiveName(from) || "";
+  }
+
+  // The extension object is hive_keychain. Decrypt is requestVerifyKey, which
+  // sends type "decode". There is no requestDecode on the injected API.
+  // PeakD, keychain-sdk decode(), and wax KeychainProvider.decryptData all
+  // call requestVerifyKey(account, memo, "Memo", callback).
+  function keychainCanDecodeMemo() {
+    const kc = window.hive_keychain;
+    if (!kc) return false;
+    return typeof kc.requestVerifyKey === "function" || typeof kc.requestDecode === "function";
+  }
+
+  function requestKeychainMemoDecode(username, cipher) {
+    return new Promise((resolve, reject) => {
+      const kc = window.hive_keychain;
+      const done = (res) => {
+        if (res && res.success && typeof res.result === "string") resolve(res.result);
+        else reject(new Error((res && (res.message || res.error)) || "Decrypt was cancelled."));
+      };
+      if (kc && typeof kc.requestVerifyKey === "function") {
+        kc.requestVerifyKey(username, cipher, "Memo", done);
+        return;
+      }
+      if (kc && typeof kc.requestDecode === "function") {
+        kc.requestDecode(username, cipher, "Memo", done);
+        return;
+      }
+      reject(new Error("hive keychain is not available. Choose Password and enter the memo key."));
+    });
+  }
+
+  function revealWalletMemo(cipher, decoded) {
+    const plain = walletMemoDisplay(decoded).trim();
+    walletMemoPlain.set(cipher, plain);
+    const nodes = document.querySelectorAll(".wallet-tx-memo-locked");
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (node.getAttribute("data-memo") !== cipher) continue;
+      if (!plain) {
+        node.remove();
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = "wallet-tx-memo wallet-tx-memo-open";
+      span.innerHTML =
+        walletMemoLockSvg(true) +
+        '<span class="wallet-memo-cipher">' +
+        walletMemoHtml(plain) +
+        "</span>";
+      node.replaceWith(span);
+    }
+  }
+
+  async function decryptWalletMemo(btn) {
+    if (walletMemoBusy || ownerSignBusy || ownerSignOpen()) return;
+    const cipher = btn.getAttribute("data-memo") || "";
+    if (!walletMemoEncrypted(cipher)) return;
+    const to = btn.getAttribute("data-memo-to") || "";
+    const from = btn.getAttribute("data-memo-from") || "";
+    const keychainUser = keychainLoginActive();
+    const useKeychain =
+      Boolean(keychainUser) &&
+      walletSameAccount(to, keychainUser) &&
+      keychainCanDecodeMemo();
+    walletMemoBusy = true;
+    btn.disabled = true;
+    try {
+      let decoded;
+      if (useKeychain) {
+        decoded = await requestKeychainMemoDecode(keychainUser, cipher);
+      } else {
+        const account = walletMemoDialogAccount(to, from);
+        if (!account) throw new Error("Could not decrypt this memo.");
+        decoded = await signWithDialog(account, [], {
+          source: "memo",
+          mode: "decrypt",
+          memo: cipher,
+          authority: "Memo",
+          title: "Decrypt memo",
+          action: "Decrypt",
+          lead: "Use hive keychain (recommended) or enter the memo key.",
+          cancelMessage: "The memo was not decrypted.",
+          failMessage: "Could not decrypt this memo.",
+        });
+      }
+      revealWalletMemo(cipher, decoded);
+    } catch (err) {
+      if (!(err && err.ownerCancel)) {
+        showError((err && err.message) || "Could not decrypt this memo.");
+      }
+    } finally {
+      walletMemoBusy = false;
+      if (btn.isConnected) btn.disabled = false;
+    }
   }
 
   function walletRewardsHtml(wallet, own) {
@@ -17727,11 +17895,13 @@ let CS77_FILTER_LOW_REP = 20;
     const label = $("#ownerSignKeyLabel");
     const hint = $("#ownerSignHint");
     const key = $("#ownerSignKey");
+    const connect = $("#ownerSignConnect");
     if (title) title.textContent = (opts && opts.title) || "Sign owner settings";
     if (lead) lead.textContent = (opts && opts.lead) || ownerSignDefaultLead(authority);
     if (label) label.textContent = role.charAt(0).toUpperCase() + role.slice(1) + " key";
     if (hint) hint.textContent = "The " + role + " key is used once and is not saved.";
     if (key) key.placeholder = role + " key";
+    if (connect) connect.textContent = (opts && opts.action) || "Sign";
     setAuthMethod($("#ownerSignMethod"), defaultAuthMethod());
   }
 
@@ -17754,7 +17924,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Shared signer for subspace owner settings, role changes, creating a subspace,
-  // and wallet stake or unstake. One dialog asks for hive keychain or the role key.
+  // wallet stake or unstake, and decrypting a transfer memo. One dialog asks
+  // for hive keychain or the role key. Decrypt mode resolves with the plaintext.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
     return new Promise((resolve, reject) => {
@@ -17781,8 +17952,29 @@ let CS77_FILTER_LOW_REP = 20;
         authority: ownerSignAuthority(opts),
         failMessage: opts.failMessage || "",
         cancelMessage: opts.cancelMessage || "",
+        mode: opts.mode === "decrypt" ? "decrypt" : "broadcast",
+        memo: opts.mode === "decrypt" ? String(opts.memo || "") : "",
       };
     });
+  }
+
+  async function decryptOwnerSignMemo(session, method, secret) {
+    if (method === "password") {
+      setOwnerSignStatus("Decrypting…", false);
+      if (!window.HiveAuth || typeof HiveAuth.decodeMemo !== "function") {
+        secret = "";
+        throw new Error("Could not decrypt with that key.");
+      }
+      const job = HiveAuth.decodeMemo(session.name, secret, session.memo);
+      secret = "";
+      return job;
+    }
+    secret = "";
+    setOwnerSignStatus("Waiting for Keychain…", false);
+    if (!keychainCanDecodeMemo()) {
+      throw new Error("hive keychain is not available. Choose Password and enter the memo key.");
+    }
+    return requestKeychainMemoDecode(session.name, session.memo);
   }
 
   async function submitOwnerSign() {
@@ -17814,6 +18006,15 @@ let CS77_FILTER_LOW_REP = 20;
     if (connect) connect.disabled = true;
     if (cancel) cancel.disabled = true;
     try {
+      if (session.mode === "decrypt") {
+        const decoded = await decryptOwnerSignMemo(session, method, secret);
+        secret = "";
+        const done = session;
+        ownerSignSession = null;
+        hideOwnerSign();
+        done.resolve(decoded);
+        return;
+      }
       if (method === "password") {
         setOwnerSignStatus("Signing…", false);
         if (!window.HiveAuth || typeof HiveAuth.broadcastRoleSecret !== "function") {
@@ -20822,9 +21023,12 @@ let CS77_FILTER_LOW_REP = 20;
     closeContentMore();
     hideContentDelete(true);
     clearError();
-    if (ownerSignSession && ownerSignSession.source === "wallet" && !ownerSignBusy) {
-      cancelOwnerSign();
-      closeWalletOverlay();
+    if (ownerSignSession && !ownerSignBusy) {
+      const signSource = ownerSignSession.source;
+      if (signSource === "wallet" || signSource === "memo") {
+        cancelOwnerSign();
+        if (signSource === "wallet") closeWalletOverlay();
+      }
     }
     quietSmartHeader();
     const r = parseRoute();
@@ -22032,6 +22236,12 @@ let CS77_FILTER_LOW_REP = 20;
       if (moreWallet && inInteractiveSurface(moreWallet)) {
         e.preventDefault();
         loadMoreWalletHistory();
+        return;
+      }
+      const lockedMemo = e.target.closest(".wallet-tx-memo-locked");
+      if (lockedMemo && inInteractiveSurface(lockedMemo)) {
+        e.preventDefault();
+        decryptWalletMemo(lockedMemo);
         return;
       }
       const claimBtn = e.target.closest(".wallet-claim-btn");

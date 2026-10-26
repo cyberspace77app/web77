@@ -4506,6 +4506,65 @@ a.tag:hover {
   overflow-wrap: anywhere;
 }
 
+button.wallet-tx-memo {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+button.wallet-tx-memo:hover,
+button.wallet-tx-memo:focus-visible {
+  color: var(--yellow);
+}
+
+button.wallet-tx-memo:focus {
+  outline: none;
+}
+
+button.wallet-tx-memo:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+button.wallet-tx-memo:disabled {
+  cursor: progress;
+}
+
+.wallet-tx-memo-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  width: 100%;
+  line-height: 1.45;
+}
+
+.wallet-memo-lock {
+  flex: 0 0 auto;
+  width: 0.95em;
+  height: 0.95em;
+  margin-top: 0.2em;
+  color: var(--yellow);
+}
+
+.wallet-memo-cipher {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .wallet-tx-side {
   flex-shrink: 0;
   text-align: right;

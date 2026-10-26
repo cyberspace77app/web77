@@ -582,6 +582,27 @@
     }
   }
 
+  // Decrypt a Hive memo (#…) with a memo key or master password. The secret
+  // is checked against the account, used once, and wiped.
+  async function decodeMemo(username, secret, memo) {
+    const openedJob = materializeRoleKey(username, secret, "memo");
+    secret = "";
+    const opened = await openedJob;
+    try {
+      const lib = await loadHiveTx();
+      const pk = lib.PrivateKey.from(opened.bytes);
+      try {
+        return lib.Memo.decode(pk, String(memo || ""));
+      } catch {
+        throw new Error("Could not decrypt this memo.");
+      } finally {
+        if (pk && pk.key) wipe(pk.key);
+      }
+    } finally {
+      wipe(opened.bytes);
+    }
+  }
+
   async function broadcastWithKey(username, wif, operations) {
     return broadcastRoleSecret(username, wif, "posting", operations);
   }
@@ -686,6 +707,7 @@
     wifFromLogin,
     loginMaster,
     broadcastRoleSecret,
+    decodeMemo,
     broadcastWithKey,
     broadcastActiveKey,
     broadcastWif,
