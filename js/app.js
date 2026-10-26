@@ -10916,7 +10916,7 @@ let CS77_FILTER_LOW_REP = 20;
           $("#subspaceCreateFee").textContent = subspaceFeeLine(choice.fee, choice.account);
         }
         setSubspaceCreateStatus("Creating the subspace account…", false);
-        await signCommunityOwnerOps(user, [operation], {
+        await signWithDialog(user, [operation], {
           source: "create",
           authority: "Active",
           title: "Create subspace",
@@ -14602,14 +14602,6 @@ let CS77_FILTER_LOW_REP = 20;
     return wallet.rewardHive > 0 || wallet.rewardHbd > 0 || wallet.rewardVests > 0;
   }
 
-  function hasActiveSigner() {
-    return Boolean(window.hive_keychain);
-  }
-
-  function activeSignerNeededMessage() {
-    return "Hive Keychain is needed to stake or unstake.";
-  }
-
   // Keep these names aligned with WALLET_HISTORY_OP_IDS in api.js.
   const WALLET_TX_TYPES = {
     transfer: "transfer",
@@ -14954,6 +14946,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (name === "hive") value.textContent = formatAssetNumber(wallet.hive);
       else if (name === "staked hive") value.textContent = formatAssetNumber(wallet.stakedHive);
       else if (name === "hbd") value.textContent = formatAssetNumber(wallet.hbd);
+      else if (name === "staked hbd") value.textContent = formatAssetNumber(wallet.stakedHbd);
     }
   }
 
@@ -15157,6 +15150,73 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
+  function walletSignCopy(kind, user, amount) {
+    const unstake = kind.indexOf("unstake") === 0;
+    const symbol = kind.indexOf("hbd") === -1 ? "hive" : "hbd";
+    const shown = formatHiveLike(amount, symbol);
+    let detail = "Moves " + shown + " into staked hive.";
+    if (kind === "unstake-hive") detail = "Powers down " + shown + ". This takes 13 weeks.";
+    else if (kind === "stake-hbd") detail = "Moves " + shown + " into staked hbd.";
+    else if (kind === "unstake-hbd") detail = "Withdraws " + shown + " from staked hbd. This takes 3 days.";
+    const action = unstake ? "unstake" : "stake";
+    return {
+      title: unstake ? "Sign unstake" : "Sign stake",
+      lead: "Use hive keychain (recommended) or enter the active key of @" + user + ". " + detail,
+      cancelMessage: "The " + action + " was cancelled.",
+      failMessage: "Could not sign this " + action + ".",
+    };
+  }
+
+  function walletAccounts(wallet) {
+    const accounts = [];
+    if (wallet && wallet.account) accounts.push(wallet.account);
+    if (
+      wallet &&
+      accountState.account &&
+      accountState.account !== wallet.account &&
+      accountState.user === wallet.name
+    ) {
+      accounts.push(accountState.account);
+    }
+    return accounts;
+  }
+
+  // Stake moves liquid hive or hbd immediately. The chain account can still
+  // show the old balances for a moment, so the table is updated here.
+  function applyWalletStake(wallet, kind, amount) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const moved = roundAsset(amount, 3);
+    if (!(moved >= 0.001)) return;
+    const accounts = walletAccounts(wallet);
+    if (kind === "stake-hive") {
+      const vests = HiveApi.hiveToVests(moved, wallet.props);
+      wallet.hive = roundAsset(Math.max(0, (Number(wallet.hive) || 0) - moved), 3);
+      wallet.stakedHive = roundAsset((Number(wallet.stakedHive) || 0) + moved, 3);
+      wallet.vestingShares = roundAsset((Number(wallet.vestingShares) || 0) + vests, 6);
+      wallet.availableVests = Math.max(0, wallet.vestingShares - (Number(wallet.delegatedVests) || 0));
+      wallet.hiveStr = formatChainAmount(wallet.hive, "HIVE", 3);
+      const vestsStr = formatChainAmount(wallet.vestingShares, "VESTS", 6);
+      for (let i = 0; i < accounts.length; i++) {
+        accounts[i].balance = wallet.hiveStr;
+        accounts[i].vesting_shares = vestsStr;
+      }
+    } else if (kind === "stake-hbd") {
+      wallet.hbd = roundAsset(Math.max(0, (Number(wallet.hbd) || 0) - moved), 3);
+      wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + moved, 3);
+      wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
+      const savingsStr = formatChainAmount(wallet.stakedHbd, "HBD", 3);
+      for (let i = 0; i < accounts.length; i++) {
+        accounts[i].hbd_balance = wallet.hbdStr;
+        accounts[i].savings_hbd_balance = savingsStr;
+      }
+    } else {
+      return;
+    }
+    claimAnimToken += 1;
+    paintWalletBalanceAmounts(wallet);
+    if (kind === "stake-hive" && accountState.user === wallet.name) syncOwnProfileBanner();
+  }
+
   function walletMaxFor(kind, wallet) {
     if (!wallet) return 0;
     if (kind === "stake-hive") return wallet.hive;
@@ -15174,6 +15234,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function closeWalletOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") return;
     const ov = $("#walletOverlay");
     if (ov) ov.hidden = true;
     walletOpState.kind = "";
@@ -15200,10 +15261,6 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     if (!user) {
       openLogin();
-      return;
-    }
-    if (!hasActiveSigner()) {
-      showError(activeSignerNeededMessage());
       return;
     }
     const copy = walletOpCopy(kind);
@@ -15261,11 +15318,7 @@ let CS77_FILTER_LOW_REP = 20;
     const wallet = profileState.wallet;
     const user = observer();
     if (!kind || !wallet || !user || !isOwnAuthor(profileState.author)) return;
-    if (walletOpState.pending) return;
-    if (!hasActiveSigner()) {
-      setWalletOpStatus(activeSignerNeededMessage(), true);
-      return;
-    }
+    if (walletOpState.pending || ownerSignOpen()) return;
     const amount = roundAsset(parseAmountInput($("#walletAmount") && $("#walletAmount").value), 3);
     if (amount < 0.001) {
       setWalletOpStatus("Enter an amount of at least 0.001.", true);
@@ -15276,6 +15329,10 @@ let CS77_FILTER_LOW_REP = 20;
       setWalletOpStatus("That is more than " + formatHiveLike(max, walletOpState.symbol) + ".", true);
       return;
     }
+    walletOpState.pending = true;
+    const submit = $("#walletOpSubmit");
+    if (submit) submit.disabled = true;
+    setWalletOpStatus("");
     let operations;
     try {
       if (kind === "stake-hive") {
@@ -15323,30 +15380,44 @@ let CS77_FILTER_LOW_REP = 20;
           ],
         ];
       } else {
-        setWalletOpStatus("Unknown wallet action.", true);
-        return;
+        throw new Error("Unknown wallet action.");
       }
     } catch (err) {
       setWalletOpStatus((err && err.message) || String(err), true);
+      walletOpState.pending = false;
+      if (submit) submit.disabled = false;
       return;
     }
-    walletOpState.pending = true;
-    const submit = $("#walletOpSubmit");
-    if (submit) submit.disabled = true;
-    setWalletOpStatus(signingLabel());
-    const { promise } = ChainQueue.enqueue({
-      username: user,
-      key: "Active",
-      operations,
-      meta: { type: "wallet", action: kind },
-    });
+    if (walletOpState.kind !== kind || observer() !== user || !isOwnAuthor(profileState.author)) {
+      if (walletOpState.kind === kind) closeWalletOverlay();
+      return;
+    }
+    const copy = walletSignCopy(kind, user, amount);
     try {
-      await promise;
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: "Active",
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+      });
       closeWalletOverlay();
+      if (kind === "stake-hive" || kind === "stake-hbd") {
+        // Drop a refresh that started before this signature so it cannot
+        // paint the pre-stake account over the balances just applied.
+        resourceGen += 1;
+        applyWalletStake(profileState.wallet, kind, amount);
+        return;
+      }
       currentViewKey = "";
       route();
     } catch (err) {
-      setWalletOpStatus((err && err.message) || String(err), true);
+      const cancelled = Boolean(err && err.ownerCancel);
+      setWalletOpStatus(
+        cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
+        !cancelled
+      );
       walletOpState.pending = false;
       if (submit) submit.disabled = false;
     }
@@ -17555,21 +17626,24 @@ let CS77_FILTER_LOW_REP = 20;
     if (cancel) cancel.disabled = false;
   }
 
-  function signCommunityOwnerOps(name, operations, copy) {
+  // Shared signer for subspace owner settings, role changes, creating a subspace,
+  // and wallet stake or unstake. One dialog asks for hive keychain or the role key.
+  function signWithDialog(name, operations, copy) {
     const opts = copy || {};
     return new Promise((resolve, reject) => {
       const el = $("#ownerSignOverlay");
       const user = $("#ownerSignUser");
       if (!el || !user) {
-        reject(new Error("Could not ask for the subspace posting key."));
+        reject(new Error("Could not open the sign dialog."));
         return;
       }
       hideOwnerSign();
       user.value = name;
       applyOwnerSignChrome(opts);
       el.hidden = false;
-      // Desktop focus stays on the account so the subspace name is the emphasis.
-      // Mobile leaves the inputs unfocused so the keyboard stays closed.
+      // Desktop focus stays on the account. Mobile leaves the inputs unfocused
+      // so the keyboard stays closed.
+
       if (!isMobileViewport()) user.focus();
       ownerSignSession = {
         name,
@@ -17780,7 +17854,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (!communityEditStill(name) || observer() !== user) return;
       try {
-        await signCommunityOwnerOps(name, ownerOps.operations);
+        await signWithDialog(name, ownerOps.operations);
       } catch (err) {
         if (communityEditStill(name)) {
           const cancelled = Boolean(err && err.ownerCancel);
@@ -18552,7 +18626,7 @@ let CS77_FILTER_LOW_REP = 20;
       dismissCommunityRoleDialog();
       setCommunityPeopleStatus(needs ? "Waiting for the owner signature…" : "Saving…", false);
       if (needs) {
-        await signCommunityOwnerOps(ctx.name, [op], {
+        await signWithDialog(ctx.name, [op], {
           source: "role",
           title: "Sign owner change",
           lead: "The owner account must sign this role change. Use hive keychain or enter the posting key of this subspace account.",
@@ -20621,6 +20695,10 @@ let CS77_FILTER_LOW_REP = 20;
     closeContentMore();
     hideContentDelete(true);
     clearError();
+    if (ownerSignSession && ownerSignSession.source === "wallet" && !ownerSignBusy) {
+      cancelOwnerSign();
+      closeWalletOverlay();
+    }
     quietSmartHeader();
     const r = parseRoute();
     // Account-menu comments, replies, and wallet collapse the banner on mobile.

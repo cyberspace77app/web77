@@ -4615,6 +4615,11 @@ a.wallet-tx-time:hover {
   z-index: 55;
 }
 
+/* Above the wallet amount dialog, which stays open underneath. */
+#ownerSignOverlay {
+  z-index: 60;
+}
+
 .login-card .login-lead {
   margin-bottom: 1rem;
 }
