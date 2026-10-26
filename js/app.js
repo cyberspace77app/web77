@@ -19119,7 +19119,7 @@ let CS77_FILTER_LOW_REP = 20;
           feedStatus.hidden = true;
           list.innerHTML = `
             <div class="panel empty-state">
-              <h2>No posts in this community</h2>
+              <h2>No posts in this subspace</h2>
               <p>Try another sort, or check back later.</p>
             </div>`;
           return false;
