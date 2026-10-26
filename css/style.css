@@ -1765,17 +1765,6 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   overflow: hidden;
 }
 
-.panel::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--red-bright), var(--yellow), var(--red-bright), transparent);
-  opacity: 0.85;
-}
-
 .error-banner {
   display: flex;
   align-items: flex-start;
