@@ -1883,9 +1883,11 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   z-index: 0;
 }
 
-.post-card:hover {
+.post-card:hover,
+.post-card:focus {
   border-color: var(--red-bright);
   box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.25), var(--glow-red);
+  outline: none;
 }
 
 .post-card:hover::after {
@@ -1904,12 +1906,6 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 
 .post-card.is-muted:hover::after {
   opacity: 0;
-}
-
-.feed-item.is-kbd-current > .post-card,
-.feed-item.is-kbd-current > .post-card.is-muted:hover {
-  border-color: var(--red-bright);
-  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.25), var(--glow-red);
 }
 
 .muted-notice {

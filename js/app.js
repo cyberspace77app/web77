@@ -21358,7 +21358,8 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // j and k move through the feed. l opens the upvote panel, and l again casts it.
+  // j and k move through the feed. Enter opens that card when it is focused.
+  // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -21430,20 +21431,36 @@ let CS77_FILTER_LOW_REP = 20;
     return FEED_KEY_GAP;
   }
 
+  function feedKeyCard(el) {
+    if (!el) return null;
+    return el.querySelector("article.post-card") || el;
+  }
+
   function clearFeedKeyCurrent() {
+    const item = feedKeyItem;
     feedKeyItem = null;
-    const nodes = document.querySelectorAll(".feed-item.is-kbd-current");
-    for (let i = 0; i < nodes.length; i++) nodes[i].classList.remove("is-kbd-current");
+    if (!item) return;
+    const active = document.activeElement;
+    const card = feedKeyCard(item);
+    if (active && (active === card || active === item) && active.blur) active.blur();
   }
 
   function markFeedKeyCurrent(el) {
-    const nodes = document.querySelectorAll(".feed-item.is-kbd-current");
-    for (let i = 0; i < nodes.length; i++) {
-      if (nodes[i] !== el) nodes[i].classList.remove("is-kbd-current");
-    }
     if (!el) return;
     feedKeyItem = el;
-    el.classList.add("is-kbd-current");
+    const card = feedKeyCard(el);
+    if (!card) return;
+    if (card.getAttribute("tabindex") !== "-1") card.setAttribute("tabindex", "-1");
+    beginOwnedFeedScroll();
+    try {
+      card.focus({ preventScroll: true });
+    } catch (err) {
+      try {
+        card.focus();
+      } catch (err2) {
+        /* ignore */
+      }
+    }
   }
 
   function beginOwnedFeedScroll() {
@@ -21587,15 +21604,31 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function feedKeyVotePanelOpen() {
+    return Boolean(openSlider && openSlider.panel && !openSlider.panel.hidden);
+  }
+
+  function feedKeyOpenCurrent() {
+    if (feedKeyVotePanelOpen()) return false;
+    const item = feedKeyLocked(feedKeyItems());
+    if (!item) return false;
+    const card = feedKeyCard(item);
+    if (!card || card !== document.activeElement) return false;
+    if (!card.classList || !card.classList.contains("post-card")) return false;
+    return openCardPost(card);
+  }
+
   function onFeedKeyDown(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
     const key = String(e.key || "").toLowerCase();
-    if (key !== "j" && key !== "k" && key !== "l") return;
-    if (e.repeat && key === "l") return;
+    if (key !== "j" && key !== "k" && key !== "l" && key !== "enter") return;
+    if (e.repeat && (key === "l" || key === "enter")) return;
     if (feedKeyDialogOpen()) return;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
     if (!feedKeyItems().length) return;
-    if (key === "j" || key === "k") {
+    if (key === "enter") {
+      if (!feedKeyOpenCurrent()) return;
+    } else if (key === "j" || key === "k") {
       if (openSlider) hideVoteSlider();
       feedKeyMove(key === "j" ? 1 : -1);
     } else feedKeyUpvote();
