@@ -1794,6 +1794,10 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   min-width: 0;
 }
 
+.feed:not(:empty) {
+  margin-bottom: 2rem;
+}
+
 .feed-item {
   display: flex;
   flex-direction: column;
@@ -2371,6 +2375,11 @@ a.community:hover {
   margin: 2.5rem 0 0.5rem;
 }
 
+.feed-actions:not(:has(button:not([hidden]))) {
+  display: none;
+  margin: 0;
+}
+
 .btn-primary {
   position: relative;
   display: inline-flex;
@@ -2442,6 +2451,10 @@ a.community:hover {
   font-family: var(--font-mono);
   color: var(--yellow);
   letter-spacing: 0.08em;
+}
+
+.loading-row.is-feed-more {
+  padding: 0.35rem 1rem 1rem;
 }
 
 .empty-state {

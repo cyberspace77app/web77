@@ -12,6 +12,10 @@ let CS77_FILTER_LOW_REP = 20;
   const APP_VERSION = "0.18";
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
+  // Load the next page once the third-from-last card is this close to the
+  // viewport, so the request finishes before the reader reaches the end.
+  const FEED_INFINITE_LEAD = 3;
+  const FEED_INFINITE_MARGIN = 720;
   const SESSION_KEY = "cs77_user";
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
   const KEYCHAIN_PERSIST_KEY = "cs77_keychain_persist";
@@ -272,8 +276,14 @@ let CS77_FILTER_LOW_REP = 20;
     cursor: null,
     loading: false,
     done: false,
+    // A failed page leaves the Load more button. Auto-scroll stays quiet until
+    // that button is used, so a dead request is not repeated on every scroll.
+    holdAuto: false,
     gen: 0,
   };
+  let feedFillBusy = false;
+  let feedFillToken = 0;
+  let feedInfiniteQueued = false;
 
   // Post cards whose excerpt was opened inline. Cleared when the feed changes.
   // Profile comments and replies stay on the long preview and are not tracked.
@@ -8645,6 +8655,7 @@ let CS77_FILTER_LOW_REP = 20;
     feedState.cursor = null;
     feedState.loading = false;
     feedState.done = false;
+    feedState.holdAuto = false;
     feedState.gen += 1;
     expandedCardExcerpts.clear();
   }
@@ -9152,6 +9163,96 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
+  function showFeedLoading(status) {
+    if (!status) return;
+    const more = feedState.items.length > 0;
+    status.classList.toggle("is-feed-more", more);
+    if (more) status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span>`;
+    status.hidden = false;
+  }
+
+  function feedTailNearView(list) {
+    if (!list || postLayer.open) return false;
+    const children = list.children;
+    const items = [];
+    for (let i = 0; i < children.length; i++) {
+      if (children[i].classList.contains("feed-item")) items.push(children[i]);
+    }
+    if (!items.length) return false;
+    const tail = items[Math.max(0, items.length - FEED_INFINITE_LEAD)];
+    const rect = tail.getBoundingClientRect();
+    if (rect.height < 1) return false;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.top <= vh + FEED_INFINITE_MARGIN;
+  }
+
+  function maybeLoadMoreFeed() {
+    if (feedFillBusy || feedState.holdAuto || feedState.loading || feedState.done) return;
+    const list = document.getElementById("feedList");
+    const moreBtn = document.getElementById("moreBtn");
+    if (!list || !moreBtn || !feedTailNearView(list)) return;
+    moreBtn.click();
+  }
+
+  // A feed restored while another fill is still finishing checks again when
+  // that fill releases the lock.
+  function queueFeedInfinite() {
+    if (!feedFillBusy) {
+      maybeLoadMoreFeed();
+      return;
+    }
+    feedInfiniteQueued = true;
+  }
+
+  // work() returns true when another page should load if the tail is already
+  // in range (a short first page, or a fast scroll). A newer fill invalidates
+  // this one so a route change does not clear the busy flag early.
+  async function runFeedFill(work) {
+    const token = ++feedFillToken;
+    feedFillBusy = true;
+    let chain = false;
+    try {
+      chain = await work();
+    } catch (err) {
+      chain = false;
+      if (token === feedFillToken) {
+        feedState.holdAuto = true;
+        const status = document.getElementById("feedStatus");
+        const moreBtn = document.getElementById("moreBtn");
+        if (status) status.hidden = true;
+        if (moreBtn) moreBtn.hidden = false;
+        showError((err && err.message) || String(err));
+      }
+    } finally {
+      if (token === feedFillToken) feedFillBusy = false;
+    }
+    if (token !== feedFillToken) return;
+    const queued = feedInfiniteQueued;
+    feedInfiniteQueued = false;
+    if (chain || queued) maybeLoadMoreFeed();
+  }
+
+  function finishFeedPage(status, moreBtn, failed, before) {
+    if (status) status.hidden = true;
+    const stalled = !failed && !feedState.done && feedState.items.length === before;
+    if (failed || stalled) {
+      feedState.holdAuto = true;
+      if (moreBtn) moreBtn.hidden = false;
+      return false;
+    }
+    feedState.holdAuto = false;
+    if (moreBtn) moreBtn.hidden = true;
+    return !feedState.done;
+  }
+
+  function bindFeedMore(moreBtn, fill) {
+    moreBtn.addEventListener("click", () => {
+      if (feedFillBusy) return;
+      feedState.holdAuto = false;
+      fill();
+    });
+  }
+
   async function renderFeed(sort, reset, tag) {
     const t = normalizeRouteTag(tag) || "";
     const spec = feedSpecForRoute(sort, t);
@@ -9177,48 +9278,50 @@ let CS77_FILTER_LOW_REP = 20;
     const moreBtn = $("#moreBtn");
 
     async function fill() {
-      const gen = feedState.gen;
-      hideVoteSlider();
-      moreBtn.hidden = true;
-      status.hidden = false;
-      let failed = false;
-      try {
-        await loadFeedPage();
-      } catch (err) {
-        if (!feedStill(gen)) return;
-        failed = true;
-        showError(err.message || String(err));
-      }
-      if (!feedStill(gen) || !list.isConnected) return;
-      if (!failed) clearError();
-      paintFeedCards(list, cardHtml);
-      if (!feedState.items.length && feedState.done) {
-        status.hidden = true;
-        const following = isFollowingFeed();
-        list.innerHTML = following
-          ? `
+      await runFeedFill(async () => {
+        const gen = feedState.gen;
+        hideVoteSlider();
+        moreBtn.hidden = true;
+        showFeedLoading(status);
+        let failed = false;
+        const before = feedState.items.length;
+        try {
+          await loadFeedPage();
+        } catch (err) {
+          if (!feedStill(gen)) return false;
+          failed = true;
+          showError(err.message || String(err));
+        }
+        if (!feedStill(gen) || !list.isConnected) return false;
+        if (!failed) clearError();
+        paintFeedCards(list, cardHtml);
+        if (!feedState.items.length && feedState.done) {
+          status.hidden = true;
+          const following = isFollowingFeed();
+          list.innerHTML = following
+            ? `
           <div class="panel empty-state">
             <h2>Your feed is empty</h2>
             <p>Posts from accounts you follow will show up here.</p>
           </div>`
-          : t
-            ? `
+            : t
+              ? `
           <div class="panel empty-state">
             <h2>No posts for #${HiveMd.escapeHtml(t)}</h2>
             <p>Try another sort, or check back later.</p>
           </div>`
-            : `
+              : `
           <div class="panel empty-state">
             <h2>No posts matched the filter</h2>
             <p>Try a different filter, or load again in a moment.</p>
           </div>`;
-        return;
-      }
-      status.hidden = true;
-      moreBtn.hidden = feedState.done;
+          return false;
+        }
+        return finishFeedPage(status, moreBtn, failed, before);
+      });
     }
 
-    moreBtn.addEventListener("click", fill);
+    bindFeedMore(moreBtn, fill);
     await fill();
   }
 
@@ -13024,6 +13127,17 @@ let CS77_FILTER_LOW_REP = 20;
     cardContentStamps.set(cardContentKey(post.author, post.permlink), cardContentStamp(post));
   }
 
+  function feedItemDomKey(el) {
+    const card = el.querySelector("article.post-card");
+    if (!card) return "";
+    return snapKey(card.getAttribute("data-author"), card.getAttribute("data-permlink"));
+  }
+
+  function feedItemPostKey(post) {
+    const shown = cardDisplayPost(post) || post;
+    return snapKey(shown.author, shown.permlink);
+  }
+
   function paintFeedCards(list, mapFn) {
     const items = feedState.items || [];
     const following = isFollowingFeed();
@@ -13033,6 +13147,27 @@ let CS77_FILTER_LOW_REP = 20;
       if (following && crossPostRef(post)) continue;
       rememberCardContent(cardDisplayPost(post));
       visible.push(post);
+    }
+    const existing = [];
+    const children = list.children;
+    for (let i = 0; i < children.length; i++) {
+      if (children[i].classList.contains("feed-item")) existing.push(children[i]);
+    }
+    // Appending keeps the cards already on screen. Rebuilding the list on
+    // every page reloads images and can jump the scroll position.
+    if (existing.length && existing.length <= visible.length) {
+      let prefix = true;
+      for (let i = 0; i < existing.length; i++) {
+        if (feedItemDomKey(existing[i]) !== feedItemPostKey(visible[i])) {
+          prefix = false;
+          break;
+        }
+      }
+      if (prefix) {
+        if (existing.length === visible.length) return;
+        list.insertAdjacentHTML("beforeend", visible.slice(existing.length).map(mapFn).join(""));
+        return;
+      }
     }
     list.innerHTML = visible.map(mapFn).join("");
   }
@@ -15030,36 +15165,38 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     async function fill() {
-      const gen = feedState.gen;
-      if (!profileRouteStill(author, sort) || !feedStill(gen)) return;
-      hideVoteSlider();
-      moreBtn.hidden = true;
-      status.hidden = false;
-      let failed = false;
-      try {
-        await loadPage();
-      } catch (err) {
-        if (!profileRouteStill(author, sort) || !feedStill(gen)) return;
-        failed = true;
-        showError(err.message || String(err));
-      }
-      if (!profileRouteStill(author, sort) || !feedStill(gen) || !list.isConnected) return;
-      if (!failed) clearError();
-      paintFeedCards(list, profileCardHtml);
-      if (!feedState.items.length && feedState.done) {
-        status.hidden = true;
-        list.innerHTML = `
+      await runFeedFill(async () => {
+        const gen = feedState.gen;
+        if (!profileRouteStill(author, sort) || !feedStill(gen)) return false;
+        hideVoteSlider();
+        moreBtn.hidden = true;
+        showFeedLoading(status);
+        let failed = false;
+        const before = feedState.items.length;
+        try {
+          await loadPage();
+        } catch (err) {
+          if (!profileRouteStill(author, sort) || !feedStill(gen)) return false;
+          failed = true;
+          showError(err.message || String(err));
+        }
+        if (!profileRouteStill(author, sort) || !feedStill(gen) || !list.isConnected) return false;
+        if (!failed) clearError();
+        paintFeedCards(list, profileCardHtml);
+        if (!feedState.items.length && feedState.done) {
+          status.hidden = true;
+          list.innerHTML = `
           <div class="panel empty-state">
             <h2>${HiveMd.escapeHtml(emptyTitle)}</h2>
             <p>${HiveMd.escapeHtml(emptyDetail)}</p>
           </div>`;
-        return;
-      }
-      status.hidden = true;
-      moreBtn.hidden = feedState.done;
+          return false;
+        }
+        return finishFeedPage(status, moreBtn, failed, before);
+      });
     }
 
-    moreBtn.addEventListener("click", fill);
+    bindFeedMore(moreBtn, fill);
     await fill();
     if (profileRouteStill(author, sort)) releaseProfileSectionHold();
   }
@@ -18587,36 +18724,38 @@ let CS77_FILTER_LOW_REP = 20;
     if (!list || !feedStatus || !moreBtn) return;
 
     async function fill() {
-      const gen = feedState.gen;
-      if (!communityRouteStill(name, tab) || !feedStill(gen)) return;
-      hideVoteSlider();
-      moreBtn.hidden = true;
-      feedStatus.hidden = false;
-      let failed = false;
-      try {
-        await loadFeedPage();
-      } catch (err) {
-        if (!communityRouteStill(name, tab) || !feedStill(gen)) return;
-        failed = true;
-        showError(err.message || String(err));
-      }
-      if (!communityRouteStill(name, tab) || !feedStill(gen) || !list.isConnected) return;
-      if (!failed) clearError();
-      paintFeedCards(list, cardHtml);
-      if (!feedState.items.length && feedState.done) {
-        feedStatus.hidden = true;
-        list.innerHTML = `
+      await runFeedFill(async () => {
+        const gen = feedState.gen;
+        if (!communityRouteStill(name, tab) || !feedStill(gen)) return false;
+        hideVoteSlider();
+        moreBtn.hidden = true;
+        showFeedLoading(feedStatus);
+        let failed = false;
+        const before = feedState.items.length;
+        try {
+          await loadFeedPage();
+        } catch (err) {
+          if (!communityRouteStill(name, tab) || !feedStill(gen)) return false;
+          failed = true;
+          showError(err.message || String(err));
+        }
+        if (!communityRouteStill(name, tab) || !feedStill(gen) || !list.isConnected) return false;
+        if (!failed) clearError();
+        paintFeedCards(list, cardHtml);
+        if (!feedState.items.length && feedState.done) {
+          feedStatus.hidden = true;
+          list.innerHTML = `
             <div class="panel empty-state">
               <h2>No posts in this community</h2>
               <p>Try another sort, or check back later.</p>
             </div>`;
-        return;
-      }
-      feedStatus.hidden = true;
-      moreBtn.hidden = feedState.done;
+          return false;
+        }
+        return finishFeedPage(feedStatus, moreBtn, failed, before);
+      });
     }
 
-    moreBtn.addEventListener("click", fill);
+    bindFeedMore(moreBtn, fill);
     await fill();
     if (communityRouteStill(name, tab)) releaseCommunitySubpageHold();
   }
@@ -19869,6 +20008,11 @@ let CS77_FILTER_LOW_REP = 20;
     const moreBtn = document.getElementById("moreBtn");
     if (!status || status.hidden || !moreBtn || feedState.done) return;
     feedState.loading = false;
+    feedState.holdAuto = false;
+    // Drop a fill that belonged to the page we just left so this click starts
+    // the parked list again.
+    feedFillBusy = false;
+    feedFillToken += 1;
     moreBtn.click();
   }
 
@@ -20013,6 +20157,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (restored.hadWelcome) revealParkedWelcome();
         scrollWindowInstant(restored.scrollY);
         if (restored.feed.loading) resumeParkedFeedLoad();
+        else queueFeedInfinite();
       } else if (isRestorableFeedKey(key)) {
         // This entry now shows the mounted feed. A profile opened next parks
         // under this id, so Back and the logo find the same list.
@@ -20431,6 +20576,8 @@ let CS77_FILTER_LOW_REP = 20;
     bindScrollTop();
     window.addEventListener("scroll", maybeLoadMoreBrowse, { passive: true });
     window.addEventListener("resize", maybeLoadMoreBrowse);
+    window.addEventListener("scroll", maybeLoadMoreFeed, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreFeed);
     window.addEventListener("resize", () => fitPublishTitle());
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => fitPublishTitle());
