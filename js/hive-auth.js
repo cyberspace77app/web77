@@ -1,6 +1,7 @@
 /**
- * Posting-key login. The Hive WIF is wrapped with a non-extractable
- * AES-GCM CryptoKey and stored in IndexedDB, then used to sign Hive calls.
+ * Posting-key login. A master password is derived into one role key and
+ * then dropped. Login stores only the posting private key, wrapped with a
+ * non-extractable AES-GCM CryptoKey in IndexedDB.
  */
 (function (global) {
   "use strict";
@@ -204,6 +205,32 @@
     return authorityPubs(account, "posting");
   }
 
+  function normalizeRole(role) {
+    const key = String(role || "")
+      .trim()
+      .toLowerCase();
+    if (key === "owner" || key === "active" || key === "posting" || key === "memo") return key;
+    throw new Error("Unknown key role.");
+  }
+
+  function rolePubs(account, role) {
+    if (role === "memo") {
+      const memo = account && account.memo_key;
+      return memo ? [String(memo)] : [];
+    }
+    return authorityPubs(account, role);
+  }
+
+  // A Hive WIF is base58, starts with 5, and is 51 characters. Master
+  // passwords generated for Hive accounts start with P.
+  function looksLikeWif(compact) {
+    return /^5[1-9A-HJ-NP-Za-km-z]{49,52}$/.test(compact);
+  }
+
+  function roleEnterPhrase(role) {
+    return "the " + role + " key";
+  }
+
   function accountName(username) {
     return String(username || "")
       .trim()
@@ -276,20 +303,122 @@
     return { name, bytes };
   }
 
-  async function login(username, wif) {
-    const checked = await checkedPostingKey(username, wif);
+  async function storePostingBytes(name, bytes) {
     try {
       if (clearPromise) await clearPromise.catch(() => {});
       unmarkAuthLogout();
-      await persist(checked.name, checked.bytes);
+      await persist(name, bytes);
     } catch (err) {
-      wipe(checked.bytes);
+      wipe(bytes);
       throw new Error(
         (err && err.message) || "Could not store the posting key in this browser."
       );
     }
-    unlockMemory(checked.name, checked.bytes);
-    return checked.name;
+    unlockMemory(name, bytes);
+    return name;
+  }
+
+  async function login(username, wif) {
+    const checked = await checkedPostingKey(username, wif);
+    return storePostingBytes(checked.name, checked.bytes);
+  }
+
+  // "wif", "master", "invalid", or "empty". A master password is not parsed.
+  async function secretKind(secret) {
+    const compact = String(secret == null ? "" : secret).replace(/\s+/g, "");
+    if (!compact) return "empty";
+    if (!looksLikeWif(compact)) return "master";
+    const lib = await loadHiveTx();
+    try {
+      const pk = lib.PrivateKey.from(compact);
+      wipe(pk.key);
+      return "wif";
+    } catch {
+      return "invalid";
+    }
+  }
+
+  // Hive master-password derivation for one role: sha256(username + role + password)
+  // with the same whitespace collapsing as Hive account creation. The password
+  // is not retained. The caller owns bytes and must wipe them.
+  async function deriveRoleKey(username, password, role) {
+    const name = accountName(username);
+    const roleName = normalizeRole(role);
+    let pass = String(password == null ? "" : password);
+    password = "";
+    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+      pass = "";
+      throw new Error("Enter a valid Hive username.");
+    }
+    if (!pass) throw new Error("Enter a key.");
+    const libPromise = loadHiveTx();
+    let seed = (name + roleName + pass).trim().split(/[\t\n\v\f\r ]+/).join(" ");
+    pass = "";
+    const subtle = hasSubtle();
+    let raw = null;
+    if (subtle) {
+      raw = new TextEncoder().encode(seed);
+      seed = "";
+    }
+    let lib;
+    try {
+      lib = await libPromise;
+    } catch (err) {
+      if (raw) raw.fill(0);
+      seed = "";
+      throw err;
+    }
+    let pk;
+    if (subtle) {
+      let digest;
+      try {
+        digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+      } finally {
+        raw.fill(0);
+      }
+      try {
+        pk = lib.PrivateKey.from(digest);
+      } catch {
+        digest.fill(0);
+        throw new Error("Could not derive the " + roleName + " key.");
+      }
+    } else if (/^[0-9a-fA-F]+$/.test(seed)) {
+      seed = "";
+      throw new Error("This page needs HTTPS or localhost to derive that key.");
+    } else {
+      try {
+        pk = lib.PrivateKey.fromSeed(seed);
+      } catch {
+        seed = "";
+        throw new Error("Could not derive the " + roleName + " key.");
+      }
+      seed = "";
+    }
+    const pub = pk.createPublic().toString();
+    const bytes = pk.key.slice();
+    wipe(pk.key);
+    return { role: roleName, pub: pub, bytes: bytes };
+  }
+
+  async function loginMaster(username, password) {
+    const name = accountName(username);
+    const derivedJob = deriveRoleKey(name, password, "posting");
+    password = "";
+    const derived = await derivedJob;
+    try {
+      const accounts = await HiveApi.getAccounts([name]);
+      const account = accounts && accounts[0];
+      if (!account || accountName(account.name) !== name) {
+        throw new Error("Unknown Hive account @" + name + ".");
+      }
+      if (rolePubs(account, "posting").indexOf(derived.pub) < 0) {
+        throw new Error("This key does not match @" + name + ".");
+      }
+    } catch (err) {
+      wipe(derived.bytes);
+      throw err;
+    }
+    return storePostingBytes(name, derived.bytes);
   }
 
   async function ready() {
@@ -384,14 +513,77 @@
     return broadcastKeyBytes(keyBytes, operations);
   }
 
-  // One signature. The posting key is checked, used, and discarded.
-  async function broadcastWithKey(username, wif, operations) {
-    const checked = await checkedPostingKey(username, wif);
-    try {
-      return await broadcastKeyBytes(checked.bytes, operations);
-    } finally {
-      wipe(checked.bytes);
+  // One role key, from a WIF or a master password. Checked, used, discarded.
+  async function materializeRoleKey(username, secret, role) {
+    const name = accountName(username);
+    const roleName = normalizeRole(role);
+    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+      throw new Error("Enter a valid Hive username.");
     }
+    let raw = String(secret == null ? "" : secret);
+    secret = "";
+    let compact = raw.replace(/\s+/g, "");
+    if (!compact) {
+      raw = "";
+      throw new Error("Enter " + roleEnterPhrase(roleName) + ".");
+    }
+    let bytes = null;
+    let pub = "";
+    if (looksLikeWif(compact)) {
+      raw = "";
+      const lib = await loadHiveTx();
+      let pk;
+      try {
+        pk = lib.PrivateKey.from(compact);
+      } catch {
+        compact = "";
+        throw new Error("That key is not valid.");
+      }
+      compact = "";
+      pub = pk.createPublic().toString();
+      bytes = pk.key.slice();
+      wipe(pk.key);
+    } else {
+      let password = raw.trim();
+      raw = "";
+      compact = "";
+      const derivedJob = deriveRoleKey(name, password, roleName);
+      password = "";
+      const derived = await derivedJob;
+      bytes = derived.bytes;
+      pub = derived.pub;
+    }
+    try {
+      const accounts = await HiveApi.getAccounts([name]);
+      const account = accounts && accounts[0];
+      if (!account || accountName(account.name) !== name) {
+        throw new Error("Unknown Hive account @" + name + ".");
+      }
+      if (rolePubs(account, roleName).indexOf(pub) < 0) {
+        throw new Error(
+          "This " + roleName + " key does not match @" + name + "."
+        );
+      }
+      return { name: name, role: roleName, bytes: bytes };
+    } catch (err) {
+      wipe(bytes);
+      throw err;
+    }
+  }
+
+  async function broadcastRoleSecret(username, secret, role, operations) {
+    const openedJob = materializeRoleKey(username, secret, role);
+    secret = "";
+    const opened = await openedJob;
+    try {
+      return await broadcastKeyBytes(opened.bytes, operations);
+    } finally {
+      wipe(opened.bytes);
+    }
+  }
+
+  async function broadcastWithKey(username, wif, operations) {
+    return broadcastRoleSecret(username, wif, "posting", operations);
   }
 
   async function openWif(wif) {
@@ -410,26 +602,8 @@
     return { pub, bytes };
   }
 
-  // One signature. The active key is checked, used, and discarded.
   async function broadcastActiveKey(username, wif, operations) {
-    const name = accountName(username);
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
-      throw new Error("Enter a valid Hive username.");
-    }
-    const opened = await openWif(wif);
-    try {
-      const accounts = await HiveApi.getAccounts([name]);
-      const account = accounts && accounts[0];
-      if (!account || accountName(account.name) !== name) {
-        throw new Error("Unknown Hive account @" + name + ".");
-      }
-      if (authorityPubs(account, "active").indexOf(opened.pub) < 0) {
-        throw new Error("This active key does not match @" + name + ".");
-      }
-      return await broadcastKeyBytes(opened.bytes, operations);
-    } finally {
-      wipe(opened.bytes);
-    }
+    return broadcastRoleSecret(username, wif, "active", operations);
   }
 
   // Sign with a key this page derived. The caller discards the WIF.
@@ -442,24 +616,44 @@
     }
   }
 
-  // Hive master-password derivation: sha256(username + role + password).
+  // Public keys for a new account, plus the posting private key used to
+  // finish setup. Owner, active, and memo private keys are wiped here.
   async function keysFromLogin(username, password) {
     const name = accountName(username);
-    const pass = String(password || "");
+    let pass = String(password == null ? "" : password);
+    password = "";
     if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+      pass = "";
       throw new Error("Enter a valid Hive username.");
     }
     if (!pass) throw new Error("Missing master key.");
     const lib = await loadHiveTx();
     const roles = ["owner", "active", "posting", "memo"];
     const out = {};
-    for (let i = 0; i < roles.length; i++) {
-      const role = roles[i];
-      const pk = lib.PrivateKey.fromLogin(name, pass, role);
-      out[role] = pk.toString();
-      out[role + "Pub"] = pk.createPublic().toString();
-      wipe(pk.key);
+    try {
+      for (let i = 0; i < roles.length; i++) {
+        const role = roles[i];
+        const derivedJob = deriveRoleKey(name, pass, role);
+        const derived = await derivedJob;
+        try {
+          out[role + "Pub"] = derived.pub;
+          if (role === "posting") {
+            const pk = lib.PrivateKey.from(derived.bytes);
+            out.posting = pk.toString();
+          }
+        } finally {
+          wipe(derived.bytes);
+        }
+      }
+    } catch (err) {
+      pass = "";
+      out.owner = "";
+      out.active = "";
+      out.posting = "";
+      out.memo = "";
+      throw err;
     }
+    pass = "";
     return out;
   }
 
@@ -473,6 +667,10 @@
     },
     signBytes,
     broadcast,
+    secretKind,
+    deriveRoleKey,
+    loginMaster,
+    broadcastRoleSecret,
     broadcastWithKey,
     broadcastActiveKey,
     broadcastWif,

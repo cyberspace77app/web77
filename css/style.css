@@ -4682,6 +4682,19 @@ a.wallet-tx-time:hover {
   font-size: 0.72rem;
 }
 
+.login-card .login-warn {
+  margin: 0 0 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  background: rgba(227, 19, 55, 0.08);
+}
+
+.login-card .login-warn p {
+  margin-bottom: 0;
+  color: var(--text);
+}
+
 #loginStatus:empty,
 #ownerSignStatus:empty,
 #communityRoleStatus:empty,

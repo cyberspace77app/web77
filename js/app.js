@@ -5613,6 +5613,7 @@ let CS77_FILTER_LOW_REP = 20;
         status.classList.remove("is-error");
       }
     }
+    if (root.id === "loginMethod") resetLoginMasterPrompt();
   }
 
   function bindAuthMethod(root) {
@@ -5625,9 +5626,26 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  let loginMasterArmed = false;
+
+  function resetLoginMasterPrompt() {
+    loginMasterArmed = false;
+    const warn = $("#loginMasterWarn");
+    if (warn) warn.hidden = true;
+  }
+
+  function armLoginMasterPrompt() {
+    loginMasterArmed = true;
+    const warn = $("#loginMasterWarn");
+    if (warn) warn.hidden = false;
+    const status = $("#loginStatus");
+    if (status) status.textContent = "";
+  }
+
   function openLogin() {
     const status = $("#loginStatus");
     if (status) status.textContent = "";
+    resetLoginMasterPrompt();
     setAuthMethod($("#loginMethod"), defaultAuthMethod());
     overlay.hidden = false;
     const input = $("#loginUser");
@@ -5642,6 +5660,7 @@ let CS77_FILTER_LOW_REP = 20;
     loginBusy = false;
     const keyInput = $("#loginKey");
     if (keyInput) keyInput.value = "";
+    resetLoginMasterPrompt();
     const status = $("#loginStatus");
     if (status) status.textContent = "";
     const connectBtn = $("#loginConnect");
@@ -5713,7 +5732,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!window.hive_keychain) {
       loginBusy = false;
       status.textContent =
-        "Hive Keychain is not available. Choose Password to sign in with a posting key.";
+        "hive keychain is not available. Choose Password to sign in with a posting key.";
       return;
     }
     status.textContent = "Waiting for Keychain…";
@@ -5753,29 +5772,77 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (method === "password") {
-      const wif = ((keyInput && keyInput.value) || "").replace(/\s+/g, "");
-      if (!wif) {
+      let secret = (keyInput && keyInput.value) || "";
+      let password = "";
+      if (!secret.replace(/\s+/g, "")) {
         if (keyInput) keyInput.value = "";
+        secret = "";
+        resetLoginMasterPrompt();
         status.textContent = "Enter a posting key.";
+        return;
+      }
+      if (
+        !window.HiveAuth ||
+        typeof HiveAuth.secretKind !== "function" ||
+        typeof HiveAuth.login !== "function"
+      ) {
+        secret = "";
+        status.textContent = "Could not use that key in this browser.";
         return;
       }
       loginBusy = true;
       if (connectBtn) connectBtn.disabled = true;
-      status.textContent = "Checking posting key…";
+      status.textContent = loginMasterArmed ? "Deriving the posting key…" : "Checking key…";
       try {
-        await HiveAuth.login(username, wif);
-        finishLogin(username, "posting");
+        if (loginMasterArmed) {
+          password = secret.trim();
+          secret = "";
+          if (keyInput) keyInput.value = "";
+          resetLoginMasterPrompt();
+          if (typeof HiveAuth.loginMaster !== "function") {
+            throw new Error("Could not derive the posting key.");
+          }
+          const loginJob = HiveAuth.loginMaster(username, password);
+          password = "";
+          await loginJob;
+          finishLogin(username, "posting");
+          return;
+        }
+        const kind = await HiveAuth.secretKind(secret);
+        if (overlay.hidden) return;
+        if (kind === "invalid") {
+          if (keyInput) keyInput.value = "";
+          secret = "";
+          status.textContent = "That key is not valid.";
+          return;
+        }
+        if (kind === "wif") {
+          let wif = secret.replace(/\s+/g, "");
+          secret = "";
+          if (keyInput) keyInput.value = "";
+          status.textContent = "Checking posting key…";
+          const loginJob = HiveAuth.login(username, wif);
+          wif = "";
+          await loginJob;
+          finishLogin(username, "posting");
+          return;
+        }
+        secret = "";
+        armLoginMasterPrompt();
       } catch (err) {
-        status.textContent = (err && err.message) || String(err);
+        if (!overlay.hidden) status.textContent = (err && err.message) || String(err);
       } finally {
+        secret = "";
+        password = "";
         loginBusy = false;
-        if (connectBtn) connectBtn.disabled = false;
+        if (connectBtn && !overlay.hidden) connectBtn.disabled = false;
+        if (loginMasterArmed && connectBtn && !overlay.hidden) connectBtn.focus();
       }
       return;
     }
     if (!window.hive_keychain) {
       status.textContent =
-        "Hive Keychain is not available. Choose Password to sign in with a posting key.";
+        "hive keychain is not available. Choose Password to sign in with a posting key.";
       return;
     }
     loginBusy = true;
@@ -10849,7 +10916,7 @@ let CS77_FILTER_LOW_REP = 20;
           source: "create",
           authority: "Active",
           title: "Create subspace",
-          lead: "Use Hive Keychain (recommended) or enter the active key of @" + user + ". " + feeNote,
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ". " + feeNote,
           cancelMessage: "Creation was cancelled.",
           failMessage: "Could not create the subspace account.",
         });
@@ -17422,30 +17489,47 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function ownerSignAuthority(opts) {
-    return opts && opts.authority === "Active" ? "Active" : "Posting";
+    const raw = String((opts && opts.authority) || "Posting")
+      .trim()
+      .toLowerCase();
+    if (raw === "active") return "Active";
+    if (raw === "owner") return "Owner";
+    if (raw === "memo") return "Memo";
+    return "Posting";
+  }
+
+  function ownerSignRoleName(authority) {
+    if (authority === "Active") return "active";
+    if (authority === "Owner") return "owner";
+    if (authority === "Memo") return "memo";
+    return "posting";
+  }
+
+  function ownerSignEnterPhrase(authority) {
+    return "the " + ownerSignRoleName(authority) + " key";
+  }
+
+  function ownerSignDefaultLead(authority) {
+    const role = ownerSignRoleName(authority);
+    if (authority === "Posting") {
+      return "Use hive keychain (recommended) or enter the posting key of this subspace account.";
+    }
+    return "Use hive keychain (recommended) or enter the " + role + " key.";
   }
 
   function applyOwnerSignChrome(opts) {
     const authority = ownerSignAuthority(opts);
+    const role = ownerSignRoleName(authority);
     const title = $("#ownerSignTitle");
     const lead = $("#ownerSignLead");
     const label = $("#ownerSignKeyLabel");
     const hint = $("#ownerSignHint");
     const key = $("#ownerSignKey");
     if (title) title.textContent = (opts && opts.title) || "Sign owner settings";
-    if (lead) {
-      lead.textContent =
-        (opts && opts.lead) ||
-        "Use hive keychain (recommended) or enter the posting key of this subspace account.";
-    }
-    if (label) label.textContent = authority === "Active" ? "Active key" : "Posting key";
-    if (hint) {
-      hint.textContent =
-        authority === "Active"
-          ? "The active key is used once and is not saved."
-          : "The posting key is used once and is not saved.";
-    }
-    if (key) key.placeholder = authority === "Active" ? "active key" : "posting key";
+    if (lead) lead.textContent = (opts && opts.lead) || ownerSignDefaultLead(authority);
+    if (label) label.textContent = role.charAt(0).toUpperCase() + role.slice(1) + " key";
+    if (hint) hint.textContent = "The " + role + " key is used once and is not saved.";
+    if (key) key.placeholder = role + " key";
     setAuthMethod($("#ownerSignMethod"), defaultAuthMethod());
   }
 
@@ -17502,22 +17586,21 @@ let CS77_FILTER_LOW_REP = 20;
     const key = $("#ownerSignKey");
     const connect = $("#ownerSignConnect");
     const cancel = $("#ownerSignCancel");
-    const active = session.authority === "Active";
+    const roleName = ownerSignRoleName(session.authority);
     const method = authMethod($("#ownerSignMethod"));
-    let wif = "";
+    let secret = "";
     if (method === "password") {
-      wif = ((key && key.value) || "").replace(/\s+/g, "");
-      if (!wif) {
+      secret = (key && key.value) || "";
+      if (!secret.replace(/\s+/g, "")) {
         if (key) key.value = "";
-        setOwnerSignStatus(active ? "Enter the active key." : "Enter the posting key.", true);
+        secret = "";
+        setOwnerSignStatus("Enter " + ownerSignEnterPhrase(session.authority) + ".", true);
         return;
       }
       if (key) key.value = "";
     } else if (!window.hive_keychain) {
       setOwnerSignStatus(
-        active
-          ? "Hive Keychain is not available. Choose Password and enter the active key."
-          : "Hive Keychain is not available. Choose Password and enter the posting key.",
+        "hive keychain is not available. Choose Password and enter the " + roleName + " key.",
         true
       );
       return;
@@ -17528,24 +17611,24 @@ let CS77_FILTER_LOW_REP = 20;
     try {
       if (method === "password") {
         setOwnerSignStatus("Signing…", false);
-        if (active) {
-          if (!window.HiveAuth || typeof HiveAuth.broadcastActiveKey !== "function") {
-            throw new Error("Could not sign with that active key.");
-          }
-          await HiveAuth.broadcastActiveKey(session.name, wif, session.operations);
-        } else {
-          if (!window.HiveAuth || typeof HiveAuth.broadcastWithKey !== "function") {
-            throw new Error("Could not sign with that posting key.");
-          }
-          await HiveAuth.broadcastWithKey(session.name, wif, session.operations);
+        if (!window.HiveAuth || typeof HiveAuth.broadcastRoleSecret !== "function") {
+          throw new Error("Could not sign with that key.");
         }
+        const signJob = HiveAuth.broadcastRoleSecret(
+          session.name,
+          secret,
+          session.authority,
+          session.operations
+        );
+        secret = "";
+        await signJob;
       } else {
         setOwnerSignStatus("Waiting for Keychain…", false);
         await new Promise((resolve, reject) => {
           window.hive_keychain.requestBroadcast(
             session.name,
             session.operations,
-            active ? "Active" : "Posting",
+            session.authority,
             (res) => {
               if (res && res.success) resolve(res);
               else reject(new Error((res && (res.message || res.error)) || "Broadcast was cancelled."));
@@ -17560,7 +17643,7 @@ let CS77_FILTER_LOW_REP = 20;
     } catch (err) {
       setOwnerSignStatus((err && err.message) || session.failMessage || "Could not sign these settings.", true);
     } finally {
-      wif = "";
+      secret = "";
       ownerSignBusy = false;
       if (ownerSignSession) {
         if (connect) connect.disabled = false;
@@ -18468,7 +18551,7 @@ let CS77_FILTER_LOW_REP = 20;
         await signCommunityOwnerOps(ctx.name, [op], {
           source: "role",
           title: "Sign owner change",
-          lead: "The owner account must sign this role change. Use Hive Keychain or enter the posting key of this subspace account.",
+          lead: "The owner account must sign this role change. Use hive keychain or enter the posting key of this subspace account.",
           cancelMessage: "The owner did not sign this change.",
           failMessage: "Could not sign this role change.",
         });
@@ -21439,6 +21522,18 @@ let CS77_FILTER_LOW_REP = 20;
 
     $("#loginCancel").addEventListener("click", closeLogin);
     $("#loginConnect").addEventListener("click", connectLogin);
+    const loginUserInput = $("#loginUser");
+    const loginKeyInput = $("#loginKey");
+    if (loginUserInput) {
+      loginUserInput.addEventListener("input", () => {
+        if (loginMasterArmed) resetLoginMasterPrompt();
+      });
+    }
+    if (loginKeyInput) {
+      loginKeyInput.addEventListener("input", () => {
+        if (loginMasterArmed) resetLoginMasterPrompt();
+      });
+    }
     bindAuthMethod($("#loginMethod"));
     bindAuthMethod($("#ownerSignMethod"));
     const ownerSignConnect = $("#ownerSignConnect");
