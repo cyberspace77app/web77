@@ -4597,6 +4597,11 @@ a.wallet-tx-time:hover {
   width: min(32rem, 100%);
 }
 
+/* Above the publish composer so Publish can ask for a session without closing it. */
+#loginOverlay {
+  z-index: 55;
+}
+
 .login-card .login-lead {
   margin-bottom: 1rem;
 }
@@ -4915,8 +4920,8 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .publish-dest-btn .avatar {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -4961,8 +4966,8 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .publish-dest-option .avatar {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;

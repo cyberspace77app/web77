@@ -4583,9 +4583,11 @@ let CS77_FILTER_LOW_REP = 20;
   function paintSessionAvatar() {
     const user = observer();
     const img = document.querySelector("#sessionMenu .session-avatar-btn img");
-    if (!img || !user) return;
-    const src = sessionAvatarSrc(user);
-    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    if (img && user) {
+      const src = sessionAvatarSrc(user);
+      if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    }
+    paintPublishBlogAvatar();
   }
 
   function paintDownvoteManaStat(el, ready) {
@@ -5609,6 +5611,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closeLogin() {
     overlay.hidden = true;
+    pendingPublish = false;
     loginBusy = false;
     const keyInput = $("#loginKey");
     if (keyInput) keyInput.value = "";
@@ -5619,17 +5622,31 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function finishLogin(username, method) {
+    const resumePublish = pendingPublish;
     sessionStorage.setItem(SESSION_KEY, username);
     if (method === "keychain") writeKeychainUser(username);
     else clearKeychainUser();
     closeLogin();
     clearCommunityEditScratch();
     renderSession();
-    currentViewKey = "";
-    if (pendingPublish) {
-      pendingPublish = false;
+    // Publish was clicked while logged out. The composer is still open, so
+    // continue that click now that the session exists.
+    if (resumePublish) {
+      const pub = $("#publishOverlay");
+      if (pub && !pub.hidden) {
+        paintPublishDest();
+        renderDestMenu();
+        loadPublishSubs();
+        syncPublishCommunityAccess();
+        submitPublish();
+        return;
+      }
+      currentViewKey = "";
       navigate(appHref("/publish"));
-    } else if (isHomePath()) {
+      return;
+    }
+    currentViewKey = "";
+    if (isHomePath()) {
       navigate(appHref(pathForFeedSort(defaultFeedSort())), true);
     } else {
       route();
@@ -6068,8 +6085,25 @@ let CS77_FILTER_LOW_REP = 20;
     return slug + "-" + Date.now().toString(36);
   }
 
-  function paintPublishDest() {
+  // My cyberspace uses the account avatar. No profile picture, and no
+  // signed-in account, both use the small satoshi mark.
+  function blogDestAvatarSrc() {
     const user = observer();
+    return user ? sessionAvatarSrc(user) : AVATAR_DEFAULT_SMALL;
+  }
+
+  function paintPublishBlogAvatar() {
+    const src = blogDestAvatarSrc();
+    const onBlog = !(publishDest.type === "community" && publishDest.name);
+    const btnImg = $("#publishDestAvatar");
+    if (btnImg && onBlog && btnImg.getAttribute("src") !== src) btnImg.src = src;
+    const menu = $("#publishDestMenu");
+    if (!menu) return;
+    const opt = menu.querySelector('.publish-dest-option[data-dest-type="blog"] .avatar');
+    if (opt && opt.getAttribute("src") !== src) opt.src = src;
+  }
+
+  function paintPublishDest() {
     const img = $("#publishDestAvatar");
     const nameEl = $("#publishDestName");
     if (!img || !nameEl) return;
@@ -6077,14 +6111,14 @@ let CS77_FILTER_LOW_REP = 20;
       img.src = HiveMd.avatarUrl(publishDest.name, "small");
       nameEl.textContent = publishDest.title || publishDest.name;
     } else {
-      img.src = user ? HiveMd.avatarUrl(user, "small") : "";
+      img.src = blogDestAvatarSrc();
       nameEl.textContent = "My cyberspace";
     }
   }
 
-  function destOptionHtml(name, title, avatarName, selected) {
+  function destOptionHtml(name, title, avatarSrc, selected) {
     return `<button type="button" class="publish-dest-option${selected ? " is-selected" : ""}" data-dest-type="${name ? "community" : "blog"}" data-dest-name="${HiveMd.escapeHtml(name)}" data-dest-title="${HiveMd.escapeHtml(title)}" role="option">
-        <img class="avatar" src="${HiveMd.avatarUrl(avatarName, "small")}" alt="">
+        <img class="avatar" src="${HiveMd.escapeHtml(avatarSrc)}" alt="" width="24" height="24">
         <span>${HiveMd.escapeHtml(title)}</span>
       </button>`;
   }
@@ -6109,7 +6143,6 @@ let CS77_FILTER_LOW_REP = 20;
 
   function renderDestMenu() {
     const menu = $("#publishDestMenu");
-    const user = observer();
     if (!menu) return;
     const selectedName =
       publishDest.type === "community" ? normalizeCommunityName(publishDest.name) : "";
@@ -6123,20 +6156,20 @@ let CS77_FILTER_LOW_REP = 20;
       }
     });
     const blogSelected = publishDest.type !== "community";
-    const parts = [destOptionHtml("", "My cyberspace", user, blogSelected)];
+    const parts = [destOptionHtml("", "My cyberspace", blogDestAvatarSrc(), blogSelected)];
     const seen = new Set();
     publishSubs.forEach((c) => {
       const id = normalizeCommunityName(c.name);
       if (id) seen.add(id);
       const selected = Boolean(selectedName) && id === selectedName;
-      parts.push(destOptionHtml(c.name, c.title || c.name, c.name, selected));
+      parts.push(destOptionHtml(c.name, c.title || c.name, HiveMd.avatarUrl(c.name, "small"), selected));
     });
     const extras = [];
     function pushExtra(name, title) {
       const id = normalizeCommunityName(name);
       if (!id || seen.has(id)) return;
       seen.add(id);
-      extras.push(destOptionHtml(id, title || id, id, selectedName === id));
+      extras.push(destOptionHtml(id, title || id, HiveMd.avatarUrl(id, "small"), selectedName === id));
     }
     if (publishPinnedCommunity) {
       pushExtra(publishPinnedCommunity.name, publishPinnedCommunity.title);
@@ -7812,6 +7845,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function closePublish(opts) {
+    pendingPublish = false;
     hidePublishOverlay(opts);
     if (parseRoute().name !== "publish") return;
     // Publish was pushed on top of the open page. Pop that entry so a post
@@ -7829,17 +7863,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function openPublishOverlay() {
-    const user = observer();
     const ov = $("#publishOverlay");
     if (!ov) return;
     setPageMeta("Publish — CyberSpace77");
-    if (!user) {
-      pendingPublish = true;
-      ov.hidden = true;
-      setPublishFabHidden(false);
-      openLogin();
-      return;
-    }
     const alreadyOpen = !ov.hidden;
     setPublishFabHidden(true);
     pendingPublish = false;
@@ -7854,6 +7880,7 @@ let CS77_FILTER_LOW_REP = 20;
       collapsePublishAdvanced();
     }
     const fromCommunityWrite = applyPublishDestRequest();
+    paintPublishDest();
     ov.hidden = false;
     HiveMd.whenMarkdownReady();
     paintPublishChrome();
@@ -15351,11 +15378,6 @@ let CS77_FILTER_LOW_REP = 20;
     if (!name) return;
     const title = communityTitleOf(communityState.info, name) || name;
     publishDestRequest = { name, title };
-    if (!observer()) {
-      pendingPublish = true;
-      openLogin();
-      return;
-    }
     if (parseRoute().name === "publish") {
       openPublishOverlay();
       return;
