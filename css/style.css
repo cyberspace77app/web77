@@ -4734,6 +4734,13 @@ a.wallet-tx-time:hover {
   flex-wrap: wrap;
 }
 
+/* Room for the primary button to shift up on hover.
+   Margin on the row would collapse with the field above it. */
+.overlay-actions > *,
+.publish-actions > * {
+  margin-top: 0.25rem;
+}
+
 .publish-fab {
   position: fixed;
   left: 1.5rem;
