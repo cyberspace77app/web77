@@ -136,6 +136,7 @@ let CS77_FILTER_LOW_REP = 20;
   let communityTitleSession = null;
   let communityRoleToken = 0;
   let settingsNodeToken = 0;
+  let settingsKeysToken = 0;
   let settingsNodeBusy = false;
   let currentViewKey = "";
   const searchPages = {
@@ -3563,6 +3564,7 @@ let CS77_FILTER_LOW_REP = 20;
       .toLowerCase();
     if (!page || page === "general") return "general";
     if (page === "profile") return "profile";
+    if (page === "keys") return "keys";
     if (page === "nodes") return "nodes";
     return "";
   }
@@ -3570,6 +3572,7 @@ let CS77_FILTER_LOW_REP = 20;
   function pathForSettings(page) {
     const p = normalizeSettingsPage(page) || "general";
     if (p === "profile") return "/settings/profile";
+    if (p === "keys") return "/settings/keys";
     if (p === "nodes") return "/settings/nodes";
     return "/settings";
   }
@@ -5264,6 +5267,7 @@ let CS77_FILTER_LOW_REP = 20;
     resetNotifs();
     resetAccountState();
     clearSettingsProfileScratch();
+    clearSettingsKeys();
     clearCommunityEditScratch();
     clearSubspaceCreateDraft();
     renderSession();
@@ -19247,9 +19251,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function settingsShellHtml(tab) {
-    const page = tab === "profile" || tab === "nodes" ? tab : "general";
+    const page = tab === "profile" || tab === "keys" || tab === "nodes" ? tab : "general";
     const generalHref = HiveMd.escapeHtml(appHref(pathForSettings("general")));
     const profileHref = HiveMd.escapeHtml(appHref(pathForSettings("profile")));
+    const keysHref = HiveMd.escapeHtml(appHref(pathForSettings("keys")));
     const nodesHref = HiveMd.escapeHtml(appHref(pathForSettings("nodes")));
     return `
       <section class="cs77-page settings-page">
@@ -19257,6 +19262,7 @@ let CS77_FILTER_LOW_REP = 20;
         <nav class="feed-nav subpage-nav" aria-label="Settings">
           <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
           <a href="${profileHref}" class="${page === "profile" ? "is-active" : ""}">Profile</a>
+          <a href="${keysHref}" class="${page === "keys" ? "is-active" : ""}">Keys</a>
           <a href="${nodesHref}" class="${page === "nodes" ? "is-active" : ""}">Nodes</a>
         </nav>
         <div id="settingsPanel"></div>
@@ -19943,9 +19949,210 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  const SETTINGS_KEY_FIELDS = [
+    ["owner", "settingsKeysOwner"],
+    ["active", "settingsKeysActive"],
+    ["memo", "settingsKeysMemo"],
+    ["posting", "settingsKeysPosting"],
+  ];
+
+  function settingsKeysHtml(username) {
+    const esc = HiveMd.escapeHtml;
+    const user = esc(username || "");
+    const rows = SETTINGS_KEY_FIELDS.map((row) => {
+      const role = row[0];
+      const id = row[1];
+      const label = role.charAt(0).toUpperCase() + role.slice(1);
+      return `
+        <div class="settings-field">
+          <label class="settings-label" for="${id}">${label}</label>
+          <div class="subspace-key-line">
+            <input id="${id}" type="text" readonly autocomplete="off" spellcheck="false">
+            <button type="button" class="btn-ghost btn-compact" data-settings-key-copy="${id}" aria-label="Copy ${label} key">Copy</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+    return `
+      <form class="settings-form" id="settingsKeysForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
+        <p class="settings-note">All private keys are generated locally from the master password.</p>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsKeysUser">Username</label>
+          <input id="settingsKeysUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" value="${user}">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsKeysPass">Master password</label>
+          <input id="settingsKeysPass" type="password" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsKeysGenerate">Generate</button>
+          <button type="button" class="btn-ghost" id="settingsKeysClear">Clear</button>
+        </div>
+        <p class="settings-note settings-keys-hint" id="settingsKeysHint" hidden>Click Clear after you copied the keys to clear the keys from memory and the clipboard.</p>
+        <div class="settings-keys-fields" id="settingsKeysBox" hidden>
+          ${rows}
+        </div>
+        <p class="settings-status" id="settingsKeysStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function blankSettingsControl(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  }
+
+  function clearSettingsKeys() {
+    settingsKeysToken += 1;
+    blankSettingsControl("settingsKeysUser");
+    blankSettingsControl("settingsKeysPass");
+    for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
+      blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+    }
+    setSettingsKeysHint(false);
+    setSettingsKeysBox(false);
+    clearSettingsKeyCopyButtons();
+  }
+
+  function setSettingsKeysStatus(message, isError) {
+    const status = $("#settingsKeysStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setSettingsKeysHint(show) {
+    const hint = $("#settingsKeysHint");
+    if (hint) hint.hidden = !show;
+  }
+
+  function setSettingsKeysBox(show) {
+    const box = $("#settingsKeysBox");
+    if (box) box.hidden = !show;
+  }
+
+  function clearSettingsKeyCopyButtons() {
+    const buttons = document.querySelectorAll("#settingsKeysForm [data-settings-key-copy]");
+    for (let i = 0; i < buttons.length; i++) buttons[i].textContent = "Copy";
+  }
+
+  async function clearSettingsClipboard() {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText("");
+        return;
+      }
+    } catch {
+      /* A rejected write still tries the selection fallback. */
+    }
+    const sink = document.createElement("textarea");
+    sink.value = "";
+    sink.setAttribute("readonly", "");
+    sink.setAttribute("aria-hidden", "true");
+    sink.style.position = "fixed";
+    sink.style.left = "-9999px";
+    document.body.appendChild(sink);
+    sink.focus();
+    sink.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      /* ignore */
+    }
+    sink.remove();
+  }
+
+  async function generateSettingsKeys(e) {
+    if (e) e.preventDefault();
+    const token = ++settingsKeysToken;
+    const user = normalizeLoginUser(($("#settingsKeysUser") && $("#settingsKeysUser").value) || "");
+    const passEl = $("#settingsKeysPass");
+    let password = (passEl && passEl.value) || "";
+    const jobs = [];
+    setSettingsKeysHint(false);
+    setSettingsKeysBox(false);
+    clearSettingsKeyCopyButtons();
+    for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
+      blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+    }
+    if (!validLoginUser(user)) {
+      password = "";
+      setSettingsKeysStatus("Enter a valid Hive username.", true);
+      return;
+    }
+    if (!password) {
+      setSettingsKeysStatus("Enter the master password.", true);
+      return;
+    }
+    if (!window.HiveAuth || typeof HiveAuth.wifFromLogin !== "function") {
+      password = "";
+      setSettingsKeysStatus("Could not derive the keys in this browser.", true);
+      return;
+    }
+    setSettingsKeysStatus("");
+    try {
+      for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
+        jobs.push(HiveAuth.wifFromLogin(user, password, SETTINGS_KEY_FIELDS[i][0]));
+      }
+      password = "";
+      for (let i = 0; i < jobs.length; i++) {
+        let wif = await jobs[i];
+        jobs[i] = null;
+        if (token !== settingsKeysToken) {
+          wif = "";
+          for (let j = i + 1; j < jobs.length; j++) jobs[j] = null;
+          return;
+        }
+        const field = document.getElementById(SETTINGS_KEY_FIELDS[i][1]);
+        if (field) field.value = wif;
+        wif = "";
+      }
+      if (token === settingsKeysToken) {
+        setSettingsKeysHint(true);
+        setSettingsKeysBox(true);
+      }
+    } catch (err) {
+      for (let i = 0; i < jobs.length; i++) jobs[i] = null;
+      if (token === settingsKeysToken) {
+        for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
+          blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+        }
+        setSettingsKeysHint(false);
+        setSettingsKeysBox(false);
+        setSettingsKeysStatus((err && err.message) || "Could not derive the keys.", true);
+      }
+    } finally {
+      password = "";
+    }
+  }
+
+  function bindSettingsKeys() {
+    const form = $("#settingsKeysForm");
+    const clear = $("#settingsKeysClear");
+    if (form) {
+      form.addEventListener("submit", generateSettingsKeys);
+      const copies = form.querySelectorAll("[data-settings-key-copy]");
+      for (let i = 0; i < copies.length; i++) {
+        copies[i].addEventListener("click", () => {
+          const input = document.getElementById(copies[i].getAttribute("data-settings-key-copy"));
+          copySubspaceMasterKey(input, copies[i]);
+        });
+      }
+    }
+    if (clear) {
+      clear.addEventListener("click", () => {
+        clearSettingsKeys();
+        setSettingsKeysStatus("");
+        clearSettingsClipboard();
+      });
+    }
+  }
+
   async function renderSettings(page) {
     settingsNodeToken += 1;
-    const tab = page === "profile" || page === "nodes" ? page : "general";
+    clearSettingsKeys();
+    const tab = page === "profile" || page === "keys" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
     if (tab === "general") {
@@ -19958,6 +20165,12 @@ let CS77_FILTER_LOW_REP = 20;
       const panel = $("#settingsPanel");
       if (panel) panel.innerHTML = settingsNodesHtml();
       bindSettingsNodes();
+      return;
+    }
+    if (tab === "keys") {
+      const panel = $("#settingsPanel");
+      if (panel) panel.innerHTML = settingsKeysHtml(observer() || "");
+      bindSettingsKeys();
       return;
     }
     await fillSettingsProfile();
@@ -20470,7 +20683,10 @@ let CS77_FILTER_LOW_REP = 20;
       !currentViewKey.startsWith("communities:");
     if (r.name !== "community" && !keepCommunity) resetCommunityState();
     if (r.name !== "profile") resetProfileState();
-    if (r.name !== "settings") clearSettingsProfileScratch();
+    if (r.name !== "settings") {
+      clearSettingsProfileScratch();
+      clearSettingsKeys();
+    }
     if (r.name !== "publish") {
       document.body.classList.toggle(
         "is-profile",

@@ -616,6 +616,20 @@
     }
   }
 
+  // One private key in WIF form. The password and the raw key bytes are dropped.
+  async function wifFromLogin(username, password, role) {
+    const derivedJob = deriveRoleKey(username, password, role);
+    password = "";
+    const derived = await derivedJob;
+    const lib = await loadHiveTx();
+    try {
+      const pk = lib.PrivateKey.from(derived.bytes);
+      return pk.toString();
+    } finally {
+      wipe(derived.bytes);
+    }
+  }
+
   // Public keys for a new account, plus the posting private key used to
   // finish setup. Owner, active, and memo private keys are wiped here.
   async function keysFromLogin(username, password) {
@@ -669,6 +683,7 @@
     broadcast,
     secretKind,
     deriveRoleKey,
+    wifFromLogin,
     loginMaster,
     broadcastRoleSecret,
     broadcastWithKey,

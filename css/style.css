@@ -7099,6 +7099,47 @@ min-height: 0;
   cursor: default;
 }
 
+#settingsKeysForm h2.settings-section-line {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0 0 0.45rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--yellow);
+  line-height: 1.45;
+}
+
+#settingsKeysForm h2.settings-section-line span {
+  white-space: nowrap;
+}
+
+#settingsKeysForm h2.settings-section-line::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 0;
+  border-top: 1px solid #fff;
+}
+
+.settings-keys-hint {
+  margin: 0.85rem 0 0;
+}
+
+.settings-keys-fields {
+  margin-top: 1.35rem;
+  padding: 1.15rem 1.1rem 1rem;
+  border: 1px solid var(--gray);
+  border-radius: var(--radius);
+}
+
+.settings-keys-fields > .settings-field:last-child,
+.settings-keys-fields > .settings-field:last-child .subspace-key-line {
+  margin-bottom: 0;
+}
+
 .settings-status {
   font-family: var(--font-mono);
   font-size: 0.78rem;
