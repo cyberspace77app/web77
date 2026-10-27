@@ -16616,21 +16616,82 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function delegateSignCopy(kind, user, detail) {
+    // Hive power is an active-authority operation. Resource credits are a
+    // custom_json whose inner delegate_rc requires posting authority, and the
+    // chain rejects an active signature for that operation.
     const posting = delegateState.asset === "rc";
     const removing = kind === "remove";
+    const role = posting ? "posting" : "active";
     return {
       authority: posting ? "Posting" : "Active",
       title: removing ? "Sign removal" : "Sign delegation",
       lead:
         "Use hive keychain (recommended) or enter the " +
-        (posting ? "posting" : "active") +
+        role +
         " key of @" +
         user +
         ". " +
         detail,
+      activeKeyLead: "Enter the active key of @" + user + ". " + detail,
       cancelMessage: removing ? "The removal was cancelled." : "The delegation was cancelled.",
       failMessage: removing ? "Could not sign this removal." : "Could not sign this delegation.",
     };
+  }
+
+  function requestKeychainBroadcast(username, operations, authority) {
+    return new Promise((resolve, reject) => {
+      const kc = window.hive_keychain;
+      if (!kc || typeof kc.requestBroadcast !== "function") {
+        reject(new Error("hive keychain is not available."));
+        return;
+      }
+      kc.requestBroadcast(username, operations, authority, (res) => {
+        if (res && res.success) {
+          resolve(res);
+          return;
+        }
+        const message = (res && (res.message || res.error)) || "Broadcast was cancelled.";
+        const err = new Error(typeof message === "string" ? message : "Broadcast was cancelled.");
+        const blob = String((res && res.error) || "") + " " + String((res && res.message) || "");
+        if (/cancel/i.test(blob)) err.ownerCancel = true;
+        reject(err);
+      });
+    });
+  }
+
+  // Resource credits use the posting key already available to a logged-in user,
+  // so they do not open the sign dialog. Hive power needs the active key:
+  // Keychain when that is the login, otherwise the sign dialog.
+  async function signDelegation(user, operations, copy) {
+    const authority = ownerSignAuthority(copy);
+    const hasPosting = Boolean(window.HiveAuth && HiveAuth.hasKey(user));
+    const keychainUser = keychainLoginActive();
+    if (authority === "Posting") {
+      if (hasPosting) {
+        if (!window.HiveAuth.broadcast) throw new Error(copy.failMessage || "Could not sign this delegation.");
+        await HiveAuth.broadcast(user, operations);
+        return;
+      }
+      if (keychainUser === user) {
+        await requestKeychainBroadcast(user, operations, "Posting");
+        return;
+      }
+      throw new Error(signerNeededMessage());
+    }
+    if (keychainUser === user) {
+      setDelegateStatus("Waiting for Keychain…", false);
+      await requestKeychainBroadcast(user, operations, "Active");
+      return;
+    }
+    await signWithDialog(user, operations, {
+      source: "wallet",
+      authority: "Active",
+      title: copy.title,
+      lead: copy.activeKeyLead || copy.lead,
+      cancelMessage: copy.cancelMessage,
+      failMessage: copy.failMessage,
+      passwordOnly: true,
+    });
   }
 
   function applyHpDelegation(wallet, delegatee, prevVests, nextVests) {
@@ -16899,14 +16960,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const copy = delegateSignCopy(removing ? "remove" : "delegate", user, detail);
     try {
-      await signWithDialog(user, operations, {
-        source: "wallet",
-        authority: copy.authority,
-        title: copy.title,
-        lead: copy.lead,
-        cancelMessage: copy.cancelMessage,
-        failMessage: copy.failMessage,
-      });
+      await signDelegation(user, operations, copy);
       closeDelegateOverlay();
       if (asset === "hp") {
         resourceGen += 1;
@@ -19133,7 +19187,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (hint) hint.textContent = "The " + role + " key is used once and is not saved.";
     if (key) key.placeholder = role + " key";
     if (connect) connect.textContent = (opts && opts.action) || "Sign";
-    setAuthMethod($("#ownerSignMethod"), defaultAuthMethod());
+    const method = $("#ownerSignMethod");
+    const passwordOnly = Boolean(opts && opts.passwordOnly);
+    if (method) method.hidden = passwordOnly;
+    setAuthMethod(method, passwordOnly ? "password" : defaultAuthMethod());
   }
 
   function restoreOwnerSignCopy() {
@@ -19170,10 +19227,14 @@ let CS77_FILTER_LOW_REP = 20;
       user.value = name;
       applyOwnerSignChrome(opts);
       el.hidden = false;
-      // Desktop focus stays on the account. Mobile leaves the inputs unfocused
-      // so the keyboard stays closed.
-
-      if (!isMobileViewport()) user.focus();
+      // Desktop focus stays on the account, or on the key when that is the
+      // only way to sign. Mobile leaves the inputs unfocused so the keyboard
+      // stays closed.
+      if (!isMobileViewport()) {
+        const key = $("#ownerSignKey");
+        if (opts.passwordOnly && key) key.focus();
+        else user.focus();
+      }
       ownerSignSession = {
         name,
         operations,
