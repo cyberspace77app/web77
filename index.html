@@ -42,7 +42,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.18.91">
+  <link rel="stylesheet" href="/css/style.css?v=0.18.92">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -135,11 +135,6 @@
   </div>
 
   <div class="app">
-    <div class="error-banner" id="errorBanner" hidden>
-      <span class="error-icon">⚠</span>
-      <span id="errorText"></span>
-    </div>
-
     <main id="view"></main>
   </div>
 
@@ -488,6 +483,11 @@
         <button type="button" class="btn-ghost" id="publishDiscardKeep">Keep writing</button>
       </div>
     </div>
+  </div>
+
+  <div class="error-banner" id="errorBanner" role="alert" hidden>
+    <span class="error-icon" aria-hidden="true">⚠</span>
+    <span id="errorText"></span>
   </div>
 
   <script src="/js/api.js?v=0.18.3"></script>
