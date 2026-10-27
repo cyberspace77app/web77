@@ -10989,6 +10989,9 @@ let CS77_FILTER_LOW_REP = 20;
           lead: "Use hive keychain (recommended) or enter the active key of @" + user + ". " + feeNote,
           cancelMessage: "Creation was cancelled.",
           failMessage: "Could not create the subspace account.",
+          onKeychain: function () {
+            setSubspaceCreateStatus("Waiting for Keychain…", false);
+          },
         });
         subspaceCreateDraft.created = name;
         paintSubspaceCreateLock();
@@ -15156,31 +15159,27 @@ let CS77_FILTER_LOW_REP = 20;
     const to = btn.getAttribute("data-memo-to") || "";
     const from = btn.getAttribute("data-memo-from") || "";
     const keychainUser = keychainLoginActive();
-    const useKeychain =
-      Boolean(keychainUser) &&
-      walletSameAccount(to, keychainUser) &&
-      keychainCanDecodeMemo();
+    const account = walletMemoDialogAccount(to, from);
     walletMemoBusy = true;
     btn.disabled = true;
     try {
       let decoded;
-      if (useKeychain) {
-        decoded = await requestKeychainMemoDecode(keychainUser, cipher);
-      } else {
-        const account = walletMemoDialogAccount(to, from);
-        if (!account) throw new Error("Could not decrypt this memo.");
-        decoded = await signWithDialog(account, [], {
-          source: "memo",
-          mode: "decrypt",
-          memo: cipher,
-          authority: "Memo",
-          title: "Decrypt memo",
-          action: "Decrypt",
-          lead: "Use hive keychain (recommended) or enter the memo key.",
-          cancelMessage: "The memo was not decrypted.",
-          failMessage: "Could not decrypt this memo.",
-        });
-      }
+      if (!account) throw new Error("Could not decrypt this memo.");
+      decoded = await signWithDialog(account, [], {
+        source: "memo",
+        mode: "decrypt",
+        memo: cipher,
+        authority: "Memo",
+        title: "Decrypt memo",
+        action: "Decrypt",
+        lead: "Use hive keychain (recommended) or enter the memo key.",
+        cancelMessage: "The memo was not decrypted.",
+        failMessage: "Could not decrypt this memo.",
+        preferKeychain:
+          Boolean(keychainUser) &&
+          walletSameAccount(to, keychainUser) &&
+          keychainCanDecodeMemo(),
+      });
       revealWalletMemo(cipher, decoded);
     } catch (err) {
       if (!(err && err.ownerCancel)) {
@@ -16303,6 +16302,9 @@ let CS77_FILTER_LOW_REP = 20;
         lead: copy.lead,
         cancelMessage: copy.cancelMessage,
         failMessage: copy.failMessage,
+        onKeychain: function () {
+          setWalletOpStatus("Waiting for Keychain…", false);
+        },
       });
       closeWalletOverlay();
       if (kind === "stake-hive" || kind === "stake-hbd") {
@@ -16632,66 +16634,9 @@ let CS77_FILTER_LOW_REP = 20;
         user +
         ". " +
         detail,
-      activeKeyLead: "Enter the active key of @" + user + ". " + detail,
       cancelMessage: removing ? "The removal was cancelled." : "The delegation was cancelled.",
       failMessage: removing ? "Could not sign this removal." : "Could not sign this delegation.",
     };
-  }
-
-  function requestKeychainBroadcast(username, operations, authority) {
-    return new Promise((resolve, reject) => {
-      const kc = window.hive_keychain;
-      if (!kc || typeof kc.requestBroadcast !== "function") {
-        reject(new Error("hive keychain is not available."));
-        return;
-      }
-      kc.requestBroadcast(username, operations, authority, (res) => {
-        if (res && res.success) {
-          resolve(res);
-          return;
-        }
-        const message = (res && (res.message || res.error)) || "Broadcast was cancelled.";
-        const err = new Error(typeof message === "string" ? message : "Broadcast was cancelled.");
-        const blob = String((res && res.error) || "") + " " + String((res && res.message) || "");
-        if (/cancel/i.test(blob)) err.ownerCancel = true;
-        reject(err);
-      });
-    });
-  }
-
-  // Resource credits use the posting key already available to a logged-in user,
-  // so they do not open the sign dialog. Hive power needs the active key:
-  // Keychain when that is the login, otherwise the sign dialog.
-  async function signDelegation(user, operations, copy) {
-    const authority = ownerSignAuthority(copy);
-    const hasPosting = Boolean(window.HiveAuth && HiveAuth.hasKey(user));
-    const keychainUser = keychainLoginActive();
-    if (authority === "Posting") {
-      if (hasPosting) {
-        if (!window.HiveAuth.broadcast) throw new Error(copy.failMessage || "Could not sign this delegation.");
-        await HiveAuth.broadcast(user, operations);
-        return;
-      }
-      if (keychainUser === user) {
-        await requestKeychainBroadcast(user, operations, "Posting");
-        return;
-      }
-      throw new Error(signerNeededMessage());
-    }
-    if (keychainUser === user) {
-      setDelegateStatus("Waiting for Keychain…", false);
-      await requestKeychainBroadcast(user, operations, "Active");
-      return;
-    }
-    await signWithDialog(user, operations, {
-      source: "wallet",
-      authority: "Active",
-      title: copy.title,
-      lead: copy.activeKeyLead || copy.lead,
-      cancelMessage: copy.cancelMessage,
-      failMessage: copy.failMessage,
-      passwordOnly: true,
-    });
   }
 
   function applyHpDelegation(wallet, delegatee, prevVests, nextVests) {
@@ -16960,7 +16905,21 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const copy = delegateSignCopy(removing ? "remove" : "delegate", user, detail);
     try {
-      await signDelegation(user, operations, copy);
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: copy.authority,
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+        requireSession: copy.authority === "Posting",
+        onKeychain:
+          copy.authority === "Active"
+            ? function () {
+                setDelegateStatus("Waiting for Keychain…", false);
+              }
+            : null,
+      });
       closeDelegateOverlay();
       if (asset === "hp") {
         resourceGen += 1;
@@ -19188,9 +19147,19 @@ let CS77_FILTER_LOW_REP = 20;
     if (key) key.placeholder = role + " key";
     if (connect) connect.textContent = (opts && opts.action) || "Sign";
     const method = $("#ownerSignMethod");
-    const passwordOnly = Boolean(opts && opts.passwordOnly);
-    if (method) method.hidden = passwordOnly;
-    setAuthMethod(method, passwordOnly ? "password" : defaultAuthMethod());
+    if (method) method.hidden = false;
+    setAuthMethod(method, opts ? ownerSignStartMethod() : defaultAuthMethod());
+  }
+
+  // A password login already chose that method. When the dialog asks that
+  // same account for a key, start on Password. Keychain stays on the switch.
+  // Signing a different account keeps the usual desktop Keychain default.
+  function ownerSignStartMethod() {
+    const account = normalizeLoginUser($("#ownerSignUser") && $("#ownerSignUser").value);
+    if (account && observer() === account && window.HiveAuth && HiveAuth.hasKey(account)) {
+      return "password";
+    }
+    return defaultAuthMethod();
   }
 
   function restoreOwnerSignCopy() {
@@ -19211,11 +19180,38 @@ let CS77_FILTER_LOW_REP = 20;
     if (cancel) cancel.disabled = false;
   }
 
-  // Shared signer for subspace owner settings, role changes, creating a subspace,
-  // wallet stake or unstake, and decrypting a transfer memo. One dialog asks
-  // for hive keychain or the role key. Decrypt mode resolves with the plaintext.
-  function signWithDialog(name, operations, copy) {
-    const opts = copy || {};
+  function requestKeychainBroadcast(username, operations, authority) {
+    return new Promise((resolve, reject) => {
+      const kc = window.hive_keychain;
+      if (!kc || typeof kc.requestBroadcast !== "function") {
+        reject(new Error("hive keychain is not available."));
+        return;
+      }
+      kc.requestBroadcast(username, operations, authority, (res) => {
+        if (res && res.success) {
+          resolve(res);
+          return;
+        }
+        const message = (res && (res.message || res.error)) || "Broadcast was cancelled.";
+        const err = new Error(typeof message === "string" ? message : "Broadcast was cancelled.");
+        const blob = String((res && res.error) || "") + " " + String((res && res.message) || "");
+        if (/cancel/i.test(blob)) err.ownerCancel = true;
+        reject(err);
+      });
+    });
+  }
+
+  // "posting" when the stored posting key can sign, "keychain" when this login
+  // is Keychain for the same account, otherwise "".
+  function signSessionKind(account, authority) {
+    const name = normalizeLoginUser(account);
+    if (!name) return "";
+    if (keychainLoginActive() === name) return "keychain";
+    if (authority === "Posting" && window.HiveAuth && HiveAuth.hasKey(name)) return "posting";
+    return "";
+  }
+
+  function openOwnerSignDialog(name, operations, opts) {
     return new Promise((resolve, reject) => {
       const el = $("#ownerSignOverlay");
       const user = $("#ownerSignUser");
@@ -19227,12 +19223,12 @@ let CS77_FILTER_LOW_REP = 20;
       user.value = name;
       applyOwnerSignChrome(opts);
       el.hidden = false;
-      // Desktop focus stays on the account, or on the key when that is the
-      // only way to sign. Mobile leaves the inputs unfocused so the keyboard
-      // stays closed.
+      // Desktop focus stays on the account, or on the key when Password is
+      // the selected method. Mobile leaves the inputs unfocused so the
+      // keyboard stays closed.
       if (!isMobileViewport()) {
         const key = $("#ownerSignKey");
-        if (opts.passwordOnly && key) key.focus();
+        if (authMethod($("#ownerSignMethod")) === "password" && key) key.focus();
         else user.focus();
       }
       ownerSignSession = {
@@ -19248,6 +19244,47 @@ let CS77_FILTER_LOW_REP = 20;
         memo: opts.mode === "decrypt" ? String(opts.memo || "") : "",
       };
     });
+  }
+
+  // One signer for subspace owner settings, role changes, creating a subspace,
+  // wallet stake or unstake, delegations, and decrypting a transfer memo.
+  // Pass the account, operations, authority, and the dialog copy. A login that
+  // can already sign that authority does so without the dialog: a stored
+  // posting key for Posting, or Hive Keychain for the role this login can
+  // sign. Anything else opens the dialog with both Keychain and Password.
+  // A stored posting key starts that dialog on Password when the account is
+  // the signed-in user. The password field accepts that role key or the
+  // master password. Decrypt mode resolves with the plaintext.
+  function signWithDialog(name, operations, copy) {
+    const opts = copy || {};
+    const authority = ownerSignAuthority(opts);
+    const mode = opts.mode === "decrypt" ? "decrypt" : "broadcast";
+    const account = normalizeLoginUser(name);
+    if (mode === "decrypt") {
+      if (
+        opts.preferKeychain !== false &&
+        keychainLoginActive() === account &&
+        keychainCanDecodeMemo()
+      ) {
+        return requestKeychainMemoDecode(account, String(opts.memo || ""));
+      }
+      return openOwnerSignDialog(name, operations, opts);
+    }
+    if (opts.authority) {
+      const kind = signSessionKind(account, authority);
+      if (kind === "posting") {
+        if (!window.HiveAuth || typeof HiveAuth.broadcast !== "function") {
+          return Promise.reject(new Error(opts.failMessage || "Could not sign."));
+        }
+        return HiveAuth.broadcast(account, operations);
+      }
+      if (kind === "keychain") {
+        if (typeof opts.onKeychain === "function") opts.onKeychain();
+        return requestKeychainBroadcast(account, operations, authority);
+      }
+      if (opts.requireSession) return Promise.reject(new Error(signerNeededMessage()));
+    }
+    return openOwnerSignDialog(name, operations, opts);
   }
 
   async function decryptOwnerSignMemo(session, method, secret) {
@@ -19322,17 +19359,7 @@ let CS77_FILTER_LOW_REP = 20;
         await signJob;
       } else {
         setOwnerSignStatus("Waiting for Keychain…", false);
-        await new Promise((resolve, reject) => {
-          window.hive_keychain.requestBroadcast(
-            session.name,
-            session.operations,
-            session.authority,
-            (res) => {
-              if (res && res.success) resolve(res);
-              else reject(new Error((res && (res.message || res.error)) || "Broadcast was cancelled."));
-            }
-          );
-        });
+        await requestKeychainBroadcast(session.name, session.operations, session.authority);
       }
       const done = session;
       ownerSignSession = null;
@@ -19474,7 +19501,13 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (!communityEditStill(name) || observer() !== user) return;
       try {
-        await signWithDialog(name, ownerOps.operations);
+        await signWithDialog(name, ownerOps.operations, {
+          source: "owner",
+          authority: "Posting",
+          onKeychain: function () {
+            if (communityEditStill(name)) setCommunityEditStatus("Waiting for Keychain…", false);
+          },
+        });
       } catch (err) {
         if (communityEditStill(name)) {
           const cancelled = Boolean(err && err.ownerCancel);
@@ -20248,10 +20281,14 @@ let CS77_FILTER_LOW_REP = 20;
       if (needs) {
         await signWithDialog(ctx.name, [op], {
           source: "role",
+          authority: "Posting",
           title: "Sign owner change",
           lead: "The owner account must sign this role change. Use hive keychain or enter the posting key of this subspace account.",
           cancelMessage: "The owner did not sign this change.",
           failMessage: "Could not sign this role change.",
+          onKeychain: function () {
+            setCommunityPeopleStatus("Waiting for Keychain…", false);
+          },
         });
       } else {
         if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
