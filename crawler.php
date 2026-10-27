@@ -171,7 +171,7 @@ function cs77_profile_page(string $raw): string
     if ($page === "" || $page === "posts" || $page === "blog") {
         return "posts";
     }
-    if ($page === "comments" || $page === "replies" || $page === "wallet" || $page === "followers" || $page === "following") {
+    if ($page === "comments" || $page === "replies" || $page === "wallet") {
         return $page;
     }
     return "";
@@ -375,6 +375,10 @@ function cs77_route(string $pathname): array
                 $route["name"] = "profile";
                 $route["author"] = $author;
                 $route["page"] = "posts";
+                return $route;
+            }
+            $rawPage = strtolower(trim($parts[1]));
+            if ($rawPage === "followers" || $rawPage === "following") {
                 return $route;
             }
             $page = cs77_profile_page($parts[1]);
@@ -914,12 +918,6 @@ function cs77_profile_title(string $author, string $page): string
     }
     if ($page === "wallet") {
         return "Wallet · " . $name . " — CyberSpace77";
-    }
-    if ($page === "followers") {
-        return "Followers · " . $name . " — CyberSpace77";
-    }
-    if ($page === "following") {
-        return "Following · " . $name . " — CyberSpace77";
     }
     return $name . " — CyberSpace77";
 }

@@ -18,6 +18,8 @@ let CS77_FILTER_LOW_REP = 20;
   const FEED_INFINITE_MARGIN = 720;
   // One page of a profile follow list. 48 fills 16 rows of the 3-column grid.
   const FOLLOW_PAGE = 48;
+  // Hivemind list_subscribers accepts at most 100 names.
+  const COMMUNITY_SUBSCRIBER_PAGE = 100;
   const SESSION_KEY = "cs77_user";
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
   const KEYCHAIN_PERSIST_KEY = "cs77_keychain_persist";
@@ -245,17 +247,23 @@ let CS77_FILTER_LOW_REP = 20;
     wallet: null,
     walletTx: null,
   };
-  const followList = {
+  const peopleList = {
     gen: 0,
-    author: "",
+    open: false,
     kind: "",
+    id: "",
     names: [],
+    seen: new Set(),
     cursor: "",
     done: true,
     loading: false,
     holdAuto: false,
     error: "",
   };
+  // The open panel is its own history entry so the browser back button closes it.
+  let peopleHistoryOn = false;
+  let peopleHistoryPop = false;
+  let pendingPeopleNav = null;
   const walletOpState = {
     kind: "",
     max: 0,
@@ -3614,8 +3622,6 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "comments";
     if (page === "replies") return "replies";
     if (page === "wallet") return "wallet";
-    if (page === "followers") return "followers";
-    if (page === "following") return "following";
     return "";
   }
 
@@ -3889,6 +3895,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (at === 0 && parts.length <= 2) {
         if (parts.length === 1) return { name: "profile", author, page: "posts" };
+        const rawPage = String(parts[1] || "").trim().toLowerCase();
+        if (rawPage === "followers" || rawPage === "following") return { name: "notfound" };
         const page = normalizeProfilePage(parts[1]);
         if (page) return { name: "profile", author, page };
       }
@@ -4167,6 +4175,16 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function navigate(href, replace) {
+    if (peopleList.open || peopleHistoryOn) {
+      const hadHistory = peopleHistoryOn;
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+      if (hadHistory && !replace) {
+        pendingPeopleNav = { href: href, replace: false };
+        history.back();
+        return;
+      }
+    }
     const path = hrefToPath(href);
     hidePayoutPanel();
     if (parseRoute(path).name === "publish") rememberNonPublishPath();
@@ -4280,6 +4298,19 @@ let CS77_FILTER_LOW_REP = 20;
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
+    const peopleBtn = e.target.closest && e.target.closest("[data-people]");
+    if (peopleBtn) {
+      e.preventDefault();
+      const kind = peopleBtn.getAttribute("data-people") || "";
+      const rawId = peopleBtn.getAttribute("data-people-id") || "";
+      const id =
+        kind === "subscribers"
+          ? normalizeCommunityName(rawId)
+          : String(rawId).replace(/^@/, "").trim().toLowerCase();
+      if (peopleList.open && peopleList.kind === kind && peopleList.id === id) closePeoplePanel();
+      else openPeoplePanel(kind, rawId);
       return;
     }
     if (expandClampedCardExcerpt(e)) return;
@@ -4452,6 +4483,29 @@ let CS77_FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
+    if (pendingPeopleNav) {
+      const job = pendingPeopleNav;
+      pendingPeopleNav = null;
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+      navigate(job.href, job.replace);
+      return;
+    }
+    if (peopleHistoryPop) {
+      peopleHistoryPop = false;
+      return;
+    }
+    if (history.state && history.state.peoplePanel) {
+      if (!peopleList.open) {
+        openPeoplePanel(history.state.peopleKind, history.state.peopleId, { fromHistory: true });
+      }
+      return;
+    }
+    if (peopleList.open) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+      return;
+    }
     if (!HASH_ROUTING) {
       routeFromPop = true;
       routePushed = false;
@@ -5614,6 +5668,9 @@ let CS77_FILTER_LOW_REP = 20;
   );
 
   document.addEventListener("keydown", (e) => {
+    if (e.key === " " || e.code === "Space") {
+      if (scrollPeoplePanel(e)) return;
+    }
     if (e.key !== "Escape") return;
     if (contentDeleteOpen()) {
       hideContentDelete();
@@ -5651,6 +5708,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (nodeOverlayOpen()) {
       closeNodeOverlay();
+      return;
+    }
+    const peopleOv = $("#peopleOverlay");
+    if (peopleOv && !peopleOv.hidden) {
+      closePeoplePanel();
       return;
     }
     setSessionMenuOpen(false);
@@ -14044,21 +14106,9 @@ let CS77_FILTER_LOW_REP = 20;
     claimAnimToken += 1;
     profileState.wallet = null;
     profileState.walletTx = null;
-    resetFollowList();
+    closePeoplePanel();
     clearDelegationView();
     closeDelegateOverlay();
-  }
-
-  function resetFollowList() {
-    followList.gen += 1;
-    followList.author = "";
-    followList.kind = "";
-    followList.names = [];
-    followList.cursor = "";
-    followList.done = true;
-    followList.loading = false;
-    followList.holdAuto = false;
-    followList.error = "";
   }
 
   function profileFollowed(profile) {
@@ -14265,16 +14315,19 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "Comments · " + a + " — CyberSpace77";
     if (page === "replies") return "Replies · " + a + " — CyberSpace77";
     if (page === "wallet") return "Wallet · " + a + " — CyberSpace77";
-    if (page === "followers") return "Followers · " + a + " — CyberSpace77";
-    if (page === "following") return "Following · " + a + " — CyberSpace77";
     return a + " — CyberSpace77";
   }
 
-  function profileCountLink(author, kind, text) {
+  function peopleCountOpen(kind, id) {
+    const key = String(id || "").replace(/^@/, "").toLowerCase();
+    return Boolean(peopleList.open && peopleList.kind === kind && peopleList.id === key);
+  }
+
+  function profileCountButton(author, kind, text) {
     const cls = kind === "followers" ? "profile-follower-count" : "profile-following-count";
-    const active = profileState.page === kind;
-    const href = HiveMd.escapeHtml(profileHref(author, kind));
-    return `<a href="${href}" class="${cls}${active ? " is-active" : ""}"${active ? ' aria-current="page"' : ""}>${text}</a>`;
+    const id = String(author || "").replace(/^@/, "").toLowerCase();
+    const active = peopleCountOpen(kind, id);
+    return `<button type="button" class="${cls}${active ? " is-active" : ""}" data-people="${kind}" data-people-id="${HiveMd.escapeHtml(id)}" aria-expanded="${active ? "true" : "false"}">${text}</button>`;
   }
 
   function profileNavHtml(author, page) {
@@ -14398,8 +14451,8 @@ let CS77_FILTER_LOW_REP = 20;
             ${profileDetailsHtml(profile)}
             <div class="profile-stats">
               <span class="profile-post-count">${posts} posts</span>
-              ${profileCountLink(author, "followers", followerText)}
-              ${profileCountLink(author, "following", followingText)}
+              ${profileCountButton(author, "followers", followerText)}
+              ${profileCountButton(author, "following", followingText)}
               ${hp ? `<span class="profile-hp">${HiveMd.escapeHtml(hp)}</span>` : ""}
               ${profileJoinedHtml(profile && profile.created)}
             </div>
@@ -15742,8 +15795,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function delegationRowHtml(direction, name, valueText, unit, asset, amountRaw, removable) {
-    const action = removable
-      ? '<div class="wallet-actions-inner"><button type="button" class="btn-ghost btn-compact wallet-undelegate-btn" data-delegate-asset="' +
+    const button = removable
+      ? '<button type="button" class="btn-ghost btn-compact wallet-undelegate-btn" data-delegate-asset="' +
         asset +
         '" data-delegate-account="' +
         HiveMd.escapeHtml(name) +
@@ -15751,7 +15804,7 @@ let CS77_FILTER_LOW_REP = 20;
         HiveMd.escapeHtml(String(amountRaw)) +
         '" aria-label="Edit delegation to @' +
         HiveMd.escapeHtml(name) +
-        '">\u2212</button></div>'
+        '">\u2212</button>'
       : "";
     return (
       '<tr class="wallet-delegation-row">' +
@@ -15764,9 +15817,10 @@ let CS77_FILTER_LOW_REP = 20;
       '<td class="wallet-unit">' +
       HiveMd.escapeHtml(unit) +
       "</td>" +
-      '<td class="wallet-actions">' +
-      action +
-      "</td></tr>"
+      '<td class="wallet-actions wallet-actions-inline">' +
+      (button ? '<div class="wallet-actions-inner">' + button + "</div>" : "") +
+      "</td></tr>" +
+      walletActionsUnderRow(button)
     );
   }
 
@@ -17207,18 +17261,13 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(view.querySelector(".profile-nav"));
   }
 
-  function paintProfileCountActive(page) {
-    const pairs = [
-      [".profile-follower-count", "followers"],
-      [".profile-following-count", "following"],
-    ];
-    for (let i = 0; i < pairs.length; i++) {
-      const el = view.querySelector(pairs[i][0]);
-      if (!el) continue;
-      const on = page === pairs[i][1];
-      el.classList.toggle("is-active", on);
-      if (on) el.setAttribute("aria-current", "page");
-      else el.removeAttribute("aria-current");
+  function paintPeopleCounts() {
+    const buttons = document.querySelectorAll("[data-people]");
+    for (let i = 0; i < buttons.length; i++) {
+      const btn = buttons[i];
+      const on = peopleCountOpen(btn.getAttribute("data-people"), btn.getAttribute("data-people-id"));
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-expanded", on ? "true" : "false");
     }
   }
 
@@ -17231,7 +17280,7 @@ let CS77_FILTER_LOW_REP = 20;
         links[i].classList.toggle("is-active", ids[i] === page);
       }
     }
-    paintProfileCountActive(page);
+    paintPeopleCounts();
   }
 
   function clearProfileSection() {
@@ -17293,37 +17342,61 @@ let CS77_FILTER_LOW_REP = 20;
     return `<a class="follow-account" href="${HiveMd.escapeHtml(profileHref(name))}"><img class="avatar" src="${src}" alt="" width="28" height="28"><span>@${safe}</span></a>`;
   }
 
-  function followEmptyHtml(kind, error) {
-    const failed = Boolean(error);
-    const title = failed
-      ? kind === "following"
-        ? "Following unavailable"
-        : "Followers unavailable"
-      : kind === "following"
-        ? "Not following anyone"
-        : "No followers";
-    const detail = failed
-      ? error
-      : kind === "following"
-        ? "This account is not following anyone yet."
-        : "Nobody follows this account yet.";
-    return `<div class="panel empty-state"><h2>${HiveMd.escapeHtml(title)}</h2><p>${HiveMd.escapeHtml(detail)}</p></div>`;
+  function peopleTitle(kind) {
+    if (kind === "following") return "Following";
+    if (kind === "subscribers") return "Subscribers";
+    return "Followers";
   }
 
-  function paintFollowList() {
-    const list = document.getElementById("followList");
-    const status = document.getElementById("followStatus");
-    const more = document.getElementById("followMoreBtn");
+  function peopleEmptyHtml(kind, error) {
+    if (!error) {
+      const note =
+        kind === "following"
+          ? "Not following anyone yet."
+          : kind === "subscribers"
+            ? "No subscribers yet."
+            : "No followers yet.";
+      return `<p class="people-empty">${note}</p>`;
+    }
+    const title =
+      kind === "following"
+        ? "Following unavailable"
+        : kind === "subscribers"
+          ? "Subscribers unavailable"
+          : "Followers unavailable";
+    return `<div class="panel empty-state"><h2>${HiveMd.escapeHtml(title)}</h2><p>${HiveMd.escapeHtml(error)}</p></div>`;
+  }
+
+  function peopleSubscriberNames(rows, cursor, seen) {
+    const skip = String(cursor || "");
+    const names = [];
+    const list = Array.isArray(rows) ? rows : [];
+    let last = "";
+    for (let i = 0; i < list.length; i++) {
+      const name = normalizeLoginUser(list[i] && list[i].name);
+      if (name) last = name;
+      if (!name || name === skip || seen.has(name) || isBlacklistedUser(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+    return { names, last };
+  }
+
+  function paintPeopleList() {
+    const list = document.getElementById("peopleList");
+    const status = document.getElementById("peopleStatus");
+    const more = document.getElementById("peopleMoreBtn");
+    const state = peopleList;
     if (!list || !status) return;
-    if (!followList.names.length && !followList.loading) {
+    if (!state.names.length && !state.loading) {
       list.className = "";
-      list.innerHTML = followEmptyHtml(followList.kind, followList.error);
+      list.innerHTML = peopleEmptyHtml(state.kind, state.error);
       status.hidden = true;
       status.textContent = "";
-      if (more) more.hidden = !followList.error;
+      if (more) more.hidden = !state.error;
       return;
     }
-    if (followList.loading && !followList.names.length) {
+    if (state.loading && !state.names.length) {
       list.className = "follow-list";
       list.innerHTML = "";
       status.className = "loading-row";
@@ -17333,17 +17406,17 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (list.className !== "follow-list") list.className = "follow-list";
-    if (followList.loading) {
+    if (state.loading) {
       status.className = "loading-row is-feed-more";
       status.hidden = false;
       status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span>`;
       if (more) more.hidden = true;
       return;
     }
-    if (followList.error) {
+    if (state.error) {
       status.className = "loading-row";
       status.hidden = false;
-      status.textContent = followList.error;
+      status.textContent = state.error;
       if (more) more.hidden = false;
       return;
     }
@@ -17352,8 +17425,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (more) more.hidden = true;
   }
 
-  function appendFollowAccounts(names) {
-    const list = document.getElementById("followList");
+  function appendPeopleAccounts(names) {
+    const list = document.getElementById("peopleList");
     if (!list || !names.length) return;
     if (list.className !== "follow-list") {
       list.className = "follow-list";
@@ -17362,112 +17435,199 @@ let CS77_FILTER_LOW_REP = 20;
     list.insertAdjacentHTML("beforeend", names.map(followAccountHtml).join(""));
   }
 
-  function followTailNearView() {
-    const list = document.getElementById("followList");
-    if (!list || postLayer.open) return false;
+  function peopleTailNearView() {
+    const scroller = document.getElementById("peopleScroll");
+    const list = document.getElementById("peopleList");
+    if (!scroller || !list || !peopleList.open) return false;
     const items = list.querySelectorAll(".follow-account");
     if (!items.length) return false;
     const tail = items[Math.max(0, items.length - FEED_INFINITE_LEAD)];
     const rect = tail.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
     if (rect.height < 1) return false;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    return rect.top <= vh + FEED_INFINITE_MARGIN;
+    return rect.top <= box.bottom + 280;
   }
 
-  async function fillFollowPage() {
-    const gen = followList.gen;
-    const author = followList.author;
-    const kind = followList.kind;
-    if (followList.loading || followList.done || followList.holdAuto) return false;
-    if (!profileRouteStill(author, kind)) return false;
-    followList.loading = true;
-    followList.error = "";
-    paintFollowList();
-    const before = followList.names.length;
+  async function fillPeoplePage() {
+    const state = peopleList;
+    const gen = state.gen;
+    const kind = state.kind;
+    const id = state.id;
+    if (!state.open || state.loading || state.done || state.holdAuto) return false;
+    state.loading = true;
+    state.error = "";
+    paintPeopleList();
+    const before = state.names.length;
     let failed = false;
     try {
-      const rows =
-        kind === "following"
-          ? await HiveApi.getFollowing(author, followList.cursor, FOLLOW_PAGE)
-          : await HiveApi.getFollowers(author, followList.cursor, FOLLOW_PAGE);
-      if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
-      setNodeLabel();
-      const names = followNamesFromRows(rows, kind, followList.cursor);
-      for (let i = 0; i < names.length; i++) followList.names.push(names[i]);
-      if (names.length) followList.cursor = names[names.length - 1];
-      if (!rows.length || rows.length < FOLLOW_PAGE || !names.length) followList.done = true;
-      appendFollowAccounts(names);
+      if (kind === "subscribers") {
+        let guard = 0;
+        while (guard++ < 30 && state.gen === gen && state.open && !state.done) {
+          const previous = state.cursor;
+          const rows = await HiveApi.listSubscribers(id, previous, COMMUNITY_SUBSCRIBER_PAGE);
+          if (state.gen !== gen || !state.open) return false;
+          setNodeLabel();
+          const step = peopleSubscriberNames(rows, previous, state.seen);
+          for (let i = 0; i < step.names.length; i++) state.names.push(step.names[i]);
+          if (step.last && step.last !== previous) state.cursor = step.last;
+          if (!rows.length || rows.length < COMMUNITY_SUBSCRIBER_PAGE || !step.last || step.last === previous) {
+            state.done = true;
+          }
+          if (step.names.length) {
+            appendPeopleAccounts(step.names);
+            break;
+          }
+        }
+      } else {
+        const rows =
+          kind === "following"
+            ? await HiveApi.getFollowing(id, state.cursor, FOLLOW_PAGE)
+            : await HiveApi.getFollowers(id, state.cursor, FOLLOW_PAGE);
+        if (state.gen !== gen || !state.open) return false;
+        setNodeLabel();
+        const names = followNamesFromRows(rows, kind, state.cursor);
+        for (let i = 0; i < names.length; i++) state.names.push(names[i]);
+        if (names.length) state.cursor = names[names.length - 1];
+        if (!rows.length || rows.length < FOLLOW_PAGE || !names.length) state.done = true;
+        appendPeopleAccounts(names);
+      }
     } catch (err) {
-      if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
+      if (state.gen !== gen || !state.open) return false;
       failed = true;
-      followList.error = (err && err.message) || String(err);
-      followList.holdAuto = true;
+      state.error = (err && err.message) || String(err);
+      state.holdAuto = true;
     } finally {
-      if (followList.gen === gen) followList.loading = false;
+      if (state.gen === gen) state.loading = false;
     }
-    if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
-    paintFollowList();
-    if (failed || followList.done) return false;
-    return followList.names.length > before;
+    if (state.gen !== gen || !state.open) return false;
+    paintPeopleList();
+    if (failed || state.done) return false;
+    return state.names.length > before;
   }
 
-  async function fillAndChainFollows() {
-    const gen = followList.gen;
-    let chain = await fillFollowPage();
-    while (chain && followList.gen === gen && followTailNearView()) {
-      chain = await fillFollowPage();
+  async function fillAndChainPeople() {
+    const gen = peopleList.gen;
+    let chain = await fillPeoplePage();
+    while (chain && peopleList.gen === gen && peopleList.open && peopleTailNearView()) {
+      chain = await fillPeoplePage();
     }
   }
 
-  function maybeLoadMoreFollows() {
-    if (followList.loading || followList.holdAuto || followList.done || !followList.author) return;
-    if (!profileRouteStill(followList.author, followList.kind)) return;
-    if (!followTailNearView()) return;
-    fillAndChainFollows();
+  function maybeLoadMorePeople() {
+    const state = peopleList;
+    if (!state.open || state.loading || state.holdAuto || state.done || !state.id) return;
+    if (!peopleTailNearView()) return;
+    fillAndChainPeople();
   }
 
-  async function renderProfileFollows(author, kind) {
-    if (!profileRouteStill(author, kind)) return;
-    const section = profileSectionEl();
-    if (!section) return;
-    followList.gen += 1;
-    const gen = followList.gen;
-    followList.author = author;
-    followList.kind = kind;
-    followList.names = [];
-    followList.cursor = "";
-    followList.done = false;
-    followList.loading = false;
-    followList.holdAuto = false;
-    followList.error = "";
-    section.innerHTML = `
-      <div id="followList" class="follow-list"></div>
-      <div id="followStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
-      <div class="feed-actions">
-        <button type="button" class="btn-primary" id="followMoreBtn" hidden>Load more</button>
-      </div>
-    `;
-    const more = document.getElementById("followMoreBtn");
-    if (more) {
-      more.addEventListener("click", () => {
-        if (followList.loading) return;
-        followList.holdAuto = false;
-        followList.error = "";
-        fillAndChainFollows();
-      });
+  function peopleHistoryState(kind, id) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    return Object.assign({}, prev, {
+      peoplePanel: true,
+      peopleKind: kind,
+      peopleId: id,
+    });
+  }
+
+  function closePeoplePanel(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
+    const overlayEl = $("#peopleOverlay");
+    if (!peopleList.open) {
+      if (overlayEl) overlayEl.hidden = true;
+      return;
     }
-    await fillAndChainFollows();
-    if (followList.gen === gen && profileRouteStill(author, kind)) releaseProfileSectionHold();
+    peopleList.gen += 1;
+    peopleList.open = false;
+    peopleList.kind = "";
+    peopleList.id = "";
+    peopleList.names = [];
+    peopleList.seen = new Set();
+    peopleList.cursor = "";
+    peopleList.done = true;
+    peopleList.loading = false;
+    peopleList.holdAuto = false;
+    peopleList.error = "";
+    if (overlayEl) overlayEl.hidden = true;
+    paintPeopleCounts();
+    if (peopleHistoryOn && !skipHistory) {
+      peopleHistoryOn = false;
+      peopleHistoryPop = true;
+      history.back();
+    }
+  }
+
+  function openPeoplePanel(kind, rawId, opts) {
+    const id =
+      kind === "subscribers"
+        ? normalizeCommunityName(rawId)
+        : String(rawId || "").replace(/^@/, "").trim().toLowerCase();
+    if (!id) return;
+    if (kind !== "followers" && kind !== "following" && kind !== "subscribers") return;
+    const overlayEl = $("#peopleOverlay");
+    if (!overlayEl) return;
+    peopleList.gen += 1;
+    peopleList.open = true;
+    peopleList.kind = kind;
+    peopleList.id = id;
+    peopleList.names = [];
+    peopleList.seen = new Set();
+    peopleList.cursor = "";
+    peopleList.done = false;
+    peopleList.loading = false;
+    peopleList.holdAuto = false;
+    peopleList.error = "";
+    const title = $("#peopleTitle");
+    if (title) title.textContent = peopleTitle(kind);
+    const list = document.getElementById("peopleList");
+    if (list) {
+      list.className = "follow-list";
+      list.innerHTML = "";
+    }
+    const status = document.getElementById("peopleStatus");
+    if (status) {
+      status.hidden = false;
+      status.className = "loading-row";
+      status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading…`;
+    }
+    const more = document.getElementById("peopleMoreBtn");
+    if (more) more.hidden = true;
+    const scroller = document.getElementById("peopleScroll");
+    if (scroller) scroller.scrollTop = 0;
+    overlayEl.hidden = false;
+    paintPeopleCounts();
+    const opener = document.activeElement;
+    if (opener && opener.closest && opener.closest("[data-people]")) opener.blur();
+    if (opts && opts.fromHistory) {
+      peopleHistoryOn = true;
+    } else if (peopleHistoryOn) {
+      history.replaceState(peopleHistoryState(kind, id), "", location.href);
+    } else {
+      history.pushState(peopleHistoryState(kind, id), "", location.href);
+      peopleHistoryOn = true;
+    }
+    fillAndChainPeople();
+  }
+
+  // The page behind the panel does not scroll, so Space moves the name list.
+  function scrollPeoplePanel(e) {
+    const overlayEl = $("#peopleOverlay");
+    if (!overlayEl || overlayEl.hidden || !peopleList.open) return false;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return false;
+    const target = e.target;
+    if (target && target.closest && target.closest("input, textarea, select, [contenteditable]")) return false;
+    if (target && target.closest && target.closest("#peopleOverlay a, #peopleOverlay button")) return false;
+    const scroller = document.getElementById("peopleScroll");
+    if (!scroller) return false;
+    e.preventDefault();
+    const distance = Math.max(48, Math.round(scroller.clientHeight * 0.88));
+    scroller.scrollBy(0, e.shiftKey ? -distance : distance);
+    return true;
   }
 
   async function renderProfileSection(name, tab, pageLoad) {
     if (!profileRouteStill(name, tab)) return;
     if (tab === "wallet") {
       await fillProfileWallet(name, tab, pageLoad);
-      return;
-    }
-    if (tab === "followers" || tab === "following") {
-      await renderProfileFollows(name, tab);
       return;
     }
     const status = $("#profileSectionStatus");
@@ -17662,6 +17822,7 @@ let CS77_FILTER_LOW_REP = 20;
     communityState.info = null;
     communityState.subscribed = false;
     communityState.pending = false;
+    closePeoplePanel();
     clearCommunityEditScratch();
   }
 
@@ -17781,6 +17942,14 @@ let CS77_FILTER_LOW_REP = 20;
     if (kind) stats.appendChild(kind);
   }
 
+  function communitySubscriberCountHtml(info) {
+    const name = String((info && info.name) || communityState.name || "");
+    const id = normalizeCommunityName(name);
+    const text = communityCountText(info && info.subscribers) + " subscribers";
+    const active = peopleCountOpen("subscribers", id);
+    return `<button type="button" class="community-sub-count${active ? " is-active" : ""}" data-people="subscribers" data-people-id="${HiveMd.escapeHtml(id)}" aria-expanded="${active ? "true" : "false"}">${text}</button>`;
+  }
+
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
@@ -17795,7 +17964,7 @@ let CS77_FILTER_LOW_REP = 20;
             <p class="profile-handle"><a href="${href}">${HiveMd.escapeHtml(name)}</a></p>
             ${about ? `<p class="profile-about">${HiveMd.escapeHtml(about)}</p>` : ""}
             <div class="profile-stats">
-              <span class="community-sub-count">${communityCountText(info && info.subscribers)} subscribers</span>
+              ${communitySubscriberCountHtml(info)}
               <span>${communityCountText(info && info.num_authors)} authors</span>
               ${communityStatMarksHtml(info)}
             </div>
@@ -21004,12 +21173,14 @@ let CS77_FILTER_LOW_REP = 20;
 
   function paintCommunityNavActive(page) {
     const nav = view.querySelector(".community-nav");
-    if (!nav) return;
-    const ids = ["latest", "trending", "about", "members"];
-    const links = nav.querySelectorAll("a");
-    for (let i = 0; i < links.length; i++) {
-      links[i].classList.toggle("is-active", ids[i] === page);
+    if (nav) {
+      const ids = ["latest", "trending", "about", "members"];
+      const links = nav.querySelectorAll("a");
+      for (let i = 0; i < links.length; i++) {
+        links[i].classList.toggle("is-active", ids[i] === page);
+      }
     }
+    paintPeopleCounts();
   }
 
   function clearCommunitySubpage() {
@@ -22576,6 +22747,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function route() {
+    if (peopleList.open || peopleHistoryOn) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+      if (history.state && history.state.peoplePanel) {
+        const prev = Object.assign({}, history.state);
+        delete prev.peoplePanel;
+        delete prev.peopleKind;
+        delete prev.peopleId;
+        history.replaceState(prev, "", location.href);
+      }
+    }
     persistCommentDraftNow();
     const fromPop = routeFromPop;
     const pushed = routePushed;
@@ -23450,8 +23632,11 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("resize", maybeLoadMoreFeed);
     window.addEventListener("scroll", maybeLoadMoreWallet, { passive: true });
     window.addEventListener("resize", maybeLoadMoreWallet);
-    window.addEventListener("scroll", maybeLoadMoreFollows, { passive: true });
-    window.addEventListener("resize", maybeLoadMoreFollows);
+    const peopleScroll = document.getElementById("peopleScroll");
+    if (peopleScroll) {
+      peopleScroll.addEventListener("scroll", maybeLoadMorePeople, { passive: true });
+    }
+    window.addEventListener("resize", maybeLoadMorePeople);
     window.addEventListener("resize", () => fitPublishTitle());
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => fitPublishTitle());
@@ -24143,6 +24328,24 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     });
+
+    const peopleOverlay = $("#peopleOverlay");
+    const peopleClose = $("#peopleClose");
+    const peopleMore = $("#peopleMoreBtn");
+    if (peopleClose) peopleClose.addEventListener("click", closePeoplePanel);
+    if (peopleMore) {
+      peopleMore.addEventListener("click", () => {
+        if (peopleList.loading) return;
+        peopleList.holdAuto = false;
+        peopleList.error = "";
+        fillAndChainPeople();
+      });
+    }
+    if (peopleOverlay) {
+      peopleOverlay.addEventListener("click", (e) => {
+        if (e.target === peopleOverlay) closePeoplePanel();
+      });
+    }
 
     const walletOverlay = $("#walletOverlay");
     if (walletOverlay) {
