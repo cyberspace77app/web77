@@ -16,6 +16,8 @@ let CS77_FILTER_LOW_REP = 20;
   // viewport, so the request finishes before the reader reaches the end.
   const FEED_INFINITE_LEAD = 3;
   const FEED_INFINITE_MARGIN = 720;
+  // One page of a profile follow list. 48 fills 16 rows of the 3-column grid.
+  const FOLLOW_PAGE = 48;
   const SESSION_KEY = "cs77_user";
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
   const KEYCHAIN_PERSIST_KEY = "cs77_keychain_persist";
@@ -242,6 +244,17 @@ let CS77_FILTER_LOW_REP = 20;
     claimPending: false,
     wallet: null,
     walletTx: null,
+  };
+  const followList = {
+    gen: 0,
+    author: "",
+    kind: "",
+    names: [],
+    cursor: "",
+    done: true,
+    loading: false,
+    holdAuto: false,
+    error: "",
   };
   const walletOpState = {
     kind: "",
@@ -3601,6 +3614,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "comments";
     if (page === "replies") return "replies";
     if (page === "wallet") return "wallet";
+    if (page === "followers") return "followers";
+    if (page === "following") return "following";
     return "";
   }
 
@@ -14029,8 +14044,21 @@ let CS77_FILTER_LOW_REP = 20;
     claimAnimToken += 1;
     profileState.wallet = null;
     profileState.walletTx = null;
+    resetFollowList();
     clearDelegationView();
     closeDelegateOverlay();
+  }
+
+  function resetFollowList() {
+    followList.gen += 1;
+    followList.author = "";
+    followList.kind = "";
+    followList.names = [];
+    followList.cursor = "";
+    followList.done = true;
+    followList.loading = false;
+    followList.holdAuto = false;
+    followList.error = "";
   }
 
   function profileFollowed(profile) {
@@ -14237,7 +14265,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "Comments · " + a + " — CyberSpace77";
     if (page === "replies") return "Replies · " + a + " — CyberSpace77";
     if (page === "wallet") return "Wallet · " + a + " — CyberSpace77";
+    if (page === "followers") return "Followers · " + a + " — CyberSpace77";
+    if (page === "following") return "Following · " + a + " — CyberSpace77";
     return a + " — CyberSpace77";
+  }
+
+  function profileCountLink(author, kind, text) {
+    const cls = kind === "followers" ? "profile-follower-count" : "profile-following-count";
+    const active = profileState.page === kind;
+    const href = HiveMd.escapeHtml(profileHref(author, kind));
+    return `<a href="${href}" class="${cls}${active ? " is-active" : ""}"${active ? ' aria-current="page"' : ""}>${text}</a>`;
   }
 
   function profileNavHtml(author, page) {
@@ -14331,6 +14368,8 @@ let CS77_FILTER_LOW_REP = 20;
     const posts = Number((profile && profile.post_count) || stats.post_count || 0);
     const followers = Number(stats.followers || 0);
     const following = Number(stats.following || 0);
+    const followerText = statsPending ? "… followers" : followers + " followers";
+    const followingText = statsPending ? "… following" : following + " following";
     const hp = formatProfileHp(hivePower);
     const rep = Math.floor(
       HiveMd.displayReputation((profile && profile.reputation) || 0)
@@ -14359,8 +14398,8 @@ let CS77_FILTER_LOW_REP = 20;
             ${profileDetailsHtml(profile)}
             <div class="profile-stats">
               <span class="profile-post-count">${posts} posts</span>
-              <span class="profile-follower-count">${statsPending ? "… followers" : followers + " followers"}</span>
-              <span class="profile-following-count">${statsPending ? "… following" : following + " following"}</span>
+              ${profileCountLink(author, "followers", followerText)}
+              ${profileCountLink(author, "following", followingText)}
               ${hp ? `<span class="profile-hp">${HiveMd.escapeHtml(hp)}</span>` : ""}
               ${profileJoinedHtml(profile && profile.created)}
             </div>
@@ -14933,6 +14972,7 @@ let CS77_FILTER_LOW_REP = 20;
       loading: false,
       started: false,
       error: "",
+      holdAuto: false,
       seen: new Set(),
       pageGoal: WALLET_TX_PAGE,
     };
@@ -15012,7 +15052,7 @@ let CS77_FILTER_LOW_REP = 20;
         ? `<div class="wallet-tx-status"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`
         : "";
     const more =
-      state.started && !state.done && !state.loading
+      state.started && !state.done && !state.loading && state.holdAuto
         ? `<div class="feed-actions"><button type="button" class="btn-primary" id="walletMoreBtn">Load more</button></div>`
         : "";
     return body + note + loading + more;
@@ -15025,18 +15065,42 @@ let CS77_FILTER_LOW_REP = 20;
     el.innerHTML = walletHistoryHtml(profileState.walletTx, props);
   }
 
+  // Same lead and margin as the feed. Load more stays for a page that fails
+  // or adds nothing, and scrolling does not retry until that button is used.
+  function walletTailNearView() {
+    const list = document.querySelector("#walletTxBody .wallet-tx-list");
+    if (!list) return false;
+    const items = list.querySelectorAll(".wallet-tx");
+    if (!items.length) return false;
+    const tail = items[Math.max(0, items.length - FEED_INFINITE_LEAD)];
+    const rect = tail.getBoundingClientRect();
+    if (rect.height < 1) return false;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.top <= vh + FEED_INFINITE_MARGIN;
+  }
+
+  function maybeLoadMoreWallet() {
+    const tx = profileState.walletTx;
+    if (!tx || tx.holdAuto || tx.loading || tx.done || !tx.started) return;
+    if (!walletTailNearView()) return;
+    loadMoreWalletHistory();
+  }
+
   async function loadMoreWalletHistory() {
     const tx = profileState.walletTx;
     const name = profileState.author;
     const tab = profileState.page;
     if (!tx || tx.loading || tx.done || !name) return;
+    const before = tx.items.length;
     tx.loading = true;
     tx.error = "";
     paintWalletHistory();
+    let failed = false;
     try {
       await appendWalletHistory(name, tx);
     } catch (err) {
       if (profileState.walletTx !== tx) return;
+      failed = true;
       tx.error = (err && err.message) || String(err);
     } finally {
       if (profileState.walletTx === tx) {
@@ -15045,7 +15109,10 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     if (profileState.walletTx !== tx || !profileRouteStill(name, tab)) return;
+    const stalled = !failed && !tx.done && tx.items.length === before;
+    tx.holdAuto = failed || stalled;
     paintWalletHistory();
+    if (!tx.holdAuto) maybeLoadMoreWallet();
   }
 
   function walletTxHtml(entry, props) {
@@ -17140,14 +17207,31 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(view.querySelector(".profile-nav"));
   }
 
+  function paintProfileCountActive(page) {
+    const pairs = [
+      [".profile-follower-count", "followers"],
+      [".profile-following-count", "following"],
+    ];
+    for (let i = 0; i < pairs.length; i++) {
+      const el = view.querySelector(pairs[i][0]);
+      if (!el) continue;
+      const on = page === pairs[i][1];
+      el.classList.toggle("is-active", on);
+      if (on) el.setAttribute("aria-current", "page");
+      else el.removeAttribute("aria-current");
+    }
+  }
+
   function paintProfileNavActive(page) {
     const nav = view.querySelector(".profile-nav");
-    if (!nav) return;
-    const ids = ["posts", "comments", "replies", "wallet"];
-    const links = nav.querySelectorAll("a");
-    for (let i = 0; i < links.length; i++) {
-      links[i].classList.toggle("is-active", ids[i] === page);
+    if (nav) {
+      const ids = ["posts", "comments", "replies", "wallet"];
+      const links = nav.querySelectorAll("a");
+      for (let i = 0; i < links.length; i++) {
+        links[i].classList.toggle("is-active", ids[i] === page);
+      }
     }
+    paintProfileCountActive(page);
   }
 
   function clearProfileSection() {
@@ -17186,10 +17270,204 @@ let CS77_FILTER_LOW_REP = 20;
     if (hold > 40) section.style.minHeight = hold + "px";
   }
 
+  // Keep Hive's order. get_followers and get_following are already alphabetical.
+  function followNamesFromRows(rows, kind, start) {
+    const field = kind === "following" ? "following" : "follower";
+    const skip = String(start || "").toLowerCase();
+    const names = [];
+    const list = Array.isArray(rows) ? rows : [];
+    for (let i = 0; i < list.length; i++) {
+      const name = String((list[i] && list[i][field]) || "")
+        .replace(/^@/, "")
+        .trim()
+        .toLowerCase();
+      if (!name || (skip && name === skip)) continue;
+      names.push(name);
+    }
+    return names;
+  }
+
+  function followAccountHtml(name) {
+    const safe = HiveMd.escapeHtml(name);
+    const src = HiveMd.escapeHtml(HiveMd.avatarUrl(name, "small"));
+    return `<a class="follow-account" href="${HiveMd.escapeHtml(profileHref(name))}"><img class="avatar" src="${src}" alt="" width="28" height="28"><span>@${safe}</span></a>`;
+  }
+
+  function followEmptyHtml(kind, error) {
+    const failed = Boolean(error);
+    const title = failed
+      ? kind === "following"
+        ? "Following unavailable"
+        : "Followers unavailable"
+      : kind === "following"
+        ? "Not following anyone"
+        : "No followers";
+    const detail = failed
+      ? error
+      : kind === "following"
+        ? "This account is not following anyone yet."
+        : "Nobody follows this account yet.";
+    return `<div class="panel empty-state"><h2>${HiveMd.escapeHtml(title)}</h2><p>${HiveMd.escapeHtml(detail)}</p></div>`;
+  }
+
+  function paintFollowList() {
+    const list = document.getElementById("followList");
+    const status = document.getElementById("followStatus");
+    const more = document.getElementById("followMoreBtn");
+    if (!list || !status) return;
+    if (!followList.names.length && !followList.loading) {
+      list.className = "";
+      list.innerHTML = followEmptyHtml(followList.kind, followList.error);
+      status.hidden = true;
+      status.textContent = "";
+      if (more) more.hidden = !followList.error;
+      return;
+    }
+    if (followList.loading && !followList.names.length) {
+      list.className = "follow-list";
+      list.innerHTML = "";
+      status.className = "loading-row";
+      status.hidden = false;
+      status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading…`;
+      if (more) more.hidden = true;
+      return;
+    }
+    if (list.className !== "follow-list") list.className = "follow-list";
+    if (followList.loading) {
+      status.className = "loading-row is-feed-more";
+      status.hidden = false;
+      status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span>`;
+      if (more) more.hidden = true;
+      return;
+    }
+    if (followList.error) {
+      status.className = "loading-row";
+      status.hidden = false;
+      status.textContent = followList.error;
+      if (more) more.hidden = false;
+      return;
+    }
+    status.hidden = true;
+    status.textContent = "";
+    if (more) more.hidden = true;
+  }
+
+  function appendFollowAccounts(names) {
+    const list = document.getElementById("followList");
+    if (!list || !names.length) return;
+    if (list.className !== "follow-list") {
+      list.className = "follow-list";
+      list.innerHTML = "";
+    }
+    list.insertAdjacentHTML("beforeend", names.map(followAccountHtml).join(""));
+  }
+
+  function followTailNearView() {
+    const list = document.getElementById("followList");
+    if (!list || postLayer.open) return false;
+    const items = list.querySelectorAll(".follow-account");
+    if (!items.length) return false;
+    const tail = items[Math.max(0, items.length - FEED_INFINITE_LEAD)];
+    const rect = tail.getBoundingClientRect();
+    if (rect.height < 1) return false;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.top <= vh + FEED_INFINITE_MARGIN;
+  }
+
+  async function fillFollowPage() {
+    const gen = followList.gen;
+    const author = followList.author;
+    const kind = followList.kind;
+    if (followList.loading || followList.done || followList.holdAuto) return false;
+    if (!profileRouteStill(author, kind)) return false;
+    followList.loading = true;
+    followList.error = "";
+    paintFollowList();
+    const before = followList.names.length;
+    let failed = false;
+    try {
+      const rows =
+        kind === "following"
+          ? await HiveApi.getFollowing(author, followList.cursor, FOLLOW_PAGE)
+          : await HiveApi.getFollowers(author, followList.cursor, FOLLOW_PAGE);
+      if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
+      setNodeLabel();
+      const names = followNamesFromRows(rows, kind, followList.cursor);
+      for (let i = 0; i < names.length; i++) followList.names.push(names[i]);
+      if (names.length) followList.cursor = names[names.length - 1];
+      if (!rows.length || rows.length < FOLLOW_PAGE || !names.length) followList.done = true;
+      appendFollowAccounts(names);
+    } catch (err) {
+      if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
+      failed = true;
+      followList.error = (err && err.message) || String(err);
+      followList.holdAuto = true;
+    } finally {
+      if (followList.gen === gen) followList.loading = false;
+    }
+    if (followList.gen !== gen || !profileRouteStill(author, kind)) return false;
+    paintFollowList();
+    if (failed || followList.done) return false;
+    return followList.names.length > before;
+  }
+
+  async function fillAndChainFollows() {
+    const gen = followList.gen;
+    let chain = await fillFollowPage();
+    while (chain && followList.gen === gen && followTailNearView()) {
+      chain = await fillFollowPage();
+    }
+  }
+
+  function maybeLoadMoreFollows() {
+    if (followList.loading || followList.holdAuto || followList.done || !followList.author) return;
+    if (!profileRouteStill(followList.author, followList.kind)) return;
+    if (!followTailNearView()) return;
+    fillAndChainFollows();
+  }
+
+  async function renderProfileFollows(author, kind) {
+    if (!profileRouteStill(author, kind)) return;
+    const section = profileSectionEl();
+    if (!section) return;
+    followList.gen += 1;
+    const gen = followList.gen;
+    followList.author = author;
+    followList.kind = kind;
+    followList.names = [];
+    followList.cursor = "";
+    followList.done = false;
+    followList.loading = false;
+    followList.holdAuto = false;
+    followList.error = "";
+    section.innerHTML = `
+      <div id="followList" class="follow-list"></div>
+      <div id="followStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
+      <div class="feed-actions">
+        <button type="button" class="btn-primary" id="followMoreBtn" hidden>Load more</button>
+      </div>
+    `;
+    const more = document.getElementById("followMoreBtn");
+    if (more) {
+      more.addEventListener("click", () => {
+        if (followList.loading) return;
+        followList.holdAuto = false;
+        followList.error = "";
+        fillAndChainFollows();
+      });
+    }
+    await fillAndChainFollows();
+    if (followList.gen === gen && profileRouteStill(author, kind)) releaseProfileSectionHold();
+  }
+
   async function renderProfileSection(name, tab, pageLoad) {
     if (!profileRouteStill(name, tab)) return;
     if (tab === "wallet") {
       await fillProfileWallet(name, tab, pageLoad);
+      return;
+    }
+    if (tab === "followers" || tab === "following") {
+      await renderProfileFollows(name, tab);
       return;
     }
     const status = $("#profileSectionStatus");
@@ -23170,6 +23448,10 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("resize", maybeLoadMoreBrowse);
     window.addEventListener("scroll", maybeLoadMoreFeed, { passive: true });
     window.addEventListener("resize", maybeLoadMoreFeed);
+    window.addEventListener("scroll", maybeLoadMoreWallet, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreWallet);
+    window.addEventListener("scroll", maybeLoadMoreFollows, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreFollows);
     window.addEventListener("resize", () => fitPublishTitle());
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => fitPublishTitle());
@@ -23529,6 +23811,7 @@ let CS77_FILTER_LOW_REP = 20;
       const moreWallet = e.target.closest("#walletMoreBtn");
       if (moreWallet && inInteractiveSurface(moreWallet)) {
         e.preventDefault();
+        if (profileState.walletTx) profileState.walletTx.holdAuto = false;
         loadMoreWalletHistory();
         return;
       }

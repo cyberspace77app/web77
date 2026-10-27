@@ -385,6 +385,31 @@
     });
   }
 
+  // Blog follows, alphabetical by account name. `start` is the last name already
+  // shown. Current Hivemind starts after that name.
+  async function getFollowPage(method, account, start, limit) {
+    const name = String(account || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!name) return [];
+    const lim = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+    const from = String(start || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    const result = await hiveRpc(method, [name, from, "blog", lim]);
+    return Array.isArray(result) ? result : [];
+  }
+
+  function getFollowers(account, start, limit) {
+    return getFollowPage("condenser_api.get_followers", account, start, limit);
+  }
+
+  function getFollowing(account, start, limit) {
+    return getFollowPage("condenser_api.get_following", account, start, limit);
+  }
+
   function normalizeSubscription(row) {
     if (Array.isArray(row)) {
       return {
@@ -1401,6 +1426,8 @@
     getPost,
     getAccountPosts,
     getProfile,
+    getFollowers,
+    getFollowing,
     listAllSubscriptions,
     isCommunityName,
     getCommunity,

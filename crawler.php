@@ -171,7 +171,7 @@ function cs77_profile_page(string $raw): string
     if ($page === "" || $page === "posts" || $page === "blog") {
         return "posts";
     }
-    if ($page === "comments" || $page === "replies" || $page === "wallet") {
+    if ($page === "comments" || $page === "replies" || $page === "wallet" || $page === "followers" || $page === "following") {
         return $page;
     }
     return "";
@@ -914,6 +914,12 @@ function cs77_profile_title(string $author, string $page): string
     }
     if ($page === "wallet") {
         return "Wallet · " . $name . " — CyberSpace77";
+    }
+    if ($page === "followers") {
+        return "Followers · " . $name . " — CyberSpace77";
+    }
+    if ($page === "following") {
+        return "Following · " . $name . " — CyberSpace77";
     }
     return $name . " — CyberSpace77";
 }

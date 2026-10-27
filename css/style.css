@@ -3653,6 +3653,60 @@ a.tag:hover {
   color: inherit;
 }
 
+.profile-stats a.profile-follower-count,
+.profile-stats a.profile-following-count {
+  color: inherit;
+  text-shadow: none;
+}
+
+.profile-stats a.profile-follower-count:hover,
+.profile-stats a.profile-following-count:hover,
+.profile-stats a.profile-follower-count.is-active,
+.profile-stats a.profile-following-count.is-active {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.follow-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 1.25rem;
+  row-gap: 0.35rem;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.follow-account {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.28rem 0;
+  color: var(--text);
+  text-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.follow-account .avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.follow-account span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.follow-account:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
 .profile-banner:has(.profile-joined:hover) {
   overflow: visible;
   z-index: 2;
@@ -6453,6 +6507,10 @@ body:has(#publishOverlay:not([hidden])) {
   .profile-head {
     flex-direction: column;
     gap: 1rem;
+  }
+
+  .follow-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .profile-head-actions {
