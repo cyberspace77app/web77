@@ -249,6 +249,31 @@ let CS77_FILTER_LOW_REP = 20;
     symbol: "hive",
     pending: false,
   };
+  const delegationView = {
+    loadGen: 0,
+    account: "",
+    open: false,
+    loading: false,
+    loaded: false,
+    hasError: false,
+    outgoingHp: null,
+    incomingHp: null,
+    outgoingRc: null,
+    incomingRc: null,
+    hpTruncated: false,
+    rcTruncated: false,
+    errors: {},
+    rcAccount: null,
+    receivedRc: null,
+  };
+  let delegationLoadPromise = null;
+  const delegateState = {
+    mode: "",
+    asset: "hp",
+    pending: false,
+    target: "",
+    amount: "",
+  };
   let publishEdit = null;
   let publishStash = null;
   let publishDraftTimer = 0;
@@ -5595,6 +5620,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (overlay && !overlay.hidden) {
       closeLogin();
+      return;
+    }
+    const delegateOv = $("#delegateOverlay");
+    if (delegateOv && !delegateOv.hidden) {
+      closeDelegateOverlay();
       return;
     }
     const walletOv = $("#walletOverlay");
@@ -13996,6 +14026,8 @@ let CS77_FILTER_LOW_REP = 20;
     claimAnimToken += 1;
     profileState.wallet = null;
     profileState.walletTx = null;
+    clearDelegationView();
+    closeDelegateOverlay();
   }
 
   function profileFollowed(profile) {
@@ -15239,6 +15271,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!value || !name) continue;
       if (name === "hive") value.textContent = formatAssetNumber(wallet.hive);
       else if (name === "staked hive") value.textContent = formatAssetNumber(wallet.stakedHive);
+      else if (name === "delegated hive") value.textContent = formatAssetNumber(wallet.delegatedHive);
       else if (name === "hbd") value.textContent = formatAssetNumber(wallet.hbd);
       else if (name === "staked hbd") value.textContent = formatAssetNumber(wallet.stakedHbd);
     }
@@ -15419,6 +15452,523 @@ let CS77_FILTER_LOW_REP = 20;
     return `<p class="wallet-note">Powering down ${formatHiveLike(left, "hive")} remaining.</p>`;
   }
 
+  function clearDelegationView() {
+    delegationView.loadGen += 1;
+    delegationView.account = "";
+    delegationView.open = false;
+    delegationView.loading = false;
+    delegationView.loaded = false;
+    delegationView.hasError = false;
+    delegationView.outgoingHp = null;
+    delegationView.incomingHp = null;
+    delegationView.outgoingRc = null;
+    delegationView.incomingRc = null;
+    delegationView.hpTruncated = false;
+    delegationView.rcTruncated = false;
+    delegationView.errors = {};
+    delegationView.rcAccount = null;
+    delegationView.receivedRc = null;
+    delegationLoadPromise = null;
+  }
+
+  function rcToBig(value) {
+    if (typeof value === "bigint") return value > 0n ? value : 0n;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value <= 0) return 0n;
+      return BigInt(Math.trunc(value));
+    }
+    const s = String(value == null ? "" : value).trim().replace(/[, ]/g, "");
+    if (!s) return 0n;
+    if (/e/i.test(s)) {
+      const n = Number(s);
+      if (!Number.isFinite(n) || n <= 0) return 0n;
+      return BigInt(Math.trunc(n));
+    }
+    if (!/^\d+$/.test(s)) return 0n;
+    try {
+      return BigInt(s);
+    } catch {
+      return 0n;
+    }
+  }
+
+  function parseRcInput(raw) {
+    const s = String(raw || "")
+      .trim()
+      .replace(/[, ]/g, "");
+    if (!s || !/^\d+$/.test(s)) return null;
+    try {
+      return BigInt(s);
+    } catch {
+      return null;
+    }
+  }
+
+  function delegateRcScale() {
+    const el = $("#delegateRcUnit");
+    if (!el || el.hidden) return 1n;
+    try {
+      const n = BigInt(el.value);
+      return n > 0n ? n : 1n;
+    } catch {
+      return 1n;
+    }
+  }
+
+  function parseDelegateRcAmount(raw) {
+    const scale = delegateRcScale();
+    const s = String(raw || "")
+      .trim()
+      .replace(/ /g, "")
+      .replace(",", ".");
+    if (!s) return null;
+    if (scale === 1n) return parseRcInput(s);
+    if (!/^\d+(\.\d+)?$/.test(s)) return null;
+    const bits = s.split(".");
+    const exp = scale.toString().length - 1;
+    const frac = bits[1] || "";
+    if (frac.length > exp) return null;
+    const digits = (bits[0] + frac.padEnd(exp, "0")).replace(/^0+/, "") || "0";
+    try {
+      return BigInt(digits);
+    } catch {
+      return null;
+    }
+  }
+
+  function setDelegateRcAmount(total) {
+    const input = $("#delegateAmount");
+    const unit = $("#delegateRcUnit");
+    if (!input) return;
+    const parts = delegationRcParts(total);
+    input.value = String(parts.value).replace(/,/g, "");
+    if (unit) {
+      const scales = { rc: "1", "M rc": "1000000", "B rc": "1000000000", "T rc": "1000000000000", "Q rc": "1000000000000000", "Qi rc": "1000000000000000000" };
+      unit.value = scales[parts.unit] || "1";
+    }
+    syncDelegateRcInputMode();
+  }
+
+  function syncDelegateRcInputMode() {
+    const amount = $("#delegateAmount");
+    if (!amount || delegateState.asset !== "rc") return;
+    const scaled = delegateRcScale() > 1n;
+    amount.inputMode = scaled ? "decimal" : "numeric";
+    amount.placeholder = scaled ? "0.00" : "0";
+  }
+
+  function delegationRcParts(value) {
+    const n = rcToBig(value);
+    const scales = [
+      [1000000000000000000n, 10000000000000000n, "Qi rc"],
+      [1000000000000000n, 10000000000000n, "Q rc"],
+      [1000000000000n, 10000000000n, "T rc"],
+      [1000000000n, 10000000n, "B rc"],
+      [1000000n, 10000n, "M rc"],
+    ];
+    for (let i = 0; i < scales.length; i++) {
+      if (n >= scales[i][0]) {
+        return { value: formatGroupedNumber(Number(n / scales[i][1]) / 100, 2), unit: scales[i][2] };
+      }
+    }
+    return { value: formatGroupedNumber(Number(n), 0), unit: "rc" };
+  }
+
+  function formatRcAmount(value) {
+    const parts = delegationRcParts(value);
+    if (parts.unit === "rc") return parts.value;
+    return parts.value + " " + parts.unit.replace(/ rc$/, "");
+  }
+
+  function delegationHiveParts(vests, props) {
+    const hive = HiveApi.vestsToHive(vests, props);
+    const shown = roundAsset(hive, 3);
+    if (!(shown > 0) && Number(vests) > 0) return { value: "<0.001", unit: "hive" };
+    return { value: formatAssetNumber(shown), unit: "hive" };
+  }
+
+  function formatDelegationHive(vests, props) {
+    const parts = delegationHiveParts(vests, props);
+    return parts.value + " " + parts.unit;
+  }
+
+  function floorAsset(n, decimals) {
+    const f = Math.pow(10, decimals);
+    const x = Number(n) || 0;
+    if (!(x > 0) || !Number.isFinite(x)) return 0;
+    return Math.floor(x * f + 1e-9) / f;
+  }
+
+  function hiveToDelegatedVests(hive, props) {
+    const raw = HiveApi.hiveToVests(hive, props);
+    if (!(raw > 0) || !Number.isFinite(raw)) return 0;
+    return Math.floor(raw * 1e6 + 1e-9) / 1e6;
+  }
+
+  function vestsEqual(a, b) {
+    return Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.0000005;
+  }
+
+  function walletDelegableVests(wallet) {
+    if (!wallet) return 0;
+    const powering = Math.max(0, (Number(wallet.toWithdrawVests) || 0) - (Number(wallet.withdrawnVests) || 0));
+    return Math.max(0, (Number(wallet.availableVests) || 0) - powering);
+  }
+
+  function outgoingHpVests(name) {
+    const user = walletHiveName(name);
+    const rows = delegationView.outgoingHp || [];
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].delegatee === user) return Number(rows[i].vests) || 0;
+    }
+    return 0;
+  }
+
+  function outgoingRcAmount(name) {
+    const user = walletHiveName(name);
+    const rows = delegationView.outgoingRc || [];
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].to === user) return rcToBig(rows[i].rc);
+    }
+    return 0n;
+  }
+
+  function delegationStatusHtml(text, isError) {
+    return (
+      '<p class="wallet-delegation-status' +
+      (isError ? " is-error" : "") +
+      '">' +
+      HiveMd.escapeHtml(text) +
+      "</p>"
+    );
+  }
+
+  function delegationStatusRow(text, isError) {
+    return '<tr class="wallet-delegation-note"><td colspan="4">' + delegationStatusHtml(text, isError) + "</td></tr>";
+  }
+
+  function delegationHeadingRow(label) {
+    return (
+      '<tr class="wallet-delegation-heading"><td class="wallet-label" colspan="4"><h3>' +
+      HiveMd.escapeHtml(label) +
+      "</h3></td></tr>"
+    );
+  }
+
+  function delegationDirectionRow(label) {
+    return (
+      '<tr class="wallet-delegation-direction"><td class="wallet-label" colspan="4">' +
+      HiveMd.escapeHtml(label) +
+      "</td></tr>"
+    );
+  }
+
+  function delegationWhoHtml(direction, name) {
+    const arrow = direction === "out" ? "\u2192" : "\u2190";
+    return (
+      '<span class="wallet-delegation-who"><span class="wallet-delegation-arrow">' +
+      arrow +
+      "</span>" +
+      walletAccountHtml(name) +
+      "</span>"
+    );
+  }
+
+  function delegationRowHtml(direction, name, valueText, unit, asset, amountRaw, removable) {
+    const action = removable
+      ? '<div class="wallet-actions-inner"><button type="button" class="btn-ghost btn-compact wallet-undelegate-btn" data-delegate-asset="' +
+        asset +
+        '" data-delegate-account="' +
+        HiveMd.escapeHtml(name) +
+        '" data-delegate-amount="' +
+        HiveMd.escapeHtml(String(amountRaw)) +
+        '" aria-label="Edit delegation to @' +
+        HiveMd.escapeHtml(name) +
+        '">\u2212</button></div>'
+      : "";
+    return (
+      '<tr class="wallet-delegation-row">' +
+      '<td class="wallet-label">' +
+      delegationWhoHtml(direction, name) +
+      "</td>" +
+      '<td class="wallet-value">' +
+      HiveMd.escapeHtml(valueText) +
+      "</td>" +
+      '<td class="wallet-unit">' +
+      HiveMd.escapeHtml(unit) +
+      "</td>" +
+      '<td class="wallet-actions">' +
+      action +
+      "</td></tr>"
+    );
+  }
+
+  function delegationGrouped(title, emptyText, outgoingHtml, incomingHtml) {
+    let body = "";
+    if (outgoingHtml) body += delegationDirectionRow("outgoing") + outgoingHtml;
+    if (incomingHtml) body += delegationDirectionRow("incoming") + incomingHtml;
+    if (!body) body = delegationStatusRow(emptyText, false);
+    return delegationHeadingRow(title) + body;
+  }
+
+  function sortedHpRows(rows, key) {
+    return rows.slice().sort(function (a, b) {
+      const diff = (Number(b.vests) || 0) - (Number(a.vests) || 0);
+      if (diff) return diff;
+      return String(a[key] || "").localeCompare(String(b[key] || ""));
+    });
+  }
+
+  function sortedRcRows(rows, key) {
+    return rows.slice().sort(function (a, b) {
+      const diff = rcToBig(b.rc) - rcToBig(a.rc);
+      if (diff > 0n) return 1;
+      if (diff < 0n) return -1;
+      return String(a[key] || "").localeCompare(String(b[key] || ""));
+    });
+  }
+
+  function delegationHpHtml(props, own) {
+    let outgoing = "";
+    if (delegationView.errors.outgoingHp) {
+      outgoing = delegationStatusRow(delegationView.errors.outgoingHp, true);
+    } else if (delegationView.outgoingHp && delegationView.outgoingHp.length) {
+      const rows = sortedHpRows(delegationView.outgoingHp, "delegatee");
+      for (let i = 0; i < rows.length; i++) {
+        const amount = delegationHiveParts(rows[i].vests, props);
+        outgoing += delegationRowHtml(
+          "out",
+          rows[i].delegatee,
+          amount.value,
+          amount.unit,
+          "hp",
+          rows[i].vests,
+          own
+        );
+      }
+      if (delegationView.hpTruncated) {
+        outgoing += delegationStatusRow("Some outgoing hive power delegations are not listed.", false);
+      }
+    }
+    let incoming = "";
+    if (delegationView.errors.incomingHp) {
+      incoming = delegationStatusRow(delegationView.errors.incomingHp, true);
+    } else if (delegationView.incomingHp && delegationView.incomingHp.length) {
+      const rows = sortedHpRows(delegationView.incomingHp, "delegator");
+      for (let i = 0; i < rows.length; i++) {
+        const amount = delegationHiveParts(rows[i].vests, props);
+        incoming += delegationRowHtml(
+          "in",
+          rows[i].delegator,
+          amount.value,
+          amount.unit,
+          "hp",
+          rows[i].vests,
+          false
+        );
+      }
+    }
+    return delegationGrouped("hp delegations", "No hive power delegations.", outgoing, incoming);
+  }
+
+  function incomingRcErrorText() {
+    let text = delegationView.errors.incomingRc || "Incoming resource credit names could not be loaded.";
+    const total = rcToBig(delegationView.receivedRc);
+    if (total > 0n) text += " Received total: " + formatRcAmount(total) + " rc.";
+    return text;
+  }
+
+  function delegationRcHtml(own) {
+    let outgoing = "";
+    if (delegationView.errors.outgoingRc) {
+      outgoing = delegationStatusRow(delegationView.errors.outgoingRc, true);
+    } else if (delegationView.outgoingRc && delegationView.outgoingRc.length) {
+      const rows = sortedRcRows(delegationView.outgoingRc, "to");
+      for (let i = 0; i < rows.length; i++) {
+        const amount = delegationRcParts(rows[i].rc);
+        outgoing += delegationRowHtml("out", rows[i].to, amount.value, amount.unit, "rc", rows[i].rc, own);
+      }
+      if (delegationView.rcTruncated) {
+        outgoing += delegationStatusRow("Some outgoing resource credit delegations are not listed.", false);
+      }
+    }
+    let incoming = "";
+    if (delegationView.errors.incomingRc) {
+      incoming = delegationStatusRow(incomingRcErrorText(), true);
+    } else if (delegationView.incomingRc && delegationView.incomingRc.length) {
+      const rows = sortedRcRows(delegationView.incomingRc, "from");
+      for (let i = 0; i < rows.length; i++) {
+        const amount = delegationRcParts(rows[i].rc);
+        incoming += delegationRowHtml("in", rows[i].from, amount.value, amount.unit, "rc", rows[i].rc, false);
+      }
+    }
+    return delegationGrouped("rc delegations", "No resource credit delegations.", outgoing, incoming);
+  }
+
+  function paintDelegationPanel() {
+    const body = $("#walletDelegatedPanel");
+    if (!body) return;
+    if (delegationView.loading && !delegationView.loaded) {
+      body.innerHTML =
+        '<tr class="wallet-delegation-note"><td colspan="4">' +
+        delegationStatusHtml("Loading delegations\u2026", false) +
+        "</td></tr>";
+      return;
+    }
+    const props = profileState.wallet && profileState.wallet.props;
+    const own = isOwnAuthor(profileState.author);
+    body.innerHTML = delegationHpHtml(props, own) + delegationRcHtml(own);
+  }
+
+  function walletDelegateButton() {
+    return '<button type="button" class="btn-primary btn-compact wallet-delegate-btn">Delegate</button>';
+  }
+
+  function walletDelegatedRows(wallet, own) {
+    const amount = formatAssetNumber(wallet && wallet.delegatedHive);
+    const action = own ? walletDelegateButton() : "";
+    return (
+      '<tr data-balance="delegated hive">' +
+      '<td class="wallet-label"><button type="button" class="wallet-delegated-toggle" aria-expanded="false" aria-controls="walletDelegatedPanel">' +
+      '<span class="wallet-delegated-caret" aria-hidden="true">\u25b8</span>delegated hive</button></td>' +
+      '<td class="wallet-value">' +
+      HiveMd.escapeHtml(amount) +
+      "</td>" +
+      '<td class="wallet-unit">hive</td>' +
+      '<td class="wallet-actions wallet-actions-inline">' +
+      (action ? '<div class="wallet-actions-inner">' + action + "</div>" : "") +
+      "</td></tr>" +
+      walletActionsUnderRow(action) +
+      "</tbody>" +
+      '<tbody class="wallet-delegated-panel" id="walletDelegatedPanel" hidden></tbody>' +
+      "<tbody>"
+    );
+  }
+
+  async function fetchIncomingRcDelegations(username) {
+    const name = walletHiveName(username);
+    if (!name) return [];
+    const res = await fetch("/api/rc-delegations-incoming.php?delegatee=" + encodeURIComponent(name), {
+      cache: "no-store",
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    if (!res.ok || !Array.isArray(data)) {
+      throw new Error((data && data.error) || "Incoming resource credit names could not be loaded.");
+    }
+    const rows = [];
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] || {};
+      const from = walletHiveName(row.delegator || row.from);
+      const rc = rcToBig(row.rc != null ? row.rc : row.delegated_rc);
+      if (!from || rc <= 0n) continue;
+      rows.push({ from, to: name, rc: rc.toString() });
+    }
+    return rows;
+  }
+
+  async function loadDelegationLists(name) {
+    if (delegationLoadPromise && delegationView.loading && delegationView.account === name) {
+      return delegationLoadPromise;
+    }
+    const gen = ++delegationView.loadGen;
+    delegationView.account = name;
+    delegationView.loading = true;
+    delegationView.loaded = false;
+    delegationView.hasError = false;
+    delegationView.errors = {};
+    if (delegationView.open) paintDelegationPanel();
+    delegationLoadPromise = (async function () {
+      const [hpOut, hpIn, rcOut, rcAccount, rcIn] = await Promise.allSettled([
+        HiveApi.getOutgoingVestingDelegations(name),
+        HiveApi.getIncomingHpDelegations(name),
+        HiveApi.getOutgoingRcDelegations(name),
+        HiveApi.findRcAccount(name),
+        fetchIncomingRcDelegations(name),
+      ]);
+      if (gen !== delegationView.loadGen || !profileState.wallet || profileState.wallet.name !== name) return;
+      const errors = {};
+      if (hpOut.status === "fulfilled") {
+        delegationView.outgoingHp = (hpOut.value && hpOut.value.rows) || [];
+        delegationView.hpTruncated = Boolean(hpOut.value && hpOut.value.truncated);
+      } else {
+        delegationView.outgoingHp = null;
+        errors.outgoingHp = "Outgoing hive power could not be loaded.";
+      }
+      if (hpIn.status === "fulfilled") delegationView.incomingHp = hpIn.value || [];
+      else {
+        delegationView.incomingHp = null;
+        errors.incomingHp = "Incoming hive power could not be loaded.";
+      }
+      if (rcOut.status === "fulfilled") {
+        delegationView.outgoingRc = (rcOut.value && rcOut.value.rows) || [];
+        delegationView.rcTruncated = Boolean(rcOut.value && rcOut.value.truncated);
+      } else {
+        delegationView.outgoingRc = null;
+        errors.outgoingRc = "Outgoing resource credits could not be loaded.";
+      }
+      if (rcAccount.status === "fulfilled" && rcAccount.value) {
+        delegationView.rcAccount = rcAccount.value;
+        delegationView.receivedRc = String(
+          rcAccount.value.received_delegated_rc == null ? "0" : rcAccount.value.received_delegated_rc
+        );
+      } else {
+        delegationView.rcAccount = null;
+        delegationView.receivedRc = null;
+      }
+      if (rcIn.status === "fulfilled") delegationView.incomingRc = rcIn.value || [];
+      else {
+        delegationView.incomingRc = null;
+        errors.incomingRc = "Incoming resource credit names could not be loaded.";
+      }
+      delegationView.errors = errors;
+      delegationView.hasError = Boolean(
+        errors.outgoingHp || errors.incomingHp || errors.outgoingRc || errors.incomingRc
+      );
+      delegationView.loading = false;
+      delegationView.loaded = true;
+      if (delegationView.open) paintDelegationPanel();
+      if (delegateState.mode === "delegate") updateDelegateHint();
+    })().finally(function () {
+      if (delegationView.loadGen === gen) delegationLoadPromise = null;
+    });
+    return delegationLoadPromise;
+  }
+
+  function setDelegatedToggle(open) {
+    const btn = view.querySelector(".wallet-delegated-toggle");
+    const panel = $("#walletDelegatedPanel");
+    delegationView.open = open;
+    if (panel) panel.hidden = !open;
+    if (!btn) return;
+    btn.classList.toggle("is-open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    const caret = btn.querySelector(".wallet-delegated-caret");
+    if (caret) caret.textContent = open ? "\u25be" : "\u25b8";
+  }
+
+  function toggleDelegatedHive() {
+    const name = profileState.author;
+    const wallet = profileState.wallet;
+    if (!name || !wallet || wallet.name !== name) return;
+    if (delegationView.open) {
+      setDelegatedToggle(false);
+      return;
+    }
+    delegationView.account = name;
+    setDelegatedToggle(true);
+    if (!delegationView.loaded || delegationView.hasError || delegationView.account !== name) {
+      loadDelegationLists(name);
+      return;
+    }
+    paintDelegationPanel();
+  }
+
   function walletPageHtml(wallet, own) {
     const w = wallet || {};
     const props = w.props;
@@ -15445,7 +15995,7 @@ let CS77_FILTER_LOW_REP = 20;
                 ${walletActionsUnderRow(hiveStake)}
                 ${walletBalanceRow("staked hive", w.stakedHive, "hive", hiveUnstake, walletHiveAprHtml(rates))}
                 ${walletActionsUnderRow(hiveUnstake)}
-                ${walletBalanceRow("delegated hive", w.delegatedHive, "hive", "")}
+                ${walletDelegatedRows(w, own)}
                 ${walletBalanceRow("hbd", w.hbd, "hbd", hbdStake)}
                 ${walletActionsUnderRow(hbdStake)}
                 ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", hbdUnstake, walletHbdAprHtml(rates))}
@@ -15762,6 +16312,547 @@ let CS77_FILTER_LOW_REP = 20;
       );
       walletOpState.pending = false;
       if (submit) submit.disabled = false;
+    }
+  }
+
+  function setDelegateStatus(msg, isError) {
+    const el = $("#delegateStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function closeDelegateOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") {
+      const ov = $("#delegateOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    const ov = $("#delegateOverlay");
+    if (ov) ov.hidden = true;
+    delegateState.mode = "";
+    delegateState.pending = false;
+    delegateState.target = "";
+    delegateState.amount = "";
+    const submit = $("#delegateSubmit");
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = "Confirm";
+    }
+    setDelegateStatus("");
+  }
+
+  function showDelegateForm(show) {
+    const asset = $("#delegateAsset");
+    const form = $("#delegateForm");
+    if (asset) asset.hidden = !show;
+    if (form) form.hidden = !show;
+  }
+
+  function rcHiveHint(rc, props) {
+    const n = rcToBig(rc);
+    if (n <= 0n || !props) return "";
+    const vests = Number(n) / 1e6;
+    if (!Number.isFinite(vests) || vests <= 0) return "";
+    const hive = HiveApi.vestsToHive(vests, props);
+    if (!(hive >= 0.001)) return "";
+    return "About " + formatHiveLike(hive, "hive") + ".";
+  }
+
+  function delegateHpCapVests(target) {
+    const wallet = profileState.wallet;
+    if (!wallet) return 0;
+    const current = target ? outgoingHpVests(target) : 0;
+    return walletDelegableVests(wallet) + current;
+  }
+
+  function delegateRcMax(target) {
+    const extra = HiveApi.rcDelegable
+      ? HiveApi.rcDelegable(delegationView.rcAccount, Math.floor(Date.now() / 1000))
+      : 0n;
+    const current = target ? outgoingRcAmount(target) : 0n;
+    const more = typeof extra === "bigint" ? extra : rcToBig(extra);
+    return more + current;
+  }
+
+  function updateDelegateHint() {
+    const hint = $("#delegateHint");
+    if (!hint || delegateState.mode !== "delegate") return;
+    const wallet = profileState.wallet;
+    const target = walletHiveName($("#delegateUser") && $("#delegateUser").value);
+    if (delegateState.asset === "rc") {
+      if (!delegationView.loaded || !delegationView.rcAccount || delegationView.outgoingRc == null) {
+        hint.textContent = "";
+        return;
+      }
+      const max = delegateRcMax(target);
+      let text = "Available: " + formatRcAmount(max) + " rc.";
+      const about = rcHiveHint(max, wallet && wallet.props);
+      if (about) text += " " + about;
+      if (target) {
+        const current = outgoingRcAmount(target);
+        if (current > 0n) {
+          text += " This includes " + formatRcAmount(current) + " rc already delegated to @" + target + ".";
+        }
+      }
+      hint.textContent = text;
+      return;
+    }
+    if (!wallet || !delegationView.loaded || delegationView.outgoingHp == null) {
+      hint.textContent = "";
+      return;
+    }
+    const maxHive = HiveApi.vestsToHive(delegateHpCapVests(target), wallet.props);
+    let text = "Available: " + formatHiveLike(floorAsset(maxHive, 3), "hive") + ".";
+    if (target) {
+      const current = outgoingHpVests(target);
+      if (current > 0) {
+        text += " This includes " + formatDelegationHive(current, wallet.props) + " already delegated to @" + target + ".";
+      }
+    }
+    hint.textContent = text;
+  }
+
+  function setDelegateAsset(asset) {
+    const next = asset === "rc" ? "rc" : "hp";
+    delegateState.asset = next;
+    const root = $("#delegateAsset");
+    if (root) {
+      root.querySelectorAll("[data-delegate-asset]").forEach(function (btn) {
+        const on = btn.getAttribute("data-delegate-asset") === next;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    const label = $("#delegateAmountLabel");
+    if (label) label.textContent = next === "rc" ? "Resource credits" : "Hive power";
+    const amount = $("#delegateAmount");
+    if (amount) {
+      amount.inputMode = next === "rc" ? "numeric" : "decimal";
+      amount.placeholder = next === "rc" ? "0" : "0.000";
+      amount.value = "";
+    }
+    const unit = $("#delegateRcUnit");
+    if (unit) {
+      unit.hidden = next !== "rc";
+      unit.value = "1";
+      unit.disabled = false;
+    }
+    const lead = $("#delegateLead");
+    if (lead && delegateState.mode === "delegate") {
+      lead.textContent =
+        next === "rc"
+          ? "Delegate resource credits. This sets the outgoing amount, so an existing delegation to that account is replaced. Lowering it is immediate, and unused resource credits are not returned."
+          : "Delegate hive power. This sets the outgoing amount, so an existing delegation to that account is replaced. Lowering it returns the difference after 5 days.";
+    }
+    setDelegateStatus("");
+    updateDelegateHint();
+  }
+
+  function delegateDialogBusy(on) {
+    delegateState.pending = on;
+    const submit = $("#delegateSubmit");
+    const cancel = $("#delegateCancel");
+    const max = $("#delegateMax");
+    const unit = $("#delegateRcUnit");
+    if (submit) submit.disabled = on;
+    if (cancel) cancel.disabled = on;
+    if (max) max.disabled = on;
+    if (unit) unit.disabled = on;
+  }
+
+  function openDelegateDialog(prefill) {
+    if (!isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (ownerSignOpen() || delegateState.pending) return;
+    const target = prefill ? walletHiveName(prefill.account) : "";
+    if (prefill && (!target || target === user)) return;
+    const kind = prefill && prefill.asset === "rc" ? "rc" : "hp";
+    delegateState.mode = "delegate";
+    delegateState.pending = false;
+    delegateState.target = target;
+    delegateState.amount = prefill ? "0" : "";
+    const title = $("#delegateTitle");
+    if (title) title.textContent = "Delegate";
+    showDelegateForm(true);
+    setDelegateAsset(kind);
+    const userInput = $("#delegateUser");
+    if (userInput) userInput.value = target;
+    const amountInput = $("#delegateAmount");
+    if (amountInput) amountInput.value = prefill ? "0" : "";
+    updateDelegateHint();
+    const submit = $("#delegateSubmit");
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = "Confirm";
+    }
+    const ov = $("#delegateOverlay");
+    if (ov) ov.hidden = false;
+    const focusEl = prefill ? amountInput : userInput;
+    if (focusEl && !isMobileViewport()) {
+      focusEl.focus();
+      if (prefill && amountInput) amountInput.select();
+    }
+    if (!delegationView.loaded || delegationView.hasError) loadDelegationLists(user);
+  }
+
+  async function ensureDelegationLoaded(name) {
+    if (
+      delegationView.account !== name ||
+      !delegationView.loaded ||
+      delegationView.hasError ||
+      delegationView.loading
+    ) {
+      await loadDelegationLists(name);
+    }
+    return Boolean(
+      profileState.wallet &&
+        profileState.wallet.name === name &&
+        delegationView.account === name &&
+        delegationView.loaded
+    );
+  }
+
+  function hpDelegateOp(delegator, delegatee, vests) {
+    return [
+      "delegate_vesting_shares",
+      {
+        delegator: delegator,
+        delegatee: delegatee,
+        vesting_shares: formatChainAmount(vests, "VESTS", 6),
+      },
+    ];
+  }
+
+  function rcDelegateOp(from, to, maxRc) {
+    const n = (typeof maxRc === "bigint" ? maxRc : rcToBig(maxRc)).toString();
+    return [
+      "custom_json",
+      {
+        required_auths: [],
+        required_posting_auths: [from],
+        id: "rc",
+        json:
+          '["delegate_rc",{"from":' +
+          JSON.stringify(from) +
+          ',"delegatees":[' +
+          JSON.stringify(to) +
+          '],"max_rc":' +
+          n +
+          "}]",
+      },
+    ];
+  }
+
+  function delegateSignCopy(kind, user, detail) {
+    const posting = delegateState.asset === "rc";
+    const removing = kind === "remove";
+    return {
+      authority: posting ? "Posting" : "Active",
+      title: removing ? "Sign removal" : "Sign delegation",
+      lead:
+        "Use hive keychain (recommended) or enter the " +
+        (posting ? "posting" : "active") +
+        " key of @" +
+        user +
+        ". " +
+        detail,
+      cancelMessage: removing ? "The removal was cancelled." : "The delegation was cancelled.",
+      failMessage: removing ? "Could not sign this removal." : "Could not sign this delegation.",
+    };
+  }
+
+  function applyHpDelegation(wallet, delegatee, prevVests, nextVests) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const prev = Number(prevVests) || 0;
+    const next = Number(nextVests) || 0;
+    const delta = next - prev;
+    wallet.delegatedVests = roundAsset(Math.max(0, (Number(wallet.delegatedVests) || 0) + delta), 6);
+    wallet.delegatedHive = HiveApi.vestsToHive(wallet.delegatedVests, wallet.props);
+    // A removed or reduced delegation returns after 5 days. Those vests are
+    // not spendable, so available stake does not rise until the chain says so.
+    if (delta > 0) wallet.availableVests = Math.max(0, (Number(wallet.availableVests) || 0) - delta);
+    const vestsStr = formatChainAmount(wallet.delegatedVests, "VESTS", 6);
+    const accounts = walletAccounts(wallet);
+    for (let i = 0; i < accounts.length; i++) accounts[i].delegated_vesting_shares = vestsStr;
+    paintWalletBalanceAmounts(wallet);
+    if (accountState.user === wallet.name) syncOwnProfileBanner();
+    const name = walletHiveName(delegatee);
+    const list = delegationView.outgoingHp || [];
+    let found = false;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].delegatee !== name) continue;
+      found = true;
+      if (next <= 0) list.splice(i, 1);
+      else list[i].vests = next;
+    }
+    if (!found && next > 0 && name) list.push({ delegator: wallet.name, delegatee: name, vests: next });
+    delegationView.outgoingHp = list;
+    paintDelegationPanel();
+  }
+
+  function applyRcDelegation(delegatee, prevRc, nextRc) {
+    const prev = rcToBig(prevRc);
+    const next = rcToBig(nextRc);
+    const delta = next - prev;
+    const account = delegationView.rcAccount;
+    if (account) {
+      const delegated = rcToBig(account.delegated_rc) + delta;
+      account.delegated_rc = (delegated < 0n ? 0n : delegated).toString();
+      const max = rcToBig(account.max_rc) - delta;
+      account.max_rc = (max < 0n ? 0n : max).toString();
+      if (delta > 0 && account.rc_manabar) {
+        const mana = rcToBig(account.rc_manabar.current_mana) - delta;
+        account.rc_manabar.current_mana = (mana < 0n ? 0n : mana).toString();
+      }
+    }
+    const name = walletHiveName(delegatee);
+    const list = delegationView.outgoingRc || [];
+    let found = false;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].to !== name) continue;
+      found = true;
+      if (next <= 0n) list.splice(i, 1);
+      else list[i].rc = next.toString();
+    }
+    if (!found && next > 0n && name) list.push({ from: profileState.author, to: name, rc: next.toString() });
+    delegationView.outgoingRc = list;
+    paintDelegationPanel();
+  }
+
+  async function accountExists(name) {
+    const accounts = await HiveApi.getAccounts([name]);
+    const row = accounts && accounts[0];
+    return Boolean(row && walletHiveName(row.name) === name);
+  }
+
+  async function fillDelegateMax() {
+    if (delegateState.mode !== "delegate" || delegateState.pending) return;
+    const user = observer();
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(wallet.name)) return;
+    setDelegateStatus("");
+    const ready = await ensureDelegationLoaded(user);
+    if (!ready || delegateState.mode !== "delegate") return;
+    const target = walletHiveName($("#delegateUser") && $("#delegateUser").value);
+    const input = $("#delegateAmount");
+    if (!input) return;
+    if (delegateState.asset === "rc") {
+      if (delegationView.outgoingRc == null || !delegationView.rcAccount) {
+        setDelegateStatus("Resource credits could not be loaded.", true);
+        return;
+      }
+      setDelegateRcAmount(delegateRcMax(target));
+      updateDelegateHint();
+      return;
+    } else {
+      if (delegationView.outgoingHp == null) {
+        setDelegateStatus("Hive power delegations could not be loaded.", true);
+        return;
+      }
+      const maxHive = floorAsset(HiveApi.vestsToHive(delegateHpCapVests(target), wallet.props), 3);
+      input.value = maxHive.toFixed(3);
+    }
+    updateDelegateHint();
+  }
+
+  async function submitDelegate() {
+    if (delegateState.pending || ownerSignOpen()) return;
+    const user = observer();
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(wallet.name) || wallet.name !== user) return;
+    if (delegateState.mode !== "delegate") return;
+    const target = walletHiveName($("#delegateUser") && $("#delegateUser").value);
+    if (!target) {
+      setDelegateStatus("Enter a hive username.", true);
+      return;
+    }
+    if (target === user) {
+      setDelegateStatus("You cannot delegate to yourself.", true);
+      return;
+    }
+    delegateDialogBusy(true);
+    setDelegateStatus("");
+    let ready = false;
+    try {
+      ready = await ensureDelegationLoaded(user);
+    } catch (err) {
+      ready = false;
+    }
+    if (!ready || delegateState.mode !== "delegate" || observer() !== user) {
+      if (delegateState.mode === "delegate") {
+        delegateDialogBusy(false);
+        setDelegateStatus("Delegations could not be loaded.", true);
+      }
+      return;
+    }
+    const asset = delegateState.asset;
+    let operations;
+    let removing = false;
+    let prevVests = 0;
+    let nextVests = 0;
+    let prevRc = 0n;
+    let nextRc = 0n;
+    let detail = "";
+    if (asset === "hp") {
+      if (delegationView.outgoingHp == null) {
+        delegateDialogBusy(false);
+        setDelegateStatus("Outgoing hive power could not be loaded.", true);
+        return;
+      }
+      if (delegationView.hpTruncated && outgoingHpVests(target) <= 0) {
+        delegateDialogBusy(false);
+        setDelegateStatus("Not all outgoing delegations were loaded, so this account cannot be updated yet.", true);
+        return;
+      }
+      const rawHive = String(($("#delegateAmount") && $("#delegateAmount").value) || "")
+        .trim()
+        .replace(",", ".");
+      if (!rawHive || !/^\d+(\.\d+)?$/.test(rawHive)) {
+        delegateDialogBusy(false);
+        setDelegateStatus("Enter a hive power amount.", true);
+        return;
+      }
+      const amount = roundAsset(Number(rawHive), 3);
+      prevVests = outgoingHpVests(target);
+      if (amount < 0.001) {
+        if (amount === 0 && prevVests > 0) {
+          removing = true;
+          nextVests = 0;
+          detail =
+            "Removes the hive power delegation to @" +
+            target +
+            " (" +
+            formatDelegationHive(prevVests, wallet.props) +
+            "). Hive power returns after 5 days.";
+          operations = [hpDelegateOp(user, target, 0)];
+        } else {
+          delegateDialogBusy(false);
+          setDelegateStatus("Enter at least 0.001 hive.", true);
+          return;
+        }
+      } else {
+        const cap = delegateHpCapVests(target);
+        const maxHive = floorAsset(HiveApi.vestsToHive(cap, wallet.props), 3);
+        if (amount > maxHive + 0.0000001) {
+          delegateDialogBusy(false);
+          setDelegateStatus("That is more than " + formatHiveLike(maxHive, "hive") + ".", true);
+          return;
+        }
+        nextVests = Math.min(hiveToDelegatedVests(amount, wallet.props), floorAsset(cap, 6));
+        if (!(nextVests > 0)) {
+          delegateDialogBusy(false);
+          setDelegateStatus("Enter at least 0.001 hive.", true);
+          return;
+        }
+        const currentHive = roundAsset(HiveApi.vestsToHive(prevVests, wallet.props), 3);
+        if ((prevVests > 0 && amount === currentHive) || vestsEqual(nextVests, prevVests)) {
+          delegateDialogBusy(false);
+          setDelegateStatus("That matches the current delegation to @" + target + ".", true);
+          return;
+        }
+        detail = "Sets the hive power delegation to @" + target + " to " + formatHiveLike(amount, "hive") + ".";
+        if (nextVests < prevVests) detail += " The difference returns after 5 days.";
+        operations = [hpDelegateOp(user, target, nextVests)];
+      }
+    } else {
+      if (delegationView.outgoingRc == null || !delegationView.rcAccount) {
+        delegateDialogBusy(false);
+        setDelegateStatus("Resource credits could not be loaded.", true);
+        return;
+      }
+      if (delegationView.rcTruncated && outgoingRcAmount(target) <= 0n) {
+        delegateDialogBusy(false);
+        setDelegateStatus("Not all outgoing delegations were loaded, so this account cannot be updated yet.", true);
+        return;
+      }
+      const amount = parseDelegateRcAmount($("#delegateAmount") && $("#delegateAmount").value);
+      if (amount == null) {
+        delegateDialogBusy(false);
+        setDelegateStatus(
+          delegateRcScale() > 1n ? "Enter a resource credit amount." : "Enter a whole number of resource credits.",
+          true
+        );
+        return;
+      }
+      prevRc = outgoingRcAmount(target);
+      if (amount <= 0n) {
+        if (amount === 0n && prevRc > 0n) {
+          removing = true;
+          nextRc = 0n;
+          detail =
+            "Removes the resource credit delegation to @" +
+            target +
+            " (" +
+            formatRcAmount(prevRc) +
+            " rc). This takes effect immediately. Unused delegated resource credits are not returned.";
+          operations = [rcDelegateOp(user, target, 0)];
+        } else {
+          delegateDialogBusy(false);
+          setDelegateStatus("Enter an amount above 0.", true);
+          return;
+        }
+      } else {
+        const max = delegateRcMax(target);
+        if (amount > max) {
+          delegateDialogBusy(false);
+          setDelegateStatus("That is more than " + formatRcAmount(max) + " rc.", true);
+          return;
+        }
+        nextRc = amount;
+        if (nextRc === prevRc) {
+          delegateDialogBusy(false);
+          setDelegateStatus("That matches the current delegation to @" + target + ".", true);
+          return;
+        }
+        detail = "Sets the resource credit delegation to @" + target + " to " + formatRcAmount(nextRc) + " rc.";
+        operations = [rcDelegateOp(user, target, nextRc)];
+      }
+    }
+    let exists = false;
+    try {
+      exists = await accountExists(target);
+    } catch (err) {
+      delegateDialogBusy(false);
+      setDelegateStatus((err && err.message) || "Could not look up that account.", true);
+      return;
+    }
+    if (delegateState.mode !== "delegate" || observer() !== user || !isOwnAuthor(profileState.author)) {
+      delegateDialogBusy(false);
+      return;
+    }
+    if (!exists) {
+      delegateDialogBusy(false);
+      setDelegateStatus("That hive account does not exist.", true);
+      return;
+    }
+    const copy = delegateSignCopy(removing ? "remove" : "delegate", user, detail);
+    try {
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: copy.authority,
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+      });
+      closeDelegateOverlay();
+      if (asset === "hp") {
+        resourceGen += 1;
+        applyHpDelegation(profileState.wallet, target, prevVests, nextVests);
+      } else {
+        applyRcDelegation(target, prevRc, nextRc);
+      }
+    } catch (err) {
+      const cancelled = Boolean(err && err.ownerCancel);
+      setDelegateStatus(
+        cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
+        !cancelled
+      );
+      delegateDialogBusy(false);
     }
   }
 
@@ -16121,6 +17212,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (stakeRatesReady && stakeRates) wallet.stakeApr = stakeRates;
+    if (delegationView.account && delegationView.account !== wallet.name) clearDelegationView();
+    delegationView.open = false;
     profileState.wallet = wallet;
     profileState.walletTx = blankWalletTx();
     profileSectionHtml(walletPageHtml(wallet, isOwnAuthor(name)));
@@ -21100,6 +22193,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (signSource === "wallet") closeWalletOverlay();
       }
     }
+    if (!ownerSignBusy) closeDelegateOverlay();
     quietSmartHeader();
     const r = parseRoute();
     // Account-menu comments, replies, and wallet collapse the banner on mobile.
@@ -22326,6 +23420,27 @@ let CS77_FILTER_LOW_REP = 20;
         openWalletOverlay(stakeBtn.getAttribute("data-wallet-op") || "");
         return;
       }
+      const delegatedToggle = e.target.closest(".wallet-delegated-toggle");
+      if (delegatedToggle && inInteractiveSurface(delegatedToggle)) {
+        e.preventDefault();
+        toggleDelegatedHive();
+        return;
+      }
+      const delegateBtn = e.target.closest(".wallet-delegate-btn");
+      if (delegateBtn && inInteractiveSurface(delegateBtn)) {
+        e.preventDefault();
+        openDelegateDialog();
+        return;
+      }
+      const undelegateBtn = e.target.closest(".wallet-undelegate-btn");
+      if (undelegateBtn && inInteractiveSurface(undelegateBtn)) {
+        e.preventDefault();
+        openDelegateDialog({
+          asset: undelegateBtn.getAttribute("data-delegate-asset") || "",
+          account: undelegateBtn.getAttribute("data-delegate-account") || "",
+        });
+        return;
+      }
       const showMuted = e.target.closest(".show-muted");
       if (showMuted && inInteractiveSurface(showMuted)) {
         e.preventDefault();
@@ -22632,6 +23747,45 @@ let CS77_FILTER_LOW_REP = 20;
       }
       walletOverlay.addEventListener("click", (e) => {
         if (e.target === walletOverlay) closeWalletOverlay();
+      });
+    }
+
+    const delegateOverlay = $("#delegateOverlay");
+    if (delegateOverlay) {
+      const delegateCancel = $("#delegateCancel");
+      const delegateSubmit = $("#delegateSubmit");
+      const delegateMax = $("#delegateMax");
+      const delegateUser = $("#delegateUser");
+      const delegateAmount = $("#delegateAmount");
+      const delegateAsset = $("#delegateAsset");
+      if (delegateCancel) delegateCancel.addEventListener("click", closeDelegateOverlay);
+      if (delegateSubmit) delegateSubmit.addEventListener("click", submitDelegate);
+      if (delegateMax) delegateMax.addEventListener("click", fillDelegateMax);
+      if (delegateUser) {
+        delegateUser.addEventListener("input", updateDelegateHint);
+        delegateUser.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitDelegate();
+        });
+      }
+      const delegateRcUnit = $("#delegateRcUnit");
+      if (delegateAmount) {
+        delegateAmount.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitDelegate();
+        });
+      }
+      if (delegateRcUnit) delegateRcUnit.addEventListener("change", syncDelegateRcInputMode);
+      if (delegateAsset) {
+        delegateAsset.addEventListener("click", (e) => {
+          const tab = e.target.closest("[data-delegate-asset]");
+          if (!tab || delegateState.pending || delegateState.mode !== "delegate") return;
+          setDelegateAsset(tab.getAttribute("data-delegate-asset") || "hp");
+        });
+      }
+      delegateOverlay.addEventListener("click", (e) => {
+        if (e.target !== delegateOverlay) return;
+        const active = document.activeElement;
+        if (active && delegateOverlay.contains(active)) return;
+        closeDelegateOverlay();
       });
     }
 

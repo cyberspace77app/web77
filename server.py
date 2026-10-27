@@ -2,12 +2,15 @@
 """Local http server for CyberSpace77 (mirrors .htaccess)."""
 
 import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
+import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -15,6 +18,15 @@ ROOT = Path(__file__).resolve().parent
 PREFIX = ""  # e.g. "/dir" when the app is served from a subdirectory
 
 # Same preview fetchers as .htaccess. Search crawlers stay on index.html.
+# Hive has no index of who delegated resource credits to an account.
+# PeakD's public list does, but it rejects browser requests that send Origin.
+HIVE_NAME = re.compile(r"^[a-z][a-z0-9.\-]{1,14}[a-z0-9]$")
+RC_INCOMING_LIMIT = 2 * 1024 * 1024
+RC_INCOMING_PATHS = (
+    "/api/rc-delegations-incoming",
+    "/api/rc-delegations-incoming.php",
+)
+
 CRAWLER_UA = re.compile(
     r"facebookexternalhit|Twitterbot|TelegramBot|WhatsApp|Discordbot|"
     r"Slackbot|Slack-ImgProxy|LinkedInBot|Pinterest|redditbot|Embedly|Iframely|"
@@ -79,12 +91,67 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def send_json(self, status, body):
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def proxy_rc_incoming(self, query):
+        params = urllib.parse.parse_qs(query or "", keep_blank_values=False)
+        raw = ((params.get("delegatee") or [""])[0] or "").strip().lower()
+        if raw.startswith("@"):
+            raw = raw[1:]
+        if not HIVE_NAME.match(raw):
+            self.send_json(400, '{"error":"Enter a hive username."}')
+            return
+        url = (
+            "https://peakd.com/api/public/rc_delegations/incoming?delegatee="
+            + urllib.parse.quote(raw)
+        )
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "CyberSpace77", "Accept": "application/json"},
+            method="GET",
+        )
+        data = b""
+        try:
+            with urllib.request.urlopen(req, timeout=20) as res:
+                status = getattr(res, "status", 0) or res.getcode()
+                data = res.read(RC_INCOMING_LIMIT + 1)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            status = 502
+            data = b""
+        if (
+            status != 200
+            or not data
+            or len(data) > RC_INCOMING_LIMIT
+            or data[:1] not in (b"[", b"{")
+        ):
+            self.send_json(502, '{"error":"Incoming resource credits could not be loaded."}')
+            return
+        try:
+            parsed = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json(502, '{"error":"Incoming resource credits could not be loaded."}')
+            return
+        if not isinstance(parsed, list):
+            self.send_json(502, '{"error":"Incoming resource credits could not be loaded."}')
+            return
+        self.send_json(200, data)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         raw = urllib.parse.unquote(parsed.path)
         stripped = strip_prefix(raw)
         if stripped is None:
             self.send_error(404)
+            return
+        if stripped in RC_INCOMING_PATHS:
+            self.proxy_rc_incoming(parsed.query)
             return
         rel = stripped.lstrip("/")
         qs = parsed.query

@@ -1150,6 +1150,175 @@
     return Array.isArray(result) ? result : [];
   }
 
+  // get_vesting_delegations is inclusive on the start delegatee. A full page
+  // is continued from its last name, and that name is skipped once.
+  const DELEGATION_PAGE = 1000;
+  const DELEGATION_MAX_PAGES = 30;
+
+  async function getOutgoingVestingDelegations(username) {
+    const name = accountName(username);
+    if (!name) return { rows: [], truncated: false };
+    const rows = [];
+    let start = "";
+    let truncated = false;
+    for (let page = 0; page < DELEGATION_MAX_PAGES; page++) {
+      const result = await hiveRpc("condenser_api.get_vesting_delegations", [name, start, DELEGATION_PAGE]);
+      const list = Array.isArray(result) ? result : [];
+      for (let i = 0; i < list.length; i++) {
+        const row = list[i] || {};
+        const delegatee = accountName(row.delegatee);
+        if (!delegatee || (start && delegatee === start)) continue;
+        const vests = parseAsset(row.vesting_shares);
+        if (!(vests > 0)) continue;
+        rows.push({ delegator: name, delegatee, vests });
+      }
+      if (list.length < DELEGATION_PAGE) {
+        truncated = false;
+        break;
+      }
+      const last = accountName(list[list.length - 1] && list[list.length - 1].delegatee);
+      if (!last || last === start) break;
+      start = last;
+      truncated = page === DELEGATION_MAX_PAGES - 1;
+    }
+    return { rows, truncated };
+  }
+
+  async function getOutgoingRcDelegations(username) {
+    const name = accountName(username);
+    if (!name) return { rows: [], truncated: false };
+    const rows = [];
+    let startTo = "";
+    let truncated = false;
+    for (let page = 0; page < DELEGATION_MAX_PAGES; page++) {
+      const result = await hiveRpc("rc_api.list_rc_direct_delegations", {
+        start: [name, startTo],
+        limit: DELEGATION_PAGE,
+      });
+      const list = Array.isArray(result)
+        ? result
+        : (result && result.rc_direct_delegations) || [];
+      if (!Array.isArray(list) || !list.length) break;
+      let stopped = false;
+      for (let i = 0; i < list.length; i++) {
+        const row = list[i] || {};
+        const from = accountName(row.from);
+        if (from && from !== name) {
+          stopped = true;
+          break;
+        }
+        const to = accountName(row.to);
+        if (!to || (startTo && to === startTo)) continue;
+        const rc = intBig(row.delegated_rc);
+        if (rc <= 0n) continue;
+        rows.push({ from: name, to, rc: rc.toString() });
+      }
+      if (stopped || list.length < DELEGATION_PAGE) {
+        truncated = false;
+        break;
+      }
+      const last = accountName(list[list.length - 1] && list[list.length - 1].to);
+      if (!last || last === startTo) break;
+      startTo = last;
+      truncated = page === DELEGATION_MAX_PAGES - 1;
+    }
+    return { rows, truncated };
+  }
+
+  // HiveSQL keeps a zero row after a delegation is removed. Those are not active.
+  async function incomingHpFromKeychain(name) {
+    const res = await fetch(
+      "https://api.hive-keychain.com/hive/delegators/" + encodeURIComponent(name),
+      { cache: "no-store", mode: "cors" }
+    );
+    if (!res.ok) throw new Error("Incoming hive power could not be loaded.");
+    const data = await res.json();
+    const list = Array.isArray(data)
+      ? data
+      : data && (data.result || data.delegators || data.data);
+    if (!Array.isArray(list)) throw new Error("Incoming hive power could not be loaded.");
+    const rows = [];
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i] || {};
+      const delegator = accountName(row.delegator);
+      const vests = parseAsset(row.vesting_shares);
+      if (!delegator || !(vests > 0)) continue;
+      rows.push({ delegator, delegatee: name, vests });
+    }
+    return rows;
+  }
+
+  // The delegatee's wallet history records incoming hive-power delegations.
+  // The newest operation from each delegator wins, and zero means it was removed.
+  async function incomingHpFromHistory(name) {
+    const seen = new Set();
+    const rows = [];
+    let start = -1;
+    for (let page = 0; page < 8; page++) {
+      const history = await getWalletHistory(name, start, DELEGATION_PAGE);
+      if (!history.length) break;
+      for (let i = history.length - 1; i >= 0; i--) {
+        const op = history[i][1] && history[i][1].op;
+        if (!op || op[0] !== "delegate_vesting_shares") continue;
+        const payload = op[1] || {};
+        if (accountName(payload.delegatee) !== name) continue;
+        const delegator = accountName(payload.delegator);
+        if (!delegator || seen.has(delegator)) continue;
+        seen.add(delegator);
+        const vests = parseAsset(payload.vesting_shares);
+        if (vests > 0) rows.push({ delegator, delegatee: name, vests });
+      }
+      if (history.length < DELEGATION_PAGE) break;
+      const oldest = Number(history[0][0]);
+      if (!Number.isFinite(oldest) || oldest <= 0) break;
+      start = oldest - 1;
+    }
+    return rows;
+  }
+
+  async function getIncomingHpDelegations(username) {
+    const name = accountName(username);
+    if (!name) return [];
+    try {
+      return await incomingHpFromKeychain(name);
+    } catch {
+      return incomingHpFromHistory(name);
+    }
+  }
+
+  function rcCreationAdjust(rcAccount) {
+    const adj = rcAccount && rcAccount.max_rc_creation_adjustment;
+    if (adj && typeof adj === "object") return intBig(adj.amount);
+    return intBig(adj);
+  }
+
+  function rcCurrentMana(rcAccount, nowSec) {
+    if (!rcAccount) return 0n;
+    const max = intBig(rcAccount.max_rc);
+    let current = intBig(rcAccount.rc_manabar && rcAccount.rc_manabar.current_mana);
+    const last = Number(rcAccount.rc_manabar && rcAccount.rc_manabar.last_update_time) || 0;
+    const now = Number(nowSec) || Math.floor(Date.now() / 1000);
+    const elapsed = now > last ? now - last : 0;
+    if (elapsed > 0 && max > 0n) {
+      current += (BigInt(Math.max(0, elapsed)) * max) / BigInt(VOTE_MANA_REGEN_SECONDS);
+    }
+    if (current < 0n) current = 0n;
+    if (max > 0n && current > max) current = max;
+    return current;
+  }
+
+  // max_rc from find_rc_accounts is net of outgoing delegations and includes
+  // received credits plus the creation adjustment. Delegable RC cannot include
+  // received credits, and it cannot exceed regenerated mana. The result is how
+  // much more can be delegated, not an absolute amount already delegated.
+  function rcDelegable(rcAccount, nowSec) {
+    if (!rcAccount) return 0n;
+    let room = intBig(rcAccount.max_rc) - intBig(rcAccount.received_delegated_rc) - rcCreationAdjust(rcAccount);
+    if (room < 0n) room = 0n;
+    const mana = rcCurrentMana(rcAccount, nowSec);
+    return mana < room ? mana : room;
+  }
+
   global.HiveApi = {
     PAGE_SIZE,
     hiveRpc,
@@ -1194,6 +1363,11 @@
     getAccountHistory,
     getWalletHistory,
     getSavingsWithdrawFrom,
+    getOutgoingVestingDelegations,
+    getOutgoingRcDelegations,
+    getIncomingHpDelegations,
+    findRcAccount,
+    rcDelegable,
     parseAsset,
     vestsToHive,
     hiveToVests,
