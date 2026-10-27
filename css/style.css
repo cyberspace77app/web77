@@ -4441,6 +4441,53 @@ a.tag:hover {
   line-height: 1.45;
 }
 
+.wallet-apr {
+  display: block;
+  position: relative;
+  width: max-content;
+  margin-top: 0.28rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: var(--gray);
+  white-space: nowrap;
+}
+
+.wallet-apr:focus {
+  outline: none;
+}
+
+.wallet-apr:focus-visible {
+  outline: 1px solid var(--gray);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.wallet-apr .session-stat-tip {
+  left: 0;
+  right: auto;
+  z-index: 8;
+  width: min(17rem, 70vw);
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.wallet-apr:hover .session-stat-tip,
+.wallet-apr:focus .session-stat-tip,
+.wallet-apr:focus-visible .session-stat-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.wallet-table tr:has(.wallet-apr:hover),
+.wallet-table tr:has(.wallet-apr:focus),
+.wallet-table tr:has(.wallet-apr:focus-visible) {
+  position: relative;
+  z-index: 8;
+}
+
 .wallet-tx-list {
   display: flex;
   flex-direction: column;

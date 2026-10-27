@@ -846,6 +846,106 @@
     return vestsToHive(vests, props);
   }
 
+  // process_funds inflation. 978 is 9.78% at block 0, minus 0.01% each
+  // 250,000 blocks, with a 0.95% floor. HF28 mints from HIVE supply plus
+  // non-treasury HBD at the median feed. PeakD still uses virtual_supply
+  // and adds a flat 10 points for curation.
+  const HIVE_INFLATION_START_BP = 978;
+  const HIVE_INFLATION_FLOOR_BP = 95;
+  const HIVE_INFLATION_NARROWING_BLOCKS = 250000;
+  const HIVE_PERCENT_SCALE = 10000;
+  const HIVE_TREASURY = "hive.fund";
+
+  function assetSymbol(val) {
+    const m = String(val || "").match(/[A-Za-z]+/);
+    return m ? m[0].toUpperCase() : "";
+  }
+
+  function hivePerHbd(price) {
+    const baseAmt = parseAsset(price && price.base);
+    const quoteAmt = parseAsset(price && price.quote);
+    if (!(baseAmt > 0) || !(quoteAmt > 0)) return 0;
+    const baseSym = assetSymbol(price && price.base);
+    const quoteSym = assetSymbol(price && price.quote);
+    if (baseSym === "HBD" && quoteSym === "HIVE") return quoteAmt / baseAmt;
+    if (baseSym === "HIVE" && quoteSym === "HBD") return baseAmt / quoteAmt;
+    return quoteAmt / baseAmt;
+  }
+
+  function stakeAprFromChain(props, price, fund, treasuryAccount) {
+    if (!props) return null;
+    const head = Number(props.head_block_number);
+    const supply = parseAsset(props.current_supply);
+    const virtualSupply = parseAsset(props.virtual_supply);
+    const hbdSupply = parseAsset(props.current_hbd_supply);
+    const vestingFund = parseAsset(props.total_vesting_fund_hive);
+    const vestingPercent = Number(props.vesting_reward_percent);
+    const contentPercent = Number(props.content_reward_percent);
+    const hbdInterest = Number(props.hbd_interest_rate);
+    const hbdApr =
+      Number.isFinite(hbdInterest) && hbdInterest >= 0 && hbdInterest <= HIVE_PERCENT_SCALE
+        ? hbdInterest / 100
+        : null;
+
+    let hiveAprLow = null;
+    let hiveAprHigh = null;
+    if (Number.isFinite(head) && head >= 0 && vestingFund > 0 && Number.isFinite(vestingPercent)) {
+      const inflationBp = Math.max(
+        HIVE_INFLATION_START_BP - Math.floor(head / HIVE_INFLATION_NARROWING_BLOCKS),
+        HIVE_INFLATION_FLOOR_BP
+      );
+      const perHbd = hivePerHbd(price);
+      const treasuryHbd = treasuryAccount ? parseAsset(treasuryAccount.hbd_balance) : NaN;
+      let inflationBase = 0;
+      if (supply > 0 && Number.isFinite(hbdSupply) && perHbd > 0 && Number.isFinite(treasuryHbd)) {
+        inflationBase = supply + Math.max(0, hbdSupply - treasuryHbd) * perHbd;
+      } else if (virtualSupply > 0) {
+        inflationBase = virtualSupply;
+      }
+      if (inflationBase > 0 && inflationBp > 0) {
+        const scale = (inflationBase / vestingFund) * (inflationBp / 100);
+        const low = scale * (vestingPercent / HIVE_PERCENT_SCALE);
+        let curationFraction = 0.5;
+        if (fund && Number.isFinite(Number(fund.percent_curation_rewards))) {
+          curationFraction = Number(fund.percent_curation_rewards) / HIVE_PERCENT_SCALE;
+        }
+        if (curationFraction < 0) curationFraction = 0;
+        if (curationFraction > 1) curationFraction = 1;
+        const content = Number.isFinite(contentPercent) ? contentPercent : 0;
+        let high = low + scale * (content / HIVE_PERCENT_SCALE) * curationFraction;
+        if (high < low) high = low;
+        if (low >= 0 && low <= 100 && high <= 100) {
+          hiveAprLow = low;
+          hiveAprHigh = high;
+        }
+      }
+    }
+
+    if (hbdApr == null && hiveAprLow == null) return null;
+    return {
+      hbdApr: hbdApr,
+      hiveAprLow: hiveAprLow,
+      hiveAprHigh: hiveAprHigh,
+    };
+  }
+
+  async function getStakeApr(props) {
+    const [globalProps, price, fund, accounts] = await Promise.all([
+      props ? Promise.resolve(props) : getDynamicGlobalProperties(),
+      getMedianHistoryPrice().catch(function () {
+        return null;
+      }),
+      getRewardFund().catch(function () {
+        return null;
+      }),
+      getAccounts([HIVE_TREASURY]).catch(function () {
+        return [];
+      }),
+    ]);
+    const treasury = accounts && accounts[0];
+    return stakeAprFromChain(globalProps, price, fund, treasury);
+  }
+
   function walletFromAccount(account, props) {
     if (!account || !props) return null;
     const name = accountName(account.name);
@@ -1090,6 +1190,7 @@
     getHivePower,
     walletFromAccount,
     getWallet,
+    getStakeApr,
     getAccountHistory,
     getWalletHistory,
     getSavingsWithdrawFrom,

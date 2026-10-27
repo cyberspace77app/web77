@@ -15234,10 +15234,9 @@ let CS77_FILTER_LOW_REP = 20;
   function paintWalletBalanceAmounts(wallet) {
     const rows = view.querySelectorAll(".wallet-table tr");
     for (let i = 0; i < rows.length; i++) {
-      const label = rows[i].querySelector(".wallet-label");
       const value = rows[i].querySelector(".wallet-value");
-      if (!label || !value) continue;
-      const name = label.textContent.trim();
+      const name = rows[i].getAttribute("data-balance");
+      if (!value || !name) continue;
       if (name === "hive") value.textContent = formatAssetNumber(wallet.hive);
       else if (name === "staked hive") value.textContent = formatAssetNumber(wallet.stakedHive);
       else if (name === "hbd") value.textContent = formatAssetNumber(wallet.hbd);
@@ -15246,12 +15245,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function walletBalanceTableRow(label) {
-    const rows = view.querySelectorAll(".wallet-table tr");
-    for (let i = 0; i < rows.length; i++) {
-      const name = rows[i].querySelector(".wallet-label");
-      if (name && name.textContent.trim() === label) return rows[i];
-    }
-    return null;
+    return view.querySelector('.wallet-table tr[data-balance="' + label + '"]');
   }
 
   function rewardBalanceRows(wallet) {
@@ -15343,9 +15337,57 @@ let CS77_FILTER_LOW_REP = 20;
     }, countMs + (reduced ? 0 : 240));
   }
 
-  function walletBalanceRow(label, amount, symbol, actionsHtml) {
-    return `<tr>
-      <td class="wallet-label">${HiveMd.escapeHtml(label)}</td>
+  function formatAprPercent(rate) {
+    return rate.toFixed(2);
+  }
+
+  function walletShownRates(wallet) {
+    if (wallet && wallet.stakeApr) return wallet.stakeApr;
+    const interest = wallet && wallet.props ? Number(wallet.props.hbd_interest_rate) : NaN;
+    if (!Number.isFinite(interest) || interest < 0 || interest > 10000) return null;
+    return { hbdApr: interest / 100 };
+  }
+
+  function walletAprTip(text) {
+    return `<span class="session-stat-tip" role="tooltip">${HiveMd.escapeHtml(text)}</span>`;
+  }
+
+  function walletHiveAprHtml(rates) {
+    if (!rates || !Number.isFinite(rates.hiveAprHigh)) return "";
+    const high = formatAprPercent(rates.hiveAprHigh);
+    const low = Number.isFinite(rates.hiveAprLow) ? formatAprPercent(rates.hiveAprLow) : high;
+    const tip =
+      "Estimated staked hive apr. Staked hive currently earns about " +
+      low +
+      "% annual inflation rewards, including curation rewards, the total would approx. " +
+      high +
+      "% if the stake would vote in proportion to all staked hive. Active curators may earn more when other stake does not vote.";
+    return `<span class="wallet-apr" tabindex="0">~${high}%${walletAprTip(tip)}</span>`;
+  }
+
+  function walletHbdAprHtml(rates) {
+    if (!rates || !Number.isFinite(rates.hbdApr)) return "";
+    const shown = formatAprPercent(rates.hbdApr);
+    return `<span class="wallet-apr" tabindex="0">${shown}%${walletAprTip("Current staked hbd apr. This rate is set by witnesses.")}</span>`;
+  }
+
+  function setWalletRowApr(row, html) {
+    if (!row) return;
+    const label = row.querySelector(".wallet-label");
+    if (!label) return;
+    const old = label.querySelector(".wallet-apr");
+    if (old) old.remove();
+    if (html) label.insertAdjacentHTML("beforeend", html);
+  }
+
+  function paintWalletApr(rates) {
+    setWalletRowApr(walletBalanceTableRow("staked hive"), walletHiveAprHtml(rates));
+    setWalletRowApr(walletBalanceTableRow("staked hbd"), walletHbdAprHtml(rates));
+  }
+
+  function walletBalanceRow(label, amount, symbol, actionsHtml, noteHtml) {
+    return `<tr data-balance="${HiveMd.escapeHtml(label)}">
+      <td class="wallet-label">${HiveMd.escapeHtml(label)}${noteHtml || ""}</td>
       <td class="wallet-value">${HiveMd.escapeHtml(formatAssetNumber(amount))}</td>
       <td class="wallet-unit">${HiveMd.escapeHtml(symbol)}</td>
       <td class="wallet-actions wallet-actions-inline">${
@@ -15380,6 +15422,7 @@ let CS77_FILTER_LOW_REP = 20;
   function walletPageHtml(wallet, own) {
     const w = wallet || {};
     const props = w.props;
+    const rates = walletShownRates(w);
     const hiveActions = own ? walletStakeButtons("hive") : "";
     const hbdActions = own ? walletStakeButtons("hbd") : "";
     return `
@@ -15397,11 +15440,11 @@ let CS77_FILTER_LOW_REP = 20;
               </colgroup>
               <tbody>
                 ${walletBalanceRow("hive", w.hive, "hive", hiveActions)}
-                ${walletBalanceRow("staked hive", w.stakedHive, "hive", "")}
+                ${walletBalanceRow("staked hive", w.stakedHive, "hive", "", walletHiveAprHtml(rates))}
                 ${walletActionsUnderRow(hiveActions)}
                 ${walletBalanceRow("delegated hive", w.delegatedHive, "hive", "")}
                 ${walletBalanceRow("hbd", w.hbd, "hbd", hbdActions)}
-                ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", "")}
+                ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", "", walletHbdAprHtml(rates))}
                 ${walletActionsUnderRow(hbdActions)}
               </tbody>
             </table>
@@ -16044,6 +16087,20 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function fillProfileWallet(name, tab, pageLoad) {
+    let stakeRates = null;
+    let stakeRatesReady = false;
+    const ratesPromise = HiveApi.getStakeApr()
+      .then(function (value) {
+        stakeRates = value;
+        return value;
+      })
+      .catch(function () {
+        return null;
+      })
+      .then(function (value) {
+        stakeRatesReady = true;
+        return value;
+      });
     let wallet = null;
     try {
       wallet = await resolveWalletBalances(name, pageLoad);
@@ -16059,11 +16116,20 @@ let CS77_FILTER_LOW_REP = 20;
       releaseProfileSectionHold();
       return;
     }
+    if (stakeRatesReady && stakeRates) wallet.stakeApr = stakeRates;
     profileState.wallet = wallet;
     profileState.walletTx = blankWalletTx();
     profileSectionHtml(walletPageHtml(wallet, isOwnAuthor(name)));
     releaseProfileSectionHold();
-    await loadMoreWalletHistory();
+    const historyPromise = loadMoreWalletHistory();
+    if (!stakeRatesReady) {
+      const loaded = await ratesPromise;
+      if (profileRouteStill(name, tab) && profileState.wallet === wallet && loaded) {
+        wallet.stakeApr = loaded;
+        paintWalletApr(loaded);
+      }
+    }
+    await historyPromise;
   }
 
   async function renderProfile(author, page) {
