@@ -1768,41 +1768,46 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 .error-banner {
   position: fixed;
   z-index: 80;
-  top: max(0.85rem, env(safe-area-inset-top, 0px));
-  left: 50%;
-  width: min(36rem, calc(100vw - 2rem));
+  /* Clear the glow. A translate on this box, or a blur on it, paints the
+     top edge above the viewport once the page has scrolled. */
+  top: max(1.5rem, env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  width: min(36rem, calc(100% - 2rem));
+  margin-inline: auto;
   display: flex;
   align-items: flex-start;
   gap: 0.75rem;
-  margin: 0;
   padding: 1.1rem 1.25rem;
   border-radius: var(--radius);
   font-family: var(--font-mono);
   font-size: 0.9rem;
   line-height: 1.45;
   text-align: left;
+  color: var(--red-bright);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  animation: error-banner-in 0.18s ease-out;
+}
+
+.error-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background:
     linear-gradient(rgba(227, 19, 55, 0.18), rgba(227, 19, 55, 0.18)),
     rgba(7, 7, 7, 0.94);
   border: 1px solid var(--red);
-  color: var(--red-bright);
   box-shadow: var(--glow-red), 0 16px 40px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(8px);
-  cursor: pointer;
-  overflow-wrap: anywhere;
-  transform: translateX(-50%);
-  animation: error-banner-in 0.18s ease-out;
+  pointer-events: none;
 }
 
 @keyframes error-banner-in {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-0.45rem);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
