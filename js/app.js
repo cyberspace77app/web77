@@ -17597,9 +17597,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Description and rules come from the community. Language does too.
-  // Beneficiary and preferred spaces live on the subspace account, with
-  // preferred spaces also copied into hivemind settings. PeakD stores the
-  // same list as profile.topics.
+  // Beneficiary and preferred spaces (profile.topics) live on the subspace account
   async function communityAboutExtras(name, info) {
     const id = normalizeCommunityName(name);
     const settings = communitySettingsObject(info);
@@ -18178,8 +18176,7 @@ let CS77_FILTER_LOW_REP = 20;
     return communityCollectTags(raw);
   }
 
-  // About shows the subspace's own preferred spaces, then hivemind's copy,
-  // then PeakD's profile.topics when neither of those is set.
+  // About shows the subspace's own preferred spaces (tags), then hivemind's copy, then PeakD's profile.topics when neither of those is set.
   function communityAboutTags(metadata, settings) {
     const profile = metadata && metadata.profile;
     const own = profile && profile.preferred_tags;
