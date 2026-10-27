@@ -1154,6 +1154,7 @@
   // is continued from its last name, and that name is skipped once.
   const DELEGATION_PAGE = 1000;
   const DELEGATION_MAX_PAGES = 30;
+  const BALANCE_API_TIMEOUT_MS = 15000;
 
   async function getOutgoingVestingDelegations(username) {
     const name = accountName(username);
@@ -1184,6 +1185,10 @@
     return { rows, truncated };
   }
 
+  // list_rc_direct_delegations is indexed by delegator account id, then
+  // delegatee account id, not by name. start is [from, to] and inclusive.
+  // An empty to lists outgoing delegations from that account. The chain
+  // cannot list by recipient alone.
   async function getOutgoingRcDelegations(username) {
     const name = accountName(username);
     if (!name) return { rows: [], truncated: false };
@@ -1286,6 +1291,66 @@
     }
   }
 
+  // Inbound resource-credit names are not on the chain index. The Hive
+  // balance tracker on the API node returns them as incoming_delegations.
+  async function getIncomingRcDelegations(username) {
+    const name = accountName(username);
+    if (!name) return [];
+    const nodes = nodeList();
+    let lastErr = null;
+    for (let i = 0; i < nodes.length; i++) {
+      const root = String(nodes[i] || "").replace(/\/+$/, "");
+      if (!root) continue;
+      const url = root + "/balance-api/accounts/" + encodeURIComponent(name) + "/rc-delegations";
+      const controller = new AbortController();
+      const timer = setTimeout(function () {
+        controller.abort();
+      }, BALANCE_API_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          mode: "cors",
+          signal: controller.signal,
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          lastErr = new Error("Incoming resource credit names could not be loaded.");
+          continue;
+        }
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = null;
+        }
+        const list = data && data.incoming_delegations;
+        if (!Array.isArray(list)) {
+          lastErr = new Error("Incoming resource credit names could not be loaded.");
+          continue;
+        }
+        const rows = [];
+        for (let j = 0; j < list.length; j++) {
+          const row = list[j] || {};
+          const from = accountName(row.delegator);
+          const rc = intBig(row.max_rc);
+          if (!from || rc <= 0n) continue;
+          rows.push({ from: from, to: name, rc: rc.toString() });
+        }
+        return rows;
+      } catch (err) {
+        lastErr =
+          err && err.name === "AbortError"
+            ? new Error("Incoming resource credit names could not be loaded.")
+            : err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw lastErr || new Error("Incoming resource credit names could not be loaded.");
+  }
+
   function rcCreationAdjust(rcAccount) {
     const adj = rcAccount && rcAccount.max_rc_creation_adjustment;
     if (adj && typeof adj === "object") return intBig(adj.amount);
@@ -1366,6 +1431,7 @@
     getOutgoingVestingDelegations,
     getOutgoingRcDelegations,
     getIncomingHpDelegations,
+    getIncomingRcDelegations,
     findRcAccount,
     rcDelegable,
     parseAsset,

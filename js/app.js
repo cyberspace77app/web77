@@ -15850,33 +15850,6 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  async function fetchIncomingRcDelegations(username) {
-    const name = walletHiveName(username);
-    if (!name) return [];
-    const res = await fetch("/api/rc-delegations-incoming.php?delegatee=" + encodeURIComponent(name), {
-      cache: "no-store",
-    });
-    const text = await res.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = null;
-    }
-    if (!res.ok || !Array.isArray(data)) {
-      throw new Error((data && data.error) || "Incoming resource credit names could not be loaded.");
-    }
-    const rows = [];
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i] || {};
-      const from = walletHiveName(row.delegator || row.from);
-      const rc = rcToBig(row.rc != null ? row.rc : row.delegated_rc);
-      if (!from || rc <= 0n) continue;
-      rows.push({ from, to: name, rc: rc.toString() });
-    }
-    return rows;
-  }
-
   async function loadDelegationLists(name) {
     if (delegationLoadPromise && delegationView.loading && delegationView.account === name) {
       return delegationLoadPromise;
@@ -15894,7 +15867,7 @@ let CS77_FILTER_LOW_REP = 20;
         HiveApi.getIncomingHpDelegations(name),
         HiveApi.getOutgoingRcDelegations(name),
         HiveApi.findRcAccount(name),
-        fetchIncomingRcDelegations(name),
+        HiveApi.getIncomingRcDelegations(name),
       ]);
       if (gen !== delegationView.loadGen || !profileState.wallet || profileState.wallet.name !== name) return;
       const errors = {};
