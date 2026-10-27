@@ -16134,6 +16134,8 @@ let CS77_FILTER_LOW_REP = 20;
     walletOpState.pending = false;
     const input = $("#walletAmount");
     if (input) input.value = "";
+    const available = $("#walletOpAvailable");
+    if (available) available.textContent = "";
     setWalletOpStatus("");
     const submit = $("#walletOpSubmit");
     if (submit) submit.disabled = false;
@@ -16168,13 +16170,15 @@ let CS77_FILTER_LOW_REP = 20;
     const title = $("#walletOpTitle");
     if (title) title.textContent = copy.title;
     const lead = $("#walletOpLead");
-    if (lead) {
-      lead.textContent = copy.lead + " Available: " + formatHiveLike(max, copy.symbol) + ".";
+    if (lead) lead.textContent = copy.lead;
+    const available = $("#walletOpAvailable");
+    if (available) {
+      available.textContent = "Available: " + formatHiveLike(max, copy.symbol) + ".";
     }
     const input = $("#walletAmount");
     if (input) {
       input.value = "";
-      input.placeholder = formatHiveLike(max, copy.symbol);
+      input.placeholder = "0.000";
     }
     setWalletOpStatus("");
     const submit = $("#walletOpSubmit");

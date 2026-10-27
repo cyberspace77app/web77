@@ -4870,6 +4870,14 @@ a.wallet-tx-time:hover {
   margin-bottom: 0;
 }
 
+#walletOverlay .wallet-amount-row {
+  margin-bottom: 0.35rem;
+}
+
+#walletOpAvailable:empty {
+  display: none;
+}
+
 #delegateRcUnit {
   flex: 0 0 auto;
   width: auto;
