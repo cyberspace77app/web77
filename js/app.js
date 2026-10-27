@@ -6900,8 +6900,6 @@ let CS77_FILTER_LOW_REP = 20;
     const decline = reward === "decline";
     const hp = reward === "hp";
     const routes = Array.isArray(beneficiaries) ? beneficiaries.slice() : [];
-    // PeakD burn pays the author reward to @null. Decline is the chain option
-    // that sets the accepted payout to zero and leaves it in the reward pool.
     if (burned) routes.push({ account: "null", weight: 10000 });
     if (!burned && !decline && !hp && !routes.length) return null;
     const options = {
@@ -15101,10 +15099,7 @@ let CS77_FILTER_LOW_REP = 20;
     return walletHiveName(to) || walletHiveName(from) || "";
   }
 
-  // The extension object is hive_keychain. Decrypt is requestVerifyKey, which
-  // sends type "decode". There is no requestDecode on the injected API.
-  // PeakD, keychain-sdk decode(), and wax KeychainProvider.decryptData all
-  // call requestVerifyKey(account, memo, "Memo", callback).
+  // The extension object is hive_keychain. Decrypt is requestVerifyKey, which sends type "decode". There is no requestDecode on the injected API.
   function keychainCanDecodeMemo() {
     const kc = window.hive_keychain;
     if (!kc) return false;
@@ -18952,9 +18947,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  // Beneficiary matches Ecency: posting_json_metadata.profile.beneficiary
-  // is {account, weight} with weight in basis points. Preferred spaces have
-  // no Ecency or PeakD field, so they are stored as profile.preferred_tags
+  // Beneficiary stored as posting_json_metadata.profile.beneficiary
+  // as {account, weight} with weight in basis points. Preferred spaces are stored as profile.preferred_tags
   // and copied into hivemind settings. The subspace picture and cover are the
   // account profile_image and cover_image. Ecency's updateProfile and PeakD
   // both set profile.version to 2 so the image servers use that profile.
