@@ -273,6 +273,8 @@ let CS77_FILTER_LOW_REP = 20;
     pending: false,
     target: "",
     amount: "",
+    // Minus opens the amount at 0. Clearing that 0 puts the live delegation back.
+    restoreDelegatedOnClear: false,
   };
   let publishEdit = null;
   let publishStash = null;
@@ -15536,17 +15538,21 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function setDelegateRcAmount(total) {
+  function setDelegateRcAmount(total, keepValue) {
     const input = $("#delegateAmount");
     const unit = $("#delegateRcUnit");
-    if (!input) return;
+    if (!input) return "";
     const parts = delegationRcParts(total);
-    input.value = String(parts.value).replace(/,/g, "");
+    const text = String(parts.value).replace(/,/g, "");
+    const previous = input.value;
+    input.value = text;
     if (unit) {
       const scales = { rc: "1", "M rc": "1000000", "B rc": "1000000000", "T rc": "1000000000000", "Q rc": "1000000000000000", "Qi rc": "1000000000000000000" };
       unit.value = scales[parts.unit] || "1";
     }
     syncDelegateRcInputMode();
+    if (keepValue) input.value = previous;
+    return text;
   }
 
   function syncDelegateRcInputMode() {
@@ -16337,6 +16343,7 @@ let CS77_FILTER_LOW_REP = 20;
     delegateState.pending = false;
     delegateState.target = "";
     delegateState.amount = "";
+    delegateState.restoreDelegatedOnClear = false;
     const submit = $("#delegateSubmit");
     if (submit) {
       submit.disabled = false;
@@ -16416,9 +16423,64 @@ let CS77_FILTER_LOW_REP = 20;
     hint.textContent = text;
   }
 
+  function applyDelegatedAmountPlaceholder() {
+    const target = walletHiveName($("#delegateUser") && $("#delegateUser").value);
+    const input = $("#delegateAmount");
+    if (!target || !input) return false;
+    let text = "";
+    if (delegateState.asset === "rc") {
+      const rc = outgoingRcAmount(target);
+      if (!(rc > 0n)) return false;
+      text = setDelegateRcAmount(rc, true);
+    } else {
+      const wallet = profileState.wallet;
+      if (!wallet || !wallet.props) return false;
+      const hive = roundAsset(HiveApi.vestsToHive(outgoingHpVests(target), wallet.props), 3);
+      if (!(hive >= 0.001)) return false;
+      text = hive.toFixed(3);
+    }
+    if (!text) return false;
+    input.placeholder = text;
+    return true;
+  }
+
+  function currentDelegatedAmountValue() {
+    const input = $("#delegateAmount");
+    if (!input || !applyDelegatedAmountPlaceholder()) return false;
+    input.value = input.placeholder;
+    return true;
+  }
+
+  function placeDelegateAmountCaret() {
+    const input = $("#delegateAmount");
+    if (!input || typeof input.setSelectionRange !== "function") return;
+    const end = input.value.length;
+    try {
+      input.setSelectionRange(end, end);
+    } catch (err) {
+      /* number-like inputs can reject a range */
+    }
+  }
+
+  // The remove button prefills 0. Deleting that 0 restores the outgoing amount
+  // so it can be edited. Any other edit leaves the field alone.
+  function restoreDelegatedAmountOnClear() {
+    if (!delegateState.restoreDelegatedOnClear || delegateState.pending) return;
+    const input = $("#delegateAmount");
+    if (!input) return;
+    if (String(input.value).trim() !== "") {
+      delegateState.restoreDelegatedOnClear = false;
+      return;
+    }
+    delegateState.restoreDelegatedOnClear = false;
+    if (!currentDelegatedAmountValue()) return;
+    placeDelegateAmountCaret();
+  }
+
   function setDelegateAsset(asset) {
     const next = asset === "rc" ? "rc" : "hp";
     delegateState.asset = next;
+    delegateState.restoreDelegatedOnClear = false;
     const root = $("#delegateAsset");
     if (root) {
       root.querySelectorAll("[data-delegate-asset]").forEach(function (btn) {
@@ -16487,6 +16549,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (userInput) userInput.value = target;
     const amountInput = $("#delegateAmount");
     if (amountInput) amountInput.value = prefill ? "0" : "";
+    if (prefill) applyDelegatedAmountPlaceholder();
+    delegateState.restoreDelegatedOnClear = Boolean(prefill);
     updateDelegateHint();
     const submit = $("#delegateSubmit");
     if (submit) {
@@ -23776,6 +23840,7 @@ let CS77_FILTER_LOW_REP = 20;
         delegateAmount.addEventListener("keydown", (e) => {
           if (e.key === "Enter") submitDelegate();
         });
+        delegateAmount.addEventListener("input", restoreDelegatedAmountOnClear);
       }
       if (delegateRcUnit) delegateRcUnit.addEventListener("change", syncDelegateRcInputMode);
       if (delegateAsset) {
