@@ -15403,11 +15403,11 @@ let CS77_FILTER_LOW_REP = 20;
     </tr>`;
   }
 
-  function walletStakeButtons(kind) {
-    return `
-      <button type="button" class="btn-primary btn-compact wallet-stake-btn" data-wallet-op="stake-${kind}">Stake</button>
-      <button type="button" class="btn-ghost btn-compact wallet-stake-btn" data-wallet-op="unstake-${kind}">Unstake</button>
-    `;
+  function walletStakeButton(kind, op) {
+    const stake = op === "stake";
+    const cls = stake ? "btn-primary" : "btn-ghost";
+    const label = stake ? "Stake" : "Unstake";
+    return `<button type="button" class="${cls} btn-compact wallet-stake-btn" data-wallet-op="${op}-${kind}">${label}</button>`;
   }
 
   function walletPowerDownNote(wallet) {
@@ -15423,8 +15423,10 @@ let CS77_FILTER_LOW_REP = 20;
     const w = wallet || {};
     const props = w.props;
     const rates = walletShownRates(w);
-    const hiveActions = own ? walletStakeButtons("hive") : "";
-    const hbdActions = own ? walletStakeButtons("hbd") : "";
+    const hiveStake = own ? walletStakeButton("hive", "stake") : "";
+    const hiveUnstake = own ? walletStakeButton("hive", "unstake") : "";
+    const hbdStake = own ? walletStakeButton("hbd", "stake") : "";
+    const hbdUnstake = own ? walletStakeButton("hbd", "unstake") : "";
     return `
       <div class="wallet-page">
         ${walletRewardsHtml(w, own)}
@@ -15439,13 +15441,15 @@ let CS77_FILTER_LOW_REP = 20;
                 <col class="wallet-col-actions">
               </colgroup>
               <tbody>
-                ${walletBalanceRow("hive", w.hive, "hive", hiveActions)}
-                ${walletBalanceRow("staked hive", w.stakedHive, "hive", "", walletHiveAprHtml(rates))}
-                ${walletActionsUnderRow(hiveActions)}
+                ${walletBalanceRow("hive", w.hive, "hive", hiveStake)}
+                ${walletActionsUnderRow(hiveStake)}
+                ${walletBalanceRow("staked hive", w.stakedHive, "hive", hiveUnstake, walletHiveAprHtml(rates))}
+                ${walletActionsUnderRow(hiveUnstake)}
                 ${walletBalanceRow("delegated hive", w.delegatedHive, "hive", "")}
-                ${walletBalanceRow("hbd", w.hbd, "hbd", hbdActions)}
-                ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", "", walletHbdAprHtml(rates))}
-                ${walletActionsUnderRow(hbdActions)}
+                ${walletBalanceRow("hbd", w.hbd, "hbd", hbdStake)}
+                ${walletActionsUnderRow(hbdStake)}
+                ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", hbdUnstake, walletHbdAprHtml(rates))}
+                ${walletActionsUnderRow(hbdUnstake)}
               </tbody>
             </table>
           </div>

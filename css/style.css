@@ -4433,6 +4433,10 @@ a.tag:hover {
   gap: 0.45rem;
 }
 
+.wallet-stake-btn[data-wallet-op^="stake-"] {
+  margin-right: 0.6rem;
+}
+
 .wallet-note {
   margin-top: 0.65rem;
   font-family: var(--font-mono);
