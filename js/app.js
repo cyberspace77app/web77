@@ -20448,7 +20448,7 @@ let CS77_FILTER_LOW_REP = 20;
     return `
       <form class="settings-form" id="settingsKeysForm" autocomplete="off">
         <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
-        <p class="settings-note">All private keys are generated locally from the master password.</p>
+        <p class="settings-note">Generate the Owner, Active, Memo and  Posting key locally from the master password.</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsKeysUser">Username</label>
           <input id="settingsKeysUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" value="${user}">
