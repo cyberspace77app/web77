@@ -198,6 +198,20 @@
     return trail;
   }
 
+  // A bare http(s) address at i. A URL glued to a word, or cut off by the
+  // ellipsis, stays text. Trailing punctuation stays outside the address.
+  function excerptPlainUrlAt(s, i) {
+    if (i > 0 && /[A-Za-z0-9@＠/]/.test(s.charAt(i - 1))) return null;
+    const match = /^https?:\/\/[^\s<]+/i.exec(s.slice(i));
+    if (!match) return null;
+    const raw = match[0];
+    if (raw.charAt(raw.length - 1) === "…") return null;
+    const trail = excerptUrlTrail(raw);
+    const url = raw.slice(0, raw.length - trail.length);
+    if (!url || !isSafePostUrl(url, "href")) return null;
+    return { url: url, trail: trail, end: i + raw.length };
+  }
+
   function tidyExcerptGaps(src, preserve) {
     let out = String(src || "");
     out = out.replace(/\(\s*\)/g, "");
@@ -592,17 +606,20 @@
     return n > 0 ? n : 0;
   }
 
-  function excerptMode(preserveLineBreaks, firstSentence, compactNewlines, maxLines) {
+  function excerptMode(preserveLineBreaks, preserveLinks, firstSentence, compactNewlines, maxLines) {
     if (preserveLineBreaks && typeof preserveLineBreaks === "object") {
+      const opts = preserveLineBreaks;
       return {
-        preserveLineBreaks: !!preserveLineBreaks.preserveLineBreaks,
-        firstSentence: !!(preserveLineBreaks.firstSentence || preserveLineBreaks.sentence),
-        compactNewlines: !!preserveLineBreaks.compactNewlines,
-        maxLines: excerptLineLimit(preserveLineBreaks.maxLines),
+        preserveLineBreaks: !!opts.preserveLineBreaks,
+        preserveLinks: !!opts.preserveLinks,
+        firstSentence: !!(opts.firstSentence || opts.sentence),
+        compactNewlines: !!opts.compactNewlines,
+        maxLines: excerptLineLimit(opts.maxLines),
       };
     }
     return {
       preserveLineBreaks: !!preserveLineBreaks,
+      preserveLinks: !!preserveLinks,
       firstSentence: !!firstSentence,
       compactNewlines: !!compactNewlines,
       maxLines: excerptLineLimit(maxLines),
@@ -622,11 +639,19 @@
     return { text: kept + "…", abbreviated: true };
   }
 
-  function linkifyUsernames(text) {
+  function linkifyUsernames(text, preserveLinks) {
     const s = String(text || "");
     let out = "";
     let i = 0;
     while (i < s.length) {
+      if (preserveLinks) {
+        const plain = excerptPlainUrlAt(s, i);
+        if (plain) {
+          out += linkHtml(plain.url, plain.url) + escapeHtml(plain.trail);
+          i = plain.end;
+          continue;
+        }
+      }
       const at = s.charAt(i);
       if ((at === "@" || at === "＠") && isMentionBoundary(s.charAt(i - 1))) {
         const mention = /^([a-z][a-z0-9.\-]*[a-z0-9])/i.exec(s.slice(i + 1));
@@ -642,22 +667,30 @@
     return out;
   }
 
-  // Strip markdown, then HTML, then plain URLs. maxLen counts that text.
-  // maxLines counts newline-separated output lines and abbreviates after that.
-  // The ellipsis counts. Only @usernames become links.
+  // Strip markdown, then HTML, then plain URLs unless preserveLinks is set.
+  // maxLen counts that text. maxLines counts newline-separated output lines.
+  // The ellipsis counts. @usernames become links. With preserveLinks, a plain
+  // http(s) URL stays in the text and becomes a link too.
   // compactNewlines folds every break into one line when preserveLineBreaks is on.
   // Returns { html, abbreviated }. abbreviated is true when the clip drops post text.
-  function excerpt(post, maxLen, preserveLineBreaks, firstSentence, compactNewlines, maxLines) {
-    const opts = excerptMode(preserveLineBreaks, firstSentence, compactNewlines, maxLines);
+  function excerpt(post, maxLen, preserveLineBreaks, preserveLinks, firstSentence, compactNewlines, maxLines) {
+    const opts = excerptMode(
+      preserveLineBreaks,
+      preserveLinks,
+      firstSentence,
+      compactNewlines,
+      maxLines
+    );
     let text = stripMarkdown(post && post.body, opts.preserveLineBreaks);
     text = stripHtml(text);
-    text = stripPlainUrls(text, opts.preserveLineBreaks);
+    if (opts.preserveLinks) text = tidyExcerptGaps(text, opts.preserveLineBreaks);
+    else text = stripPlainUrls(text, opts.preserveLineBreaks);
     text = sanitizeExcerptText(text);
     if (opts.preserveLineBreaks && opts.compactNewlines) text = text.replace(/\n{2,}/g, "\n");
     const lined = clipExcerptLines(text, opts.maxLines);
     const clipped = clipExcerpt(lined.text, maxLen, opts.firstSentence);
     return {
-      html: linkifyUsernames(clipped.text),
+      html: linkifyUsernames(clipped.text, opts.preserveLinks),
       abbreviated: lined.abbreviated || clipped.abbreviated,
     };
   }

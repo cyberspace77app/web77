@@ -2177,6 +2177,18 @@ a.community:hover {
   color: var(--yellow);
 }
 
+/* Profile comment and reply cards. Same treatment as a link in .comment-body. */
+.card-excerpt-comment a {
+  color: var(--gray);
+  text-decoration: none;
+  text-underline-offset: 0.18em;
+}
+
+.card-excerpt-comment a:hover {
+  color: var(--yellow);
+  text-decoration: underline;
+}
+
 .card-thumb-link {
   display: block;
   position: relative;

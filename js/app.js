@@ -9497,18 +9497,21 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function cardExcerptLong(post) {
-    return HiveMd.excerpt(post, 1000, { preserveLineBreaks: true });
+  function cardExcerptLong(post, preserveLinks) {
+    return HiveMd.excerpt(post, 1000, {
+      preserveLineBreaks: true,
+      preserveLinks: !!preserveLinks,
+    });
   }
 
-  function cardExcerptLongHtml(post) {
-    return `<p class="card-excerpt card-excerpt-pre-wrap">${cardExcerptLong(post).html}</p>`;
+  function cardExcerptLongHtml(post, preserveLinks) {
+    const commentLinks = preserveLinks ? " card-excerpt-comment" : "";
+    return `<p class="card-excerpt card-excerpt-pre-wrap${commentLinks}">${cardExcerptLong(post, preserveLinks).html}</p>`;
   }
 
   function cardExcerptHtml(post) {
-    if (isCommentsOrRepliesFeed() || expandedCardExcerpts.has(cardExcerptKey(post))) {
-      return cardExcerptLongHtml(post);
-    }
+    if (isCommentsOrRepliesFeed()) return cardExcerptLongHtml(post, true);
+    if (expandedCardExcerpts.has(cardExcerptKey(post))) return cardExcerptLongHtml(post);
     return `<p class="card-excerpt card-excerpt-clamp">${cardExcerptShort(post).html}</p>`;
   }
 
