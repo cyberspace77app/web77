@@ -295,6 +295,13 @@ let CS77_FILTER_LOW_REP = 20;
     max: 0,
     loadGen: 0,
   };
+  const createAccountState = {
+    pending: false,
+    created: "",
+    session: 0,
+    check: 0,
+    feeGen: 0,
+  };
   const delegationView = {
     loadGen: 0,
     account: "",
@@ -5742,6 +5749,11 @@ let CS77_FILTER_LOW_REP = 20;
       closeDelegateOverlay();
       return;
     }
+    const createAccountOv = $("#createAccountOverlay");
+    if (createAccountOv && !createAccountOv.hidden) {
+      closeCreateAccountOverlay();
+      return;
+    }
     const claimOv = $("#claimTokensOverlay");
     if (claimOv && !claimOv.hidden) {
       closeClaimTokensOverlay();
@@ -10991,7 +11003,7 @@ let CS77_FILTER_LOW_REP = 20;
     return { mode: "fee", fee: fee, account: account };
   }
 
-  async function waitForSubspaceAccount(name) {
+  async function waitForSubspaceAccount(name, missingMessage) {
     let last = null;
     for (let i = 0; i < 20; i++) {
       try {
@@ -11003,7 +11015,10 @@ let CS77_FILTER_LOW_REP = 20;
       if (last) return last;
       await subspaceWait(1500);
     }
-    throw new Error("The subspace account was created, but the network has not shown it yet. Press Create to finish setting it up.");
+    throw new Error(
+      missingMessage ||
+        "The subspace account was created, but the network has not shown it yet. Press Create to finish setting it up."
+    );
   }
 
   async function copySubspaceMasterKey(input, button) {
@@ -16796,17 +16811,19 @@ let CS77_FILTER_LOW_REP = 20;
     return count === 1 ? "account creation token" : "account creation tokens";
   }
 
+  function walletTokenLine(count) {
+    return count + " " + accountTokenLabel(count) + ".";
+  }
+
   function walletToolsHtml(wallet) {
     const count = subspaceClaimedTokens(wallet && wallet.account);
     return `
       <section class="wallet-section wallet-tools">
         <h2>Tools</h2>
+        <p class="wallet-note wallet-tools-tokens" id="walletTokenLine">${walletTokenLine(count)}</p>
         <div class="wallet-tools-line">
-          <div class="wallet-token-group">
-            <div class="wallet-token-count" id="walletTokenCount">${count}</div>
-            <div class="wallet-token-label" id="walletTokenLabel">${accountTokenLabel(count)}</div>
-            <button type="button" class="btn-primary btn-compact wallet-claim-tokens-btn">Claim</button>
-          </div>
+          <button type="button" class="btn-primary btn-compact wallet-claim-tokens-btn">Claim</button>
+          <button type="button" class="btn-primary btn-compact wallet-create-account-btn">Create account</button>
           <a class="btn-ghost btn-compact wallet-tools-keys" href="${appHref("/settings/keys")}">Generate Keys</a>
         </div>
       </section>`;
@@ -18002,11 +18019,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function paintWalletTokenCount(wallet) {
-    const count = subspaceClaimedTokens(wallet && wallet.account);
-    const num = $("#walletTokenCount");
-    const label = $("#walletTokenLabel");
-    if (num) num.textContent = String(count);
-    if (label) label.textContent = accountTokenLabel(count);
+    const line = $("#walletTokenLine");
+    if (line) line.textContent = walletTokenLine(subspaceClaimedTokens(wallet && wallet.account));
   }
 
   function applyWalletClaimTokens(wallet, count) {
@@ -18241,6 +18255,344 @@ let CS77_FILTER_LOW_REP = 20;
         !cancelled
       );
       claimDialogBusy(false);
+    }
+  }
+
+  function hiveAccountNameOk(name) {
+    if (!name || name.length < 3 || name.length > 16) return false;
+    const parts = name.split(".");
+    for (let i = 0; i < parts.length; i++) {
+      if (!/^[a-z][a-z0-9-]{1,14}[a-z0-9]$/.test(parts[i])) return false;
+    }
+    return true;
+  }
+
+  function createAccountNameInvalidText() {
+    return "Start with a letter. Use 3 to 16 characters, and keep each dotted part at least 3 characters.";
+  }
+
+  function normalizeCreateAccountName(raw) {
+    return String(raw || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/^@+/, "")
+      .replace(/[^a-z0-9.\-]/g, "")
+      .slice(0, 16);
+  }
+
+  function createAccountOpen() {
+    const ov = $("#createAccountOverlay");
+    return Boolean(ov && !ov.hidden);
+  }
+
+  function setCreateAccountStatus(msg, isError) {
+    const el = $("#createAccountStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function paintCreateAccountNameStatus(kind, text) {
+    const el = $("#createAccountNameStatus");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("is-ok", kind === "ok");
+    el.classList.toggle("is-bad", kind === "taken" || kind === "invalid" || kind === "error");
+  }
+
+  function paintCreateAccountLock() {
+    const busy = createAccountState.pending;
+    const name = $("#createAccountName");
+    const saved = $("#createAccountSaved");
+    const submit = $("#createAccountSubmit");
+    if (name) name.disabled = busy;
+    if (saved) saved.disabled = busy;
+    if (submit) submit.disabled = busy;
+  }
+
+  function applyWalletCreateAccount(wallet, choice) {
+    if (!wallet || wallet !== profileState.wallet || !choice) return;
+    if (choice.mode === "token") {
+      const accounts = walletAccounts(wallet);
+      for (let i = 0; i < accounts.length; i++) {
+        const account = accounts[i];
+        if (!account) continue;
+        account.pending_claimed_accounts = Math.max(0, subspaceClaimedTokens(account) - 1);
+      }
+      paintWalletTokenCount(wallet);
+      return;
+    }
+    const fee = HiveApi.parseAsset(choice.fee);
+    if (Number.isFinite(fee) && fee > 0) applyWalletSend(wallet, "hive", fee);
+  }
+
+  function closeCreateAccountOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") {
+      const ov = $("#createAccountOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    const ov = $("#createAccountOverlay");
+    if (ov) ov.hidden = true;
+    createAccountState.session += 1;
+    createAccountState.check += 1;
+    createAccountState.feeGen += 1;
+    createAccountState.pending = false;
+    createAccountState.created = "";
+    window.clearTimeout(scheduleCreateAccountNameCheck.timer);
+    const name = $("#createAccountName");
+    if (name) {
+      name.value = "";
+      name.disabled = false;
+    }
+    const key = $("#createAccountKey");
+    if (key) key.value = "";
+    const saved = $("#createAccountSaved");
+    if (saved) {
+      saved.checked = false;
+      saved.disabled = false;
+    }
+    const fee = $("#createAccountFee");
+    if (fee) fee.textContent = "";
+    paintCreateAccountNameStatus("", "");
+    setCreateAccountStatus("");
+    const submit = $("#createAccountSubmit");
+    if (submit) submit.disabled = false;
+    const nameCopy = $("#createAccountNameCopy");
+    if (nameCopy) nameCopy.textContent = "Copy";
+    const keyCopy = $("#createAccountCopy");
+    if (keyCopy) keyCopy.textContent = "Copy";
+  }
+
+  async function checkCreateAccountName() {
+    const token = (createAccountState.check += 1);
+    const session = createAccountState.session;
+    const input = $("#createAccountName");
+    const name = normalizeCreateAccountName(input && input.value);
+    if (input && input.value !== name) input.value = name;
+    if (!name) {
+      paintCreateAccountNameStatus("", "");
+      return { ok: false, name: "", empty: true };
+    }
+    if (!hiveAccountNameOk(name)) {
+      paintCreateAccountNameStatus("invalid", createAccountNameInvalidText());
+      return { ok: false, name: name };
+    }
+    if (createAccountState.created === name) {
+      paintCreateAccountNameStatus("ok", name + " is created.");
+      return { ok: true, name: name };
+    }
+    paintCreateAccountNameStatus("checking", "Checking whether that username is free…");
+    try {
+      const account = await hiveAccountRecord(name);
+      if (token !== createAccountState.check || session !== createAccountState.session || !createAccountOpen()) {
+        return { ok: false, name: name, stale: true };
+      }
+      if (account) {
+        paintCreateAccountNameStatus("taken", name + " is already taken.");
+        return { ok: false, name: name, taken: true };
+      }
+      paintCreateAccountNameStatus("ok", name + " is available.");
+      return { ok: true, name: name };
+    } catch (err) {
+      if (token !== createAccountState.check || session !== createAccountState.session || !createAccountOpen()) {
+        return { ok: false, name: name, stale: true };
+      }
+      paintCreateAccountNameStatus("error", (err && err.message) || "Could not check that username.");
+      return { ok: false, name: name };
+    }
+  }
+
+  function scheduleCreateAccountNameCheck() {
+    window.clearTimeout(scheduleCreateAccountNameCheck.timer);
+    scheduleCreateAccountNameCheck.timer = window.setTimeout(() => {
+      if (createAccountState.pending || !createAccountOpen()) return;
+      checkCreateAccountName();
+    }, 400);
+  }
+
+  async function loadCreateAccountFee() {
+    const gen = (createAccountState.feeGen += 1);
+    const session = createAccountState.session;
+    const el = $("#createAccountFee");
+    if (el) el.textContent = "Checking the account creation fee…";
+    let fee = "";
+    let account = null;
+    try {
+      const props = await HiveApi.hiveRpc("condenser_api.get_chain_properties", []);
+      fee = formatHiveFee(props && props.account_creation_fee);
+    } catch {
+      fee = "";
+    }
+    const user = normalizeLoginUser(observer());
+    if (user) {
+      try {
+        account = await hiveAccountRecord(user);
+      } catch {
+        account = null;
+      }
+    }
+    if (gen !== createAccountState.feeGen || session !== createAccountState.session || !createAccountOpen()) return;
+    const node = $("#createAccountFee");
+    if (node) node.textContent = subspaceFeeLine(fee, account);
+  }
+
+  function openCreateAccountOverlay() {
+    const wallet = profileState.wallet;
+    if (!wallet || !isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    createAccountState.session += 1;
+    createAccountState.check += 1;
+    createAccountState.feeGen += 1;
+    createAccountState.pending = false;
+    createAccountState.created = "";
+    const name = $("#createAccountName");
+    if (name) {
+      name.value = "";
+      name.disabled = false;
+    }
+    const key = $("#createAccountKey");
+    if (key) key.value = randomSubspaceMasterKey();
+    const saved = $("#createAccountSaved");
+    if (saved) {
+      saved.checked = false;
+      saved.disabled = false;
+    }
+    paintCreateAccountNameStatus("", "");
+    setCreateAccountStatus("");
+    const submit = $("#createAccountSubmit");
+    if (submit) submit.disabled = false;
+    const nameCopy = $("#createAccountNameCopy");
+    if (nameCopy) nameCopy.textContent = "Copy";
+    const keyCopy = $("#createAccountCopy");
+    if (keyCopy) keyCopy.textContent = "Copy";
+    const ov = $("#createAccountOverlay");
+    if (ov) ov.hidden = false;
+    if (name && !isMobileViewport()) name.focus();
+    loadCreateAccountFee();
+  }
+
+  async function submitCreateAccount() {
+    if (createAccountState.pending || ownerSignOpen()) return;
+    const session = createAccountState.session;
+    const nameInput = $("#createAccountName");
+    const name = normalizeCreateAccountName(nameInput && nameInput.value);
+    const password = String(($("#createAccountKey") || {}).value || "");
+    const saved = Boolean(($("#createAccountSaved") || {}).checked);
+    if (nameInput && nameInput.value !== name) nameInput.value = name;
+    if (!hiveAccountNameOk(name)) {
+      setCreateAccountStatus(createAccountNameInvalidText(), true);
+      return;
+    }
+    if (!password) {
+      setCreateAccountStatus("The master key is missing. Close this dialog and open it again.", true);
+      return;
+    }
+    if (!saved) {
+      setCreateAccountStatus("Confirm that you have securely saved the username and password.", true);
+      return;
+    }
+    const user = normalizeLoginUser(observer());
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(profileState.author) || wallet.name !== user) {
+      openLogin();
+      return;
+    }
+    const created = createAccountState.created;
+    if (created && created !== name) {
+      setCreateAccountStatus(
+        "The account " + created + " was already created. Use that username, or close this dialog.",
+        true
+      );
+      return;
+    }
+    window.clearTimeout(scheduleCreateAccountNameCheck.timer);
+    createAccountState.pending = true;
+    paintCreateAccountLock();
+    setCreateAccountStatus("Checking that username…", false);
+    let keys = null;
+    const live = function () {
+      return session === createAccountState.session && createAccountOpen();
+    };
+    try {
+      const checked = await checkCreateAccountName();
+      if (!live()) return;
+      if (checked.stale) {
+        setCreateAccountStatus("Could not check that username. Try again.", true);
+        return;
+      }
+      if (!checked.ok || checked.name !== name) {
+        setCreateAccountStatus(
+          checked.taken ? name + " is already taken." : "Choose a username that is still available.",
+          true
+        );
+        return;
+      }
+      if (!window.HiveAuth || typeof HiveAuth.keysFromLogin !== "function") {
+        throw new Error("Could not prepare the account keys.");
+      }
+      if (created !== name) {
+        keys = await HiveAuth.keysFromLogin(name, password);
+        if (!live()) return;
+        const choice = await subspaceCreationChoice(user);
+        if (!live() || observer() !== user) return;
+        const feeNode = $("#createAccountFee");
+        if (feeNode) feeNode.textContent = subspaceFeeLine(choice.fee, choice.account);
+        const operation = subspaceCreateOperation(user, name, keys, choice);
+        const feeNote =
+          choice.mode === "token"
+            ? "Uses one account creation token."
+            : "Fee " + subspaceFeeWords(choice.fee) + ".";
+        setCreateAccountStatus("Creating the account…", false);
+        await signWithDialog(user, [operation], {
+          source: "wallet",
+          authority: "Active",
+          title: "Create account",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ". " + feeNote,
+          cancelMessage: "Account creation was cancelled.",
+          failMessage: "Could not create the account.",
+          onKeychain: function () {
+            if (live()) setCreateAccountStatus("Waiting for Keychain…", false);
+          },
+        });
+        if (session !== createAccountState.session) return;
+        createAccountState.created = name;
+        if (profileState.wallet === wallet) {
+          resourceGen += 1;
+          applyWalletCreateAccount(wallet, choice);
+        }
+      }
+      if (!live()) return;
+      setCreateAccountStatus("Waiting for the new account…", false);
+      await waitForSubspaceAccount(
+        name,
+        "The account was created, but the network has not shown it yet. Press Create to check again."
+      );
+      if (live()) closeCreateAccountOverlay();
+    } catch (err) {
+      if (session !== createAccountState.session) return;
+      const cancelled = Boolean(err && err.ownerCancel);
+      const detail = (err && err.message) || "Could not create the account.";
+      if (createAccountState.created === name) {
+        setCreateAccountStatus(detail, true);
+      } else {
+        setCreateAccountStatus(cancelled ? "Account creation was cancelled." : detail, !cancelled);
+      }
+    } finally {
+      if (keys) {
+        keys.owner = "";
+        keys.active = "";
+        keys.posting = "";
+        keys.memo = "";
+      }
+      keys = null;
+      if (session === createAccountState.session) {
+        createAccountState.pending = false;
+        paintCreateAccountLock();
+      }
     }
   }
 
@@ -24817,6 +25169,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeWalletOverlay();
           closeSendOverlay();
           closeConvertOverlay();
+          closeCreateAccountOverlay();
           closeClaimTokensOverlay();
         }
       }
@@ -24825,6 +25178,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeDelegateOverlay();
       closeSendOverlay();
       closeConvertOverlay();
+      closeCreateAccountOverlay();
       closeClaimTokensOverlay();
     }
     quietSmartHeader();
@@ -24887,8 +25241,11 @@ let CS77_FILTER_LOW_REP = 20;
       r.name === "publish" &&
       currentViewKey.startsWith("community:") &&
       !currentViewKey.startsWith("communities:");
+    // Publish opens over the profile page. Keep the wallet so Stake and the
+    // other wallet dialogs still open after the composer closes.
+    const keepProfile = r.name === "publish" && currentViewKey.startsWith("profile:");
     if (r.name !== "community" && !keepCommunity) resetCommunityState();
-    if (r.name !== "profile") resetProfileState();
+    if (r.name !== "profile" && !keepProfile) resetProfileState();
     if (r.name !== "settings") {
       clearSettingsProfileScratch();
       clearSettingsKeys();
@@ -26112,6 +26469,12 @@ let CS77_FILTER_LOW_REP = 20;
         openClaimTokensOverlay();
         return;
       }
+      const createAccountBtn = e.target.closest(".wallet-create-account-btn");
+      if (createAccountBtn && inInteractiveSurface(createAccountBtn)) {
+        e.preventDefault();
+        openCreateAccountOverlay();
+        return;
+      }
       const delegatedToggle = e.target.closest(".wallet-delegated-toggle");
       if (delegatedToggle && inInteractiveSurface(delegatedToggle)) {
         e.preventDefault();
@@ -26609,6 +26972,63 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && claimTokensOverlay.contains(active)) return;
         closeClaimTokensOverlay();
+      });
+    }
+
+    const createAccountOverlay = $("#createAccountOverlay");
+    if (createAccountOverlay) {
+      const createCancel = $("#createAccountCancel");
+      const createSubmit = $("#createAccountSubmit");
+      const createName = $("#createAccountName");
+      const createNameCopy = $("#createAccountNameCopy");
+      const createKeyCopy = $("#createAccountCopy");
+      if (createCancel) createCancel.addEventListener("click", closeCreateAccountOverlay);
+      if (createSubmit) createSubmit.addEventListener("click", submitCreateAccount);
+      if (createName) {
+        createName.addEventListener("input", () => {
+          if (createAccountState.pending) return;
+          setCreateAccountStatus("");
+          const next = normalizeCreateAccountName(createName.value);
+          if (createName.value !== next) {
+            createName.value = next;
+            if (createName.setSelectionRange) createName.setSelectionRange(next.length, next.length);
+          }
+          if (!next) {
+            window.clearTimeout(scheduleCreateAccountNameCheck.timer);
+            paintCreateAccountNameStatus("", "");
+            return;
+          }
+          if (!hiveAccountNameOk(next)) {
+            window.clearTimeout(scheduleCreateAccountNameCheck.timer);
+            paintCreateAccountNameStatus("invalid", createAccountNameInvalidText());
+            return;
+          }
+          paintCreateAccountNameStatus("checking", "Checking whether that username is free…");
+          scheduleCreateAccountNameCheck();
+        });
+        createName.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitCreateAccount();
+        });
+      }
+      if (createNameCopy) {
+        createNameCopy.addEventListener("click", () => copySubspaceMasterKey(createName, createNameCopy));
+      }
+      if (createKeyCopy) {
+        createKeyCopy.addEventListener("click", () => copySubspaceMasterKey($("#createAccountKey"), createKeyCopy));
+      }
+      const createSaved = $("#createAccountSaved");
+      if (createSaved) {
+        createSaved.addEventListener("change", () => {
+          if (!createSaved.checked || createAccountState.pending) return;
+          const status = $("#createAccountStatus");
+          if (status && /securely saved/.test(status.textContent)) setCreateAccountStatus("");
+        });
+      }
+      createAccountOverlay.addEventListener("click", (e) => {
+        if (e.target !== createAccountOverlay) return;
+        const active = document.activeElement;
+        if (active && createAccountOverlay.contains(active)) return;
+        closeCreateAccountOverlay();
       });
     }
 

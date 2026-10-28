@@ -42,7 +42,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.17">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.22">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -386,6 +386,40 @@
     </div>
   </div>
 
+  <div class="overlay" id="createAccountOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="createAccountTitle">
+      <h2 id="createAccountTitle">Create account</h2>
+      <p class="login-lead" id="createAccountLead">Create a hive account with a username and master key.</p>
+      <label class="login-label" for="createAccountName">Username</label>
+      <div class="subspace-key-line">
+        <input id="createAccountName" type="text" maxlength="16" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username" aria-describedby="createAccountNameNote">
+        <button type="button" class="btn-ghost btn-compact" id="createAccountNameCopy" aria-label="Copy username">Copy</button>
+      </div>
+      <p class="login-hint" id="createAccountNameNote">3 to 16 characters. Start with a letter. The username must be free.</p>
+      <p class="login-hint subspace-name-status" id="createAccountNameStatus"></p>
+      <label class="login-label" for="createAccountKey">Master key</label>
+      <div class="subspace-key-line">
+        <input id="createAccountKey" type="text" readonly spellcheck="false" autocomplete="off" autocapitalize="off">
+        <button type="button" class="btn-ghost btn-compact" id="createAccountCopy" aria-label="Copy master key">Copy</button>
+      </div>
+      <p class="login-hint">Master password for this account. CyberSpace77 does not store it.</p>
+      <label class="cyber-toggle">
+        <input id="createAccountSaved" type="checkbox">
+        <span class="cyber-toggle-track" aria-hidden="true"></span>
+        <span class="cyber-toggle-copy">
+          <span class="cyber-toggle-title">Backup confirmation</span>
+          <span class="cyber-toggle-sub">I have securely saved the username and password.</span>
+        </span>
+      </label>
+      <p class="login-hint" id="createAccountFee">Checking the account creation fee…</p>
+      <p id="createAccountStatus" role="status"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="createAccountSubmit">Create</button>
+        <button type="button" class="btn-ghost" id="createAccountCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="delegateOverlay" hidden>
     <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="delegateTitle">
       <h2 id="delegateTitle">Delegate</h2>
@@ -599,6 +633,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.0"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.20"></script>
+  <script src="/js/app.js?v=0.19.28"></script>
 </body>
 </html>
