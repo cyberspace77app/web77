@@ -7016,7 +7016,8 @@ body:has(#peopleOverlay:not([hidden])) {
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    padding: 0.75rem 0.75rem 0;
+    /* Bottom inset matches the sides so the panel border is not clipped. */
+    padding: 0.75rem 0.75rem max(0.75rem, env(safe-area-inset-bottom, 0px));
   }
 
   #peopleOverlay .people-card {
@@ -7025,16 +7026,12 @@ body:has(#peopleOverlay:not([hidden])) {
     min-height: 0;
     max-height: none;
     margin-bottom: 0;
-    border-bottom: 0;
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
   }
 
   #peopleOverlay .people-scroll {
     flex: 1 1 auto;
     min-height: 0;
     max-height: none;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .people-card-head {
@@ -7048,8 +7045,8 @@ body:has(#peopleOverlay:not([hidden])) {
 
   .people-close {
     position: absolute;
-    top: 0.4rem;
-    right: 0.4rem;
+    top: 1rem;
+    right: 1rem;
     z-index: 2;
     grid-column: auto;
     grid-row: auto;
@@ -7058,12 +7055,26 @@ body:has(#peopleOverlay:not([hidden])) {
   .people-card .people-search {
     grid-column: 1 / -1;
     grid-row: 2;
-    /* Placeholder lines up with the @name after the 28px avatar. */
+    /* Wider than the name list on the left, so the icon can sit 0.7rem
+       inside the border, the same inset it uses on the right at desktop. */
     width: auto;
     max-width: none;
     margin-top: 0.7rem;
-    margin-left: calc(28px + 0.55rem - 0.9rem);
+    margin-right: 0;
+    margin-bottom: 0;
+    margin-left: calc((28px - 1.45rem) / 2 - 0.7rem);
     justify-self: stretch;
+  }
+
+  /* Text still starts where @name starts. Padding grows by the left extension. */
+  .people-card .people-search input {
+    padding-left: calc(28px + 0.55rem - 1px - ((28px - 1.45rem) / 2 - 0.7rem));
+    padding-right: 0.9rem;
+  }
+
+  .people-card .people-search .community-search-glass {
+    right: auto;
+    left: 0.7rem;
   }
 }
 
