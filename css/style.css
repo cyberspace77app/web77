@@ -4545,13 +4545,15 @@ a.tag:hover {
 }
 
 .wallet-actions-inner:has(.wallet-stake-btn),
-.wallet-actions-inner:has(.wallet-delegate-btn) {
+.wallet-actions-inner:has(.wallet-delegate-btn),
+.wallet-actions-inner:has(.wallet-send-btn) {
   display: grid;
   justify-content: end;
 }
 
 .wallet-actions-inner:has(.wallet-stake-btn)::before,
-.wallet-actions-inner:has(.wallet-delegate-btn)::before {
+.wallet-actions-inner:has(.wallet-delegate-btn)::before,
+.wallet-actions-inner:has(.wallet-send-btn)::before {
   content: "Delegate";
   grid-area: 1 / 1;
   visibility: hidden;
@@ -4568,10 +4570,23 @@ a.tag:hover {
 }
 
 .wallet-actions-inner:has(.wallet-stake-btn) > .wallet-stake-btn,
-.wallet-actions-inner:has(.wallet-delegate-btn) > .wallet-delegate-btn {
+.wallet-actions-inner:has(.wallet-delegate-btn) > .wallet-delegate-btn,
+.wallet-actions-inner:has(.wallet-send-btn) > .wallet-send-btn {
   grid-area: 1 / 1;
   width: 100%;
   justify-content: center;
+}
+
+/* Send is its own row so the hive and hbd text stays on the Stake line. */
+.wallet-table tr:has(+ .wallet-actions-under + .wallet-send-row) > td {
+  border-bottom: none;
+  padding-bottom: 0.4rem;
+}
+
+.wallet-send-row > td {
+  padding-top: 0.25rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .wallet-note {
@@ -4988,12 +5003,88 @@ a.wallet-tx-time:hover {
   margin-bottom: 0;
 }
 
-#walletOverlay .wallet-amount-row {
+#walletOverlay .wallet-amount-row,
+#sendOverlay .wallet-amount-row {
   margin-bottom: 0.35rem;
 }
 
-#walletOpAvailable:empty {
+#sendOverlay .send-amount-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+#sendOverlay .send-amount-field input {
+  padding-right: 4.6rem;
+}
+
+#sendOverlay .send-amount-unit {
+  position: absolute;
+  top: 1px;
+  right: 0.95rem;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+#walletOpAvailable:empty,
+#sendAvailable:empty {
   display: none;
+}
+
+/* Same shape as the feed nav and the keychain switch, with the asset names left lowercase. */
+#sendAsset button {
+  text-transform: none;
+}
+
+/* The lock sits in the field. Zero the input margin so it centers on the box, not the gap under it. */
+#sendOverlay .send-memo-field {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+#sendOverlay .send-memo-field input {
+  margin-bottom: 0;
+  padding-right: 2.6rem;
+}
+
+#sendOverlay .send-memo-lock {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 5px 5px 0;
+  background: transparent;
+  color: var(--yellow);
+  cursor: pointer;
+}
+
+#sendOverlay .send-memo-lock .wallet-memo-lock {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+}
+
+#sendOverlay .send-memo-lock:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: -2px;
+}
+
+#sendOverlay .send-memo-lock:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .wallet-available-amt {
@@ -5031,11 +5122,13 @@ a.wallet-tx-time:hover {
   font-size: 0.82rem;
 }
 
-#walletOpStatus:empty {
+#walletOpStatus:empty,
+#sendStatus:empty {
   display: none;
 }
 
 #walletOpStatus.is-error,
+#sendStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }
@@ -6841,6 +6934,15 @@ body:has(#peopleOverlay:not([hidden])) {
   .wallet-actions-under .wallet-actions-inner:has(.wallet-delegate-btn) {
     align-items: stretch;
     justify-content: end;
+  }
+
+  .wallet-actions-under:has(+ .wallet-send-row) > td {
+    border-bottom: none;
+    padding-bottom: 0.45rem;
+  }
+
+  .wallet-send-row > td {
+    padding-bottom: 1.25rem;
   }
 
   #communityMembers > .community-people-section:not([hidden]) ~ .community-people-section:not([hidden]) {

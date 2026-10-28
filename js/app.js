@@ -274,6 +274,11 @@ let CS77_FILTER_LOW_REP = 20;
     symbol: "hive",
     pending: false,
   };
+  const sendState = {
+    asset: "hive",
+    pending: false,
+    memoLock: false,
+  };
   const delegationView = {
     loadGen: 0,
     account: "",
@@ -5705,6 +5710,11 @@ let CS77_FILTER_LOW_REP = 20;
     const delegateOv = $("#delegateOverlay");
     if (delegateOv && !delegateOv.hidden) {
       closeDelegateOverlay();
+      return;
+    }
+    const sendOv = $("#sendOverlay");
+    if (sendOv && !sendOv.hidden) {
+      closeSendOverlay();
       return;
     }
     const walletOv = $("#walletOverlay");
@@ -15325,6 +15335,32 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  function keychainCanEncodeMemo() {
+    const kc = window.hive_keychain;
+    return Boolean(kc && typeof kc.requestEncodeMessage === "function");
+  }
+
+  function requestKeychainMemoEncode(username, receiver, message) {
+    return new Promise((resolve, reject) => {
+      const kc = window.hive_keychain;
+      if (!kc || typeof kc.requestEncodeMessage !== "function") {
+        reject(new Error("hive keychain is not available. Choose Password and enter the memo key."));
+        return;
+      }
+      kc.requestEncodeMessage(username, receiver, message, "Memo", (res) => {
+        if (res && res.success && typeof res.result === "string") {
+          resolve(res.result);
+          return;
+        }
+        const messageText = (res && (res.message || res.error)) || "The memo was not encrypted.";
+        const err = new Error(typeof messageText === "string" ? messageText : "The memo was not encrypted.");
+        const blob = String((res && res.error) || "") + " " + String((res && res.message) || "");
+        if (/cancel/i.test(blob)) err.ownerCancel = true;
+        reject(err);
+      });
+    });
+  }
+
   function revealWalletMemo(cipher, decoded) {
     const plain = walletMemoDisplay(decoded).trim();
     walletMemoPlain.set(cipher, plain);
@@ -15637,6 +15673,17 @@ let CS77_FILTER_LOW_REP = 20;
     const cls = stake ? "btn-primary" : "btn-ghost";
     const label = stake ? "Stake" : "Unstake";
     return `<button type="button" class="${cls} btn-compact wallet-stake-btn" data-wallet-op="${op}-${kind}">${label}</button>`;
+  }
+
+  function walletSendButton(kind) {
+    return `<button type="button" class="btn-primary btn-compact wallet-send-btn" data-send-asset="${kind}">Send</button>`;
+  }
+
+  function walletSendRow(buttonHtml) {
+    if (!buttonHtml) return "";
+    return `<tr class="wallet-send-row">
+      <td class="wallet-actions" colspan="4"><div class="wallet-actions-inner">${buttonHtml}</div></td>
+    </tr>`;
   }
 
   function walletPowerDownNote(wallet) {
@@ -16148,8 +16195,10 @@ let CS77_FILTER_LOW_REP = 20;
     const props = w.props;
     const rates = walletShownRates(w);
     const hiveStake = own ? walletStakeButton("hive", "stake") : "";
+    const hiveSend = own ? walletSendButton("hive") : "";
     const hiveUnstake = own ? walletStakeButton("hive", "unstake") : "";
     const hbdStake = own ? walletStakeButton("hbd", "stake") : "";
+    const hbdSend = own ? walletSendButton("hbd") : "";
     const hbdUnstake = own ? walletStakeButton("hbd", "unstake") : "";
     return `
       <div class="wallet-page">
@@ -16167,11 +16216,13 @@ let CS77_FILTER_LOW_REP = 20;
               <tbody>
                 ${walletBalanceRow("hive", w.hive, "hive", hiveStake)}
                 ${walletActionsUnderRow(hiveStake)}
+                ${walletSendRow(hiveSend)}
                 ${walletBalanceRow("staked hive", w.stakedHive, "hive", hiveUnstake, walletHiveAprHtml(rates))}
                 ${walletActionsUnderRow(hiveUnstake)}
                 ${walletDelegatedRows(w, own)}
                 ${walletBalanceRow("hbd", w.hbd, "hbd", hbdStake)}
                 ${walletActionsUnderRow(hbdStake)}
+                ${walletSendRow(hbdSend)}
                 ${walletBalanceRow("staked hbd", w.stakedHbd, "hbd", hbdUnstake, walletHbdAprHtml(rates))}
                 ${walletActionsUnderRow(hbdUnstake)}
               </tbody>
@@ -16281,6 +16332,24 @@ let CS77_FILTER_LOW_REP = 20;
     claimAnimToken += 1;
     paintWalletBalanceAmounts(wallet);
     if (kind === "stake-hive" && accountState.user === wallet.name) syncOwnProfileBanner();
+  }
+
+  function applyWalletSend(wallet, asset, amount) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const moved = roundAsset(amount, 3);
+    if (!(moved >= 0.001)) return;
+    const accounts = walletAccounts(wallet);
+    if (asset === "hbd") {
+      wallet.hbd = roundAsset(Math.max(0, (Number(wallet.hbd) || 0) - moved), 3);
+      wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
+      for (let i = 0; i < accounts.length; i++) accounts[i].hbd_balance = wallet.hbdStr;
+    } else {
+      wallet.hive = roundAsset(Math.max(0, (Number(wallet.hive) || 0) - moved), 3);
+      wallet.hiveStr = formatChainAmount(wallet.hive, "HIVE", 3);
+      for (let i = 0; i < accounts.length; i++) accounts[i].balance = wallet.hiveStr;
+    }
+    claimAnimToken += 1;
+    paintWalletBalanceAmounts(wallet);
   }
 
   function walletMaxFor(kind, wallet) {
@@ -16503,6 +16572,390 @@ let CS77_FILTER_LOW_REP = 20;
       );
       walletOpState.pending = false;
       if (submit) submit.disabled = false;
+    }
+  }
+
+  function sendAssetName(asset) {
+    return asset === "hbd" ? "hbd" : "hive";
+  }
+
+  function sendMaxFor(asset, wallet) {
+    if (!wallet) return 0;
+    return sendAssetName(asset) === "hbd" ? Number(wallet.hbd) || 0 : Number(wallet.hive) || 0;
+  }
+
+  function setSendStatus(msg, isError) {
+    const el = $("#sendStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function paintSendAvailable() {
+    const el = $("#sendAvailable");
+    if (!el) return;
+    const asset = sendAssetName(sendState.asset);
+    const max = roundAsset(sendMaxFor(asset, profileState.wallet), 3);
+    const disabled = sendState.pending || !(max >= 0.001);
+    el.innerHTML = "Available: " + availableAmountButton(formatHiveLike(Math.max(0, max), asset), disabled) + ".";
+    const maxBtn = $("#sendMax");
+    if (maxBtn) maxBtn.disabled = disabled;
+  }
+
+  function setSendAsset(asset) {
+    const next = sendAssetName(asset);
+    sendState.asset = next;
+    const root = $("#sendAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("[data-send-asset]");
+      for (let i = 0; i < buttons.length; i++) {
+        const on = buttons[i].getAttribute("data-send-asset") === next;
+        buttons[i].classList.toggle("is-active", on);
+        buttons[i].setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    }
+    const unit = $("#sendAmountUnit");
+    if (unit) unit.textContent = next;
+    setSendStatus("");
+    paintSendAvailable();
+  }
+
+  function sendDialogBusy(on) {
+    sendState.pending = on;
+    const submit = $("#sendSubmit");
+    if (submit) submit.disabled = on;
+    const root = $("#sendAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = on;
+    }
+    const memo = $("#sendMemo");
+    if (memo) memo.disabled = on;
+    const lock = $("#sendMemoLock");
+    if (lock) lock.disabled = on;
+    paintSendAvailable();
+  }
+
+  function sendMemoLocked() {
+    const text = ($("#sendMemo") && $("#sendMemo").value) || "";
+    return sendState.memoLock || text.charAt(0) === "#";
+  }
+
+  function paintSendMemoLock() {
+    const btn = $("#sendMemoLock");
+    if (!btn) return;
+    const locked = sendMemoLocked();
+    btn.innerHTML = walletMemoLockSvg(!locked);
+    btn.setAttribute("aria-pressed", locked ? "true" : "false");
+    btn.setAttribute("aria-label", locked ? "Memo will be encrypted" : "Encrypt memo");
+  }
+
+  function resetSendMemo() {
+    sendState.memoLock = false;
+    const memo = $("#sendMemo");
+    if (memo) {
+      memo.value = "";
+      memo.disabled = false;
+    }
+    const lock = $("#sendMemoLock");
+    if (lock) lock.disabled = false;
+    paintSendMemoLock();
+  }
+
+  function closeSendOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") {
+      const ov = $("#sendOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    const ov = $("#sendOverlay");
+    if (ov) ov.hidden = true;
+    sendState.asset = "hive";
+    sendState.pending = false;
+    const to = $("#sendTo");
+    if (to) to.value = "";
+    const amount = $("#sendAmount");
+    if (amount) amount.value = "";
+    const available = $("#sendAvailable");
+    if (available) available.textContent = "";
+    setSendStatus("");
+    const submit = $("#sendSubmit");
+    if (submit) submit.disabled = false;
+    const maxBtn = $("#sendMax");
+    if (maxBtn) maxBtn.disabled = false;
+    const root = $("#sendAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+    }
+    resetSendMemo();
+  }
+
+  function openSendOverlay(asset) {
+    const wallet = profileState.wallet;
+    if (!wallet || !isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    sendState.pending = false;
+    const from = $("#sendFrom");
+    if (from) from.value = user;
+    const to = $("#sendTo");
+    if (to) to.value = "";
+    const amount = $("#sendAmount");
+    if (amount) {
+      amount.value = "";
+      amount.placeholder = "0.000";
+    }
+    setSendStatus("");
+    const submit = $("#sendSubmit");
+    if (submit) submit.disabled = false;
+    const root = $("#sendAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+    }
+    resetSendMemo();
+    setSendAsset(asset);
+    const ov = $("#sendOverlay");
+    if (ov) ov.hidden = false;
+    if (to && !isMobileViewport()) to.focus();
+  }
+
+  function fillSendMax() {
+    const input = $("#sendAmount");
+    if (!input || sendState.pending) return;
+    const max = roundAsset(sendMaxFor(sendState.asset, profileState.wallet), 3);
+    if (!(max >= 0.001)) return;
+    input.value = max.toFixed(3);
+  }
+
+  // Hive rejects a transfer memo unless its UTF-8 size is under 2048.
+  const SEND_MEMO_MAX = 2048;
+  // A real hive-tx ciphertext is # plus at least ~130 base58 characters.
+  // Anything shorter that starts with # is the encrypt flag, not a ciphertext.
+  const SEND_MEMO_CIPHER_MIN = 100;
+  const SEND_MEMO_BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+
+  function memoVarintLen(n) {
+    if (n < 128) return 1;
+    if (n < 16384) return 2;
+    if (n < 2097152) return 3;
+    if (n < 268435456) return 4;
+    return 5;
+  }
+
+  // Worst-case length of the # + base58 string hive-tx Memo.encode writes
+  // for a plaintext of this many UTF-8 bytes. Checked on hive-tx 7.2 for
+  // every length from 0 through 1600: the real string was never longer.
+  function encryptedMemoSize(plainUtf8) {
+    const packed = memoVarintLen(plainUtf8) + plainUtf8;
+    const cipher = packed + (16 - (packed % 16));
+    const binary = 78 + memoVarintLen(cipher) + cipher;
+    const b58 = Math.floor((binary * Math.log(256)) / Math.log(58)) + 1;
+    return 1 + b58;
+  }
+
+  function memoLooksEncrypted(text) {
+    if (!text || text.charAt(0) !== "#") return false;
+    const body = text.slice(1);
+    return body.length >= SEND_MEMO_CIPHER_MIN && SEND_MEMO_BASE58.test(body);
+  }
+
+  function hiveMemoPublicKey(account) {
+    const key = account && account.memo_key ? String(account.memo_key) : "";
+    if (!key || key.slice(-39) === "1111111111111111111111111111111114T1Anm") return "";
+    return key;
+  }
+
+  function sendMemoEncryptText(typed) {
+    if (!typed) return "";
+    if (memoLooksEncrypted(typed)) return "";
+    if (sendState.memoLock || typed.charAt(0) === "#") {
+      return typed.charAt(0) === "#" ? typed : "#" + typed;
+    }
+    return "";
+  }
+
+  async function submitSend() {
+    if (sendState.pending || ownerSignOpen()) return;
+    const user = observer();
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(profileState.author) || wallet.name !== user) return;
+    const from = walletHiveName($("#sendFrom") && $("#sendFrom").value);
+    if (from !== user) {
+      setSendStatus("Send from @" + user + ".", true);
+      return;
+    }
+    const target = walletHiveName($("#sendTo") && $("#sendTo").value);
+    if (!target) {
+      setSendStatus("Enter a hive username.", true);
+      return;
+    }
+    const asset = sendAssetName(sendState.asset);
+    const amount = roundAsset(parseAmountInput($("#sendAmount") && $("#sendAmount").value), 3);
+    if (amount < 0.001) {
+      setSendStatus("Enter an amount of at least 0.001.", true);
+      return;
+    }
+    const max = roundAsset(sendMaxFor(asset, wallet), 3);
+    if (amount > max + 0.0000001) {
+      setSendStatus("That is more than " + formatHiveLike(max, asset) + ".", true);
+      return;
+    }
+    const typedMemo = ($("#sendMemo") && $("#sendMemo").value) || "";
+    const encryptText = sendMemoEncryptText(typedMemo);
+    let memo = encryptText ? "" : typedMemo;
+    if (encryptText) {
+      const plainBytes = utf8Size(encryptText.slice(1));
+      if (encryptedMemoSize(plainBytes) >= SEND_MEMO_MAX) {
+        setSendStatus("That memo is too long to encrypt.", true);
+        return;
+      }
+    } else if (utf8Size(typedMemo) >= SEND_MEMO_MAX) {
+      setSendStatus("A memo can be at most 2,047 bytes.", true);
+      return;
+    }
+    sendDialogBusy(true);
+    setSendStatus("Checking account…", false);
+    let recipient = null;
+    let sender = null;
+    try {
+      const names = user === target ? [user] : [user, target];
+      const accounts = await HiveApi.getAccounts(names);
+      const rows = accounts || [];
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const name = walletHiveName(row && row.name);
+        if (name === user) sender = row;
+        if (name === target) recipient = row;
+      }
+    } catch (err) {
+      sendDialogBusy(false);
+      setSendStatus((err && err.message) || "Could not look up that account.", true);
+      return;
+    }
+    const ov = $("#sendOverlay");
+    if (!ov || ov.hidden || observer() !== user || !isOwnAuthor(profileState.author)) {
+      if (ov && !ov.hidden) sendDialogBusy(false);
+      return;
+    }
+    if (!recipient) {
+      sendDialogBusy(false);
+      setSendStatus("That hive account does not exist.", true);
+      return;
+    }
+    if (encryptText) {
+      const toKey = hiveMemoPublicKey(recipient);
+      if (!toKey) {
+        sendDialogBusy(false);
+        setSendStatus("That account has no memo key.", true);
+        return;
+      }
+      if (!hiveMemoPublicKey(sender)) {
+        sendDialogBusy(false);
+        setSendStatus("Your account has no memo key.", true);
+        return;
+      }
+      setSendStatus("");
+      try {
+        memo = await signWithDialog(user, [], {
+          source: "wallet",
+          mode: "encode",
+          authority: "Memo",
+          memo: encryptText,
+          receiver: target,
+          publicKey: toKey,
+          title: "Encrypt memo",
+          action: "Encrypt",
+          lead:
+            "Use hive keychain (recommended) or enter the memo key of @" +
+            user +
+            ". Encrypts this memo for @" +
+            target +
+            ".",
+          cancelMessage: "The memo was not encrypted.",
+          failMessage: "Could not encrypt this memo.",
+          onKeychain: function () {
+            setSendStatus("Waiting for Keychain…", false);
+          },
+        });
+      } catch (err) {
+        const cancelled = Boolean(err && err.ownerCancel);
+        setSendStatus(
+          cancelled
+            ? (err && err.message) || "The memo was not encrypted."
+            : (err && err.message) || "Could not encrypt this memo.",
+          !cancelled
+        );
+        sendDialogBusy(false);
+        return;
+      }
+      if (!ov || ov.hidden || observer() !== user || !isOwnAuthor(profileState.author)) {
+        if (ov && !ov.hidden) sendDialogBusy(false);
+        return;
+      }
+      if (typeof memo !== "string" || memo.charAt(0) !== "#" || utf8Size(memo) >= SEND_MEMO_MAX) {
+        sendDialogBusy(false);
+        setSendStatus(
+          typeof memo === "string" && utf8Size(memo) >= SEND_MEMO_MAX
+            ? "That memo is too long to encrypt."
+            : "Could not encrypt this memo.",
+          true
+        );
+        return;
+      }
+    }
+    const shown = formatHiveLike(amount, asset);
+    const chainSymbol = asset === "hbd" ? "HBD" : "HIVE";
+    const operations = [
+      [
+        "transfer",
+        {
+          from: user,
+          to: target,
+          amount: formatChainAmount(amount, chainSymbol, 3),
+          memo: memo,
+        },
+      ],
+    ];
+    const copy = {
+      title: "Sign send",
+      lead:
+        "Use hive keychain (recommended) or enter the active key of @" +
+        user +
+        ". Sends " +
+        shown +
+        " to @" +
+        target +
+        ".",
+      cancelMessage: "The send was cancelled.",
+      failMessage: "Could not sign this send.",
+    };
+    setSendStatus("");
+    try {
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: "Active",
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+        onKeychain: function () {
+          setSendStatus("Waiting for Keychain…", false);
+        },
+      });
+      closeSendOverlay();
+      resourceGen += 1;
+      applyWalletSend(profileState.wallet, asset, amount);
+    } catch (err) {
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSendStatus(
+        cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
+        !cancelled
+      );
+      sendDialogBusy(false);
     }
   }
 
@@ -19884,6 +20337,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (authMethod($("#ownerSignMethod")) === "password" && key) key.focus();
         else user.focus();
       }
+      const mode = ownerSignMode(opts);
       ownerSignSession = {
         name,
         operations,
@@ -19893,25 +20347,34 @@ let CS77_FILTER_LOW_REP = 20;
         authority: ownerSignAuthority(opts),
         failMessage: opts.failMessage || "",
         cancelMessage: opts.cancelMessage || "",
-        mode: opts.mode === "decrypt" ? "decrypt" : "broadcast",
-        memo: opts.mode === "decrypt" ? String(opts.memo || "") : "",
+        mode: mode,
+        memo: mode === "decrypt" || mode === "encode" ? String(opts.memo || "") : "",
+        receiver: mode === "encode" ? String(opts.receiver || "") : "",
+        publicKey: mode === "encode" ? String(opts.publicKey || "") : "",
       };
     });
   }
 
+  function ownerSignMode(opts) {
+    if (opts && opts.mode === "decrypt") return "decrypt";
+    if (opts && opts.mode === "encode") return "encode";
+    return "broadcast";
+  }
+
   // One signer for subspace owner settings, role changes, creating a subspace,
-  // wallet stake or unstake, delegations, and decrypting a transfer memo.
-  // Pass the account, operations, authority, and the dialog copy. A login that
-  // can already sign that authority does so without the dialog: a stored
-  // posting key for Posting, or Hive Keychain for the role this login can
-  // sign. Anything else opens the dialog with both Keychain and Password.
-  // A stored posting key starts that dialog on Password when the account is
-  // the signed-in user. The password field accepts that role key or the
-  // master password. Decrypt mode resolves with the plaintext.
+  // wallet stake, unstake, or send, delegations, and encrypting or decrypting
+  // a transfer memo. Pass the account, operations, authority, and the dialog
+  // copy. A login that can already sign that authority does so without the
+  // dialog: a stored posting key for Posting, or Hive Keychain for the role
+  // this login can sign. Anything else opens the dialog with both Keychain
+  // and Password. A stored posting key starts that dialog on Password when
+  // the account is the signed-in user. The password field accepts that role
+  // key or the master password. Decrypt mode resolves with the plaintext.
+  // Encode mode resolves with the # base58 ciphertext.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
     const authority = ownerSignAuthority(opts);
-    const mode = opts.mode === "decrypt" ? "decrypt" : "broadcast";
+    const mode = ownerSignMode(opts);
     const account = normalizeLoginUser(name);
     if (mode === "decrypt") {
       if (
@@ -19920,6 +20383,17 @@ let CS77_FILTER_LOW_REP = 20;
         keychainCanDecodeMemo()
       ) {
         return requestKeychainMemoDecode(account, String(opts.memo || ""));
+      }
+      return openOwnerSignDialog(name, operations, opts);
+    }
+    if (mode === "encode") {
+      if (
+        opts.preferKeychain !== false &&
+        keychainLoginActive() === account &&
+        keychainCanEncodeMemo()
+      ) {
+        if (typeof opts.onKeychain === "function") opts.onKeychain();
+        return requestKeychainMemoEncode(account, String(opts.receiver || ""), String(opts.memo || ""));
       }
       return openOwnerSignDialog(name, operations, opts);
     }
@@ -19959,6 +20433,25 @@ let CS77_FILTER_LOW_REP = 20;
     return requestKeychainMemoDecode(session.name, session.memo);
   }
 
+  async function encodeOwnerSignMemo(session, method, secret) {
+    if (method === "password") {
+      setOwnerSignStatus("Encrypting…", false);
+      if (!window.HiveAuth || typeof HiveAuth.encodeMemo !== "function") {
+        secret = "";
+        throw new Error("Could not encrypt this memo.");
+      }
+      const job = HiveAuth.encodeMemo(session.name, secret, session.publicKey, session.memo);
+      secret = "";
+      return job;
+    }
+    secret = "";
+    setOwnerSignStatus("Waiting for Keychain…", false);
+    if (!keychainCanEncodeMemo()) {
+      throw new Error("hive keychain is not available. Choose Password and enter the memo key.");
+    }
+    return requestKeychainMemoEncode(session.name, session.receiver, session.memo);
+  }
+
   async function submitOwnerSign() {
     const session = ownerSignSession;
     if (!session || ownerSignBusy) return;
@@ -19995,6 +20488,15 @@ let CS77_FILTER_LOW_REP = 20;
         ownerSignSession = null;
         hideOwnerSign();
         done.resolve(decoded);
+        return;
+      }
+      if (session.mode === "encode") {
+        const encoded = await encodeOwnerSignMemo(session, method, secret);
+        secret = "";
+        const done = session;
+        ownerSignSession = null;
+        hideOwnerSign();
+        done.resolve(encoded);
         return;
       }
       if (method === "password") {
@@ -23022,10 +23524,16 @@ let CS77_FILTER_LOW_REP = 20;
       const signSource = ownerSignSession.source;
       if (signSource === "wallet" || signSource === "memo") {
         cancelOwnerSign();
-        if (signSource === "wallet") closeWalletOverlay();
+        if (signSource === "wallet") {
+          closeWalletOverlay();
+          closeSendOverlay();
+        }
       }
     }
-    if (!ownerSignBusy) closeDelegateOverlay();
+    if (!ownerSignBusy) {
+      closeDelegateOverlay();
+      closeSendOverlay();
+    }
     quietSmartHeader();
     const r = parseRoute();
     // Account-menu comments, replies, and wallet collapse the banner on mobile.
@@ -24260,6 +24768,12 @@ let CS77_FILTER_LOW_REP = 20;
         openWalletOverlay(stakeBtn.getAttribute("data-wallet-op") || "");
         return;
       }
+      const sendBtn = e.target.closest(".wallet-send-btn");
+      if (sendBtn && inInteractiveSurface(sendBtn)) {
+        e.preventDefault();
+        openSendOverlay(sendBtn.getAttribute("data-send-asset") || "hive");
+        return;
+      }
       const delegatedToggle = e.target.closest(".wallet-delegated-toggle");
       if (delegatedToggle && inInteractiveSurface(delegatedToggle)) {
         e.preventDefault();
@@ -24629,6 +25143,68 @@ let CS77_FILTER_LOW_REP = 20;
       }
       walletOverlay.addEventListener("click", (e) => {
         if (e.target === walletOverlay) closeWalletOverlay();
+      });
+    }
+
+    const sendOverlay = $("#sendOverlay");
+    if (sendOverlay) {
+      const sendCancel = $("#sendCancel");
+      const sendSubmit = $("#sendSubmit");
+      const sendMax = $("#sendMax");
+      const sendTo = $("#sendTo");
+      const sendAmount = $("#sendAmount");
+      const sendAsset = $("#sendAsset");
+      if (sendCancel) sendCancel.addEventListener("click", closeSendOverlay);
+      if (sendSubmit) sendSubmit.addEventListener("click", submitSend);
+      if (sendMax) sendMax.addEventListener("click", fillSendMax);
+      const sendAvailable = $("#sendAvailable");
+      if (sendAvailable) {
+        sendAvailable.addEventListener("click", (e) => {
+          if (!e.target.closest(".wallet-available-amt")) return;
+          fillSendMax();
+        });
+      }
+      if (sendTo) {
+        sendTo.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitSend();
+        });
+      }
+      if (sendAmount) {
+        sendAmount.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitSend();
+        });
+      }
+      const sendMemo = $("#sendMemo");
+      const sendMemoLock = $("#sendMemoLock");
+      if (sendMemo) {
+        sendMemo.addEventListener("input", paintSendMemoLock);
+        sendMemo.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitSend();
+        });
+      }
+      if (sendMemoLock) {
+        sendMemoLock.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+        });
+        sendMemoLock.addEventListener("click", () => {
+          if (sendState.pending) return;
+          sendState.memoLock = !sendState.memoLock;
+          paintSendMemoLock();
+        });
+      }
+      paintSendMemoLock();
+      if (sendAsset) {
+        sendAsset.addEventListener("click", (e) => {
+          const tab = e.target.closest("[data-send-asset]");
+          if (!tab || sendState.pending) return;
+          setSendAsset(tab.getAttribute("data-send-asset") || "hive");
+        });
+      }
+      sendOverlay.addEventListener("click", (e) => {
+        if (e.target !== sendOverlay) return;
+        const active = document.activeElement;
+        if (active && sendOverlay.contains(active)) return;
+        closeSendOverlay();
       });
     }
 

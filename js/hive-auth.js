@@ -582,6 +582,35 @@
     }
   }
 
+  // Encrypt a Hive memo with a memo key or master password. The text must
+  // start with #. hive-tx strips that flag, encrypts the rest for the
+  // recipient memo key, and returns # plus base58. The secret is checked
+  // against the account, used once, and wiped.
+  async function encodeMemo(username, secret, recipientMemoKey, memo) {
+    const text = String(memo || "");
+    const pub = String(recipientMemoKey || "");
+    if (!text.startsWith("#") || !pub || pub.slice(-39) === "1111111111111111111111111111111114T1Anm") {
+      secret = "";
+      throw new Error("Could not encrypt this memo.");
+    }
+    const openedJob = materializeRoleKey(username, secret, "memo");
+    secret = "";
+    const opened = await openedJob;
+    try {
+      const lib = await loadHiveTx();
+      const pk = lib.PrivateKey.from(opened.bytes);
+      try {
+        return lib.Memo.encode(pk, pub, text);
+      } catch {
+        throw new Error("Could not encrypt this memo.");
+      } finally {
+        if (pk && pk.key) wipe(pk.key);
+      }
+    } finally {
+      wipe(opened.bytes);
+    }
+  }
+
   // Decrypt a Hive memo (#…) with a memo key or master password. The secret
   // is checked against the account, used once, and wiped.
   async function decodeMemo(username, secret, memo) {
@@ -707,6 +736,7 @@
     wifFromLogin,
     loginMaster,
     broadcastRoleSecret,
+    encodeMemo,
     decodeMemo,
     broadcastWithKey,
     broadcastActiveKey,

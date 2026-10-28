@@ -42,7 +42,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.4">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.9">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -307,6 +307,40 @@
     </div>
   </div>
 
+  <div class="overlay" id="sendOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="sendTitle">
+      <h2 id="sendTitle">Send crypto</h2>
+      <p class="login-lead" id="sendLead">Send hive or hbd to a hive account.</p>
+      <div class="login-method" id="sendAsset" role="group" aria-label="Asset">
+        <button type="button" data-send-asset="hive" class="is-active" aria-pressed="true">hive</button>
+        <button type="button" data-send-asset="hbd" aria-pressed="false">hbd</button>
+      </div>
+      <label class="login-label" for="sendFrom">From</label>
+      <input id="sendFrom" type="text" readonly autocomplete="off" spellcheck="false" autocapitalize="off">
+      <label class="login-label" for="sendTo">To</label>
+      <input id="sendTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+      <label class="login-label" for="sendAmount">Amount</label>
+      <div class="wallet-amount-row">
+        <div class="send-amount-field">
+          <input id="sendAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false" aria-describedby="sendAvailable">
+          <span id="sendAmountUnit" class="send-amount-unit">hive</span>
+        </div>
+        <button type="button" class="btn-ghost" id="sendMax">Max</button>
+      </div>
+      <p class="login-hint" id="sendAvailable"></p>
+      <label class="login-label" for="sendMemo">Memo</label>
+      <div class="send-memo-field">
+        <input id="sendMemo" type="text" maxlength="2047" autocomplete="off" spellcheck="false" placeholder="memo">
+        <button type="button" id="sendMemoLock" class="send-memo-lock" aria-pressed="false" aria-label="Encrypt memo"></button>
+      </div>
+      <p id="sendStatus" role="status"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="sendSubmit">Send</button>
+        <button type="button" class="btn-ghost" id="sendCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="delegateOverlay" hidden>
     <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="delegateTitle">
       <h2 id="delegateTitle">Delegate</h2>
@@ -517,9 +551,9 @@
 
   <script src="/js/api.js?v=0.19.1"></script>
   <script src="/js/md.js?v=0.19.1"></script>
-  <script src="/js/hive-auth.js?v=0.19.0"></script>
+  <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.0"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.4"></script>
+  <script src="/js/app.js?v=0.19.9"></script>
 </body>
 </html>
