@@ -152,6 +152,9 @@ let CS77_FILTER_LOW_REP = 20;
     subspaces: { query: "", looked: false, loading: false, loadingMore: false, error: "", results: [], done: false, cursor: "" },
   };
   const SEARCH_USER_LIMIT = 100;
+  // Users search while typing. Spaces and subspaces still search on submit.
+  const SEARCH_USER_DEBOUNCE_MS = 200;
+  let searchUserTimer = 0;
   const SEARCH_TAG_LIMIT = 100;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
@@ -11471,11 +11474,15 @@ let CS77_FILTER_LOW_REP = 20;
     return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
   }
 
-  async function fetchUserSearchPage(query, cursor) {
-    const q = String(query || "")
+  function userSearchQuery(raw) {
+    return String(raw || "")
       .trim()
       .replace(/^@/, "")
       .toLowerCase();
+  }
+
+  async function fetchUserSearchPage(query, cursor) {
+    const q = userSearchQuery(query);
     if (!/^[a-z0-9.\-]{1,16}$/.test(q)) return { items: [], done: true, cursor: "" };
     const names = await HiveApi.lookupAccounts(cursor || q, SEARCH_USER_LIMIT);
     const items = [];
@@ -11643,7 +11650,39 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  function scheduleUserSearch() {
+    if (searchUserTimer) {
+      clearTimeout(searchUserTimer);
+      searchUserTimer = 0;
+    }
+    if (searchPageName() !== "users") return;
+    const input = $("#searchInput");
+    if (!input) return;
+    const raw = String(input.value || "").trim();
+    const next = userSearchQuery(raw);
+    const state = searchPages.users;
+    const current = userSearchQuery(state.query);
+    if (!next) {
+      if (state.looked || state.loading || state.query) runSearch();
+      return;
+    }
+    if ((state.looked || state.loading) && current === next) return;
+    searchUserTimer = setTimeout(() => {
+      searchUserTimer = 0;
+      if (searchPageName() !== "users") return;
+      const live = $("#searchInput");
+      if (!live || userSearchQuery(live.value) !== next) return;
+      const now = searchPages.users;
+      if ((now.looked || now.loading) && userSearchQuery(now.query) === next) return;
+      runSearch();
+    }, SEARCH_USER_DEBOUNCE_MS);
+  }
+
   async function runSearch() {
+    if (searchUserTimer) {
+      clearTimeout(searchUserTimer);
+      searchUserTimer = 0;
+    }
     const input = $("#searchInput");
     const page = searchPageName();
     if (!input || !page) return;
@@ -11652,9 +11691,12 @@ let CS77_FILTER_LOW_REP = 20;
     const state = searchPages[page];
     searchGen += 1;
     const gen = searchGen;
-    if (!raw) {
-      searchBox = "";
-      input.value = "";
+    // A lone "@" is not a query. Keep it in the box and show favorites.
+    if (!raw || (page === "users" && !userSearchQuery(raw))) {
+      if (!raw) {
+        searchBox = "";
+        input.value = "";
+      }
       resetSearchPageState(state);
       setSearchStatus("");
       setSearchMore(false);
@@ -26064,6 +26106,7 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener("input", (e) => {
       if (e.target && e.target.id === "searchInput") {
         searchBox = e.target.value;
+        if (!e.isComposing) scheduleUserSearch();
         return;
       }
       const slider = e.target.closest(".vote-slider");
@@ -26126,6 +26169,11 @@ let CS77_FILTER_LOW_REP = 20;
       schedulePublishDraftSave();
     });
     document.addEventListener("compositionend", (e) => {
+      if (e.target && e.target.id === "searchInput") {
+        searchBox = e.target.value;
+        scheduleUserSearch();
+        return;
+      }
       if (!e.target || e.target.id !== "publishTitle") return;
       const input = e.target;
       settlePublishTitle(input);
