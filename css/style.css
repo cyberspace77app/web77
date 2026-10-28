@@ -3859,7 +3859,8 @@ a.tag:hover {
 }
 
 .profile-more-item,
-.content-more-item {
+.content-more-item,
+.wallet-more-item {
   appearance: none;
   display: block;
   width: 100%;
@@ -3882,14 +3883,17 @@ a.tag:hover {
 .profile-more-item:hover,
 .profile-more-item:focus-visible,
 .content-more-item:hover,
-.content-more-item:focus-visible {
+.content-more-item:focus-visible,
+.wallet-more-item:hover,
+.wallet-more-item:focus-visible {
   color: var(--yellow);
   background: rgba(227, 19, 55, 0.12);
   text-shadow: var(--glow-yellow);
 }
 
 .profile-more-item:disabled,
-.content-more-item:disabled {
+.content-more-item:disabled,
+.wallet-more-item:disabled {
   opacity: 0.65;
   cursor: wait;
 }
@@ -4589,6 +4593,68 @@ a.tag:hover {
   border-bottom: 1px solid var(--border);
 }
 
+.wallet-send-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wallet-more {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.wallet-more-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-height: 0;
+  padding: 0.35rem 0.15rem;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.77rem;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.wallet-more-btn:hover,
+.wallet-more.is-open .wallet-more-btn {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.wallet-more-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+/* Right edge sits on the three-dot button, so the menu grows left and stays off Send. */
+.wallet-more-menu {
+  position: absolute;
+  top: calc(100% + 0.28rem);
+  right: 0;
+  left: auto;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  min-width: min(10rem, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-red), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
 .wallet-note {
   margin-top: 0.65rem;
   font-family: var(--font-mono);
@@ -5094,21 +5160,25 @@ a.wallet-tx-time:hover {
 }
 
 #walletOverlay .wallet-amount-row,
-#sendOverlay .wallet-amount-row {
+#sendOverlay .wallet-amount-row,
+#convertOverlay .wallet-amount-row {
   margin-bottom: 0.35rem;
 }
 
-#sendOverlay .send-amount-field {
+#sendOverlay .send-amount-field,
+#convertOverlay .send-amount-field {
   position: relative;
   flex: 1;
   min-width: 0;
 }
 
-#sendOverlay .send-amount-field input {
+#sendOverlay .send-amount-field input,
+#convertOverlay .send-amount-field input {
   padding-right: 4.6rem;
 }
 
-#sendOverlay .send-amount-unit {
+#sendOverlay .send-amount-unit,
+#convertOverlay .send-amount-unit {
   position: absolute;
   top: 1px;
   right: 0.95rem;
@@ -5123,12 +5193,14 @@ a.wallet-tx-time:hover {
 }
 
 #walletOpAvailable:empty,
-#sendAvailable:empty {
+#sendAvailable:empty,
+#convertAvailable:empty {
   display: none;
 }
 
 /* Same shape as the feed nav and the keychain switch, with the asset names left lowercase. */
-#sendAsset button {
+#sendAsset button,
+#convertAsset button {
   text-transform: none;
 }
 
@@ -5213,12 +5285,14 @@ a.wallet-tx-time:hover {
 }
 
 #walletOpStatus:empty,
-#sendStatus:empty {
+#sendStatus:empty,
+#convertStatus:empty {
   display: none;
 }
 
 #walletOpStatus.is-error,
 #sendStatus.is-error,
+#convertStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }

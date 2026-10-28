@@ -284,6 +284,10 @@ let CS77_FILTER_LOW_REP = 20;
     pending: false,
     memoLock: false,
   };
+  const convertState = {
+    asset: "hbd",
+    pending: false,
+  };
   const delegationView = {
     loadGen: 0,
     account: "",
@@ -1749,6 +1753,13 @@ let CS77_FILTER_LOW_REP = 20;
       ) {
         return;
       }
+      const walletMoreMenu = document.querySelector("body > .wallet-more-menu");
+      if (
+        walletMoreMenu &&
+        (t === walletMoreMenu || (t && t.nodeType === 1 && walletMoreMenu.contains(t)))
+      ) {
+        return;
+      }
     }
     if (openSlider && !openSlider.panel.hidden) {
       placeVoteSlider(openSlider.btn, openSlider.panel);
@@ -1785,6 +1796,13 @@ let CS77_FILTER_LOW_REP = 20;
       );
     } else if (contentMoreMenu) {
       closeContentMore();
+    }
+    const walletMoreRoot = document.querySelector(".wallet-more.is-open");
+    const walletMoreMenu = document.querySelector("body > .wallet-more-menu");
+    if (walletMoreRoot && walletMoreMenu && !walletMoreMenu.hidden) {
+      placeWalletMore(walletMoreRoot.querySelector(".wallet-more-btn"), walletMoreMenu);
+    } else if (walletMoreMenu) {
+      closeWalletMore();
     }
   }
 
@@ -5717,6 +5735,11 @@ let CS77_FILTER_LOW_REP = 20;
       closeDelegateOverlay();
       return;
     }
+    const convertOv = $("#convertOverlay");
+    if (convertOv && !convertOv.hidden) {
+      closeConvertOverlay();
+      return;
+    }
     const sendOv = $("#sendOverlay");
     if (sendOv && !sendOv.hidden) {
       closeSendOverlay();
@@ -5739,6 +5762,7 @@ let CS77_FILTER_LOW_REP = 20;
     setSessionMenuOpen(false);
     closeProfileMore();
     closeContentMore();
+    closeWalletMore();
     const account = $("#sessionAccount");
     if (account && document.activeElement && account.contains(document.activeElement)) {
       document.activeElement.blur();
@@ -14308,6 +14332,7 @@ let CS77_FILTER_LOW_REP = 20;
     const willOpen = !root.classList.contains("is-open");
     closeContentMore();
     closeProfileMore();
+    closeWalletMore();
     if (!willOpen) return;
     const menu = root.querySelector(".content-more-menu");
     if (!menu) return;
@@ -14324,6 +14349,7 @@ let CS77_FILTER_LOW_REP = 20;
     const willOpen = !root.classList.contains("is-open");
     closeProfileMore();
     closeContentMore();
+    closeWalletMore();
     if (!willOpen) return;
     const menu = root.querySelector(".profile-more-menu");
     if (!menu) return;
@@ -14332,6 +14358,79 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(menu);
     menu.hidden = false;
     placeProfileMore(btn, menu);
+  }
+
+  // The wallet menu is portaled so the balance table cannot clip it. It opens
+  // to the left of the three-dot button, clear of Send.
+  function placeWalletMore(anchor, menu) {
+    if (!anchor || !menu || menu.hidden) return;
+    if (!anchor.isConnected) {
+      closeWalletMore();
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      closeWalletMore();
+      return;
+    }
+    menu.style.position = "fixed";
+    menu.style.zIndex = "45";
+    menu.style.right = "auto";
+    menu.style.maxWidth = Math.max(120, window.innerWidth - 16) + "px";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    const gap = 6;
+    let left = Math.round(rect.left - gap - width);
+    let top = Math.round(rect.top + (rect.height - height) / 2);
+    if (left < 8) {
+      left = Math.max(8, Math.round(rect.right - width));
+      top = Math.round(rect.bottom + gap);
+    }
+    if (top < 8) top = 8;
+    if (top + height > window.innerHeight - 8) {
+      top = Math.max(8, Math.round(window.innerHeight - 8 - height));
+    }
+    if (left + width > window.innerWidth - 8) {
+      left = Math.max(8, Math.round(window.innerWidth - 8 - width));
+    }
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+
+  function closeWalletMore() {
+    const root = document.querySelector(".wallet-more.is-open");
+    const menu =
+      document.querySelector("body > .wallet-more-menu") ||
+      (root && root.querySelector(".wallet-more-menu"));
+    if (root) {
+      root.classList.remove("is-open");
+      const btn = root.querySelector(".wallet-more-btn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+    if (!menu) return;
+    menu.hidden = true;
+    clearAnchoredMenuStyle(menu);
+    if (root && menu.parentNode !== root) root.appendChild(menu);
+    else if (!root && menu.parentNode === document.body) menu.remove();
+  }
+
+  function toggleWalletMore(btn) {
+    const root = btn && btn.closest(".wallet-more");
+    if (!root) return;
+    const willOpen = !root.classList.contains("is-open");
+    closeWalletMore();
+    closeContentMore();
+    closeProfileMore();
+    if (!willOpen) return;
+    const menu = root.querySelector(".wallet-more-menu");
+    if (!menu) return;
+    root.classList.add("is-open");
+    btn.setAttribute("aria-expanded", "true");
+    document.body.appendChild(menu);
+    menu.hidden = false;
+    placeWalletMore(btn, menu);
   }
 
   function profilePageTitle(author, page) {
@@ -15721,10 +15820,19 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="btn-primary btn-compact wallet-send-btn" data-send-asset="${kind}">Send</button>`;
   }
 
-  function walletSendRow(buttonHtml) {
-    if (!buttonHtml) return "";
+  function walletMoreButton(kind) {
+    return `<div class="wallet-more">
+      <button type="button" class="wallet-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
+      <div class="wallet-more-menu" role="menu" hidden>
+        <button type="button" class="wallet-more-item" role="menuitem" data-convert-asset="${kind}">Convert</button>
+      </div>
+    </div>`;
+  }
+
+  function walletSendRow(kind) {
+    if (!kind) return "";
     return `<tr class="wallet-send-row">
-      <td class="wallet-actions" colspan="4"><div class="wallet-actions-inner">${buttonHtml}</div></td>
+      <td class="wallet-actions" colspan="4"><div class="wallet-send-actions">${walletMoreButton(kind)}<div class="wallet-actions-inner">${walletSendButton(kind)}</div></div></td>
     </tr>`;
   }
 
@@ -16107,7 +16215,7 @@ let CS77_FILTER_LOW_REP = 20;
             ["remains", schedule.remains],
             ["settles", schedule.when],
             ["collateral", formatHiveLike(roundAsset(row.amount, 3), "hive")],
-            ["received", formatHiveLike(roundAsset(row.received, 3), "hbd")],
+            ["received", row.received == null ? "hbd paid now" : formatHiveLike(roundAsset(row.received, 3), "hbd")],
           ]
         : [
             ["initiated", schedule.initiated],
@@ -16160,6 +16268,11 @@ let CS77_FILTER_LOW_REP = 20;
       const row = parseHiveToHbd(hiveList[i]);
       if (row) rows.push(row);
     }
+    sortWalletConversions(rows);
+    wallet.conversions = rows;
+  }
+
+  function sortWalletConversions(rows) {
     rows.sort(function (a, b) {
       const ta = parseCreatedTs(a.complete);
       const tb = parseCreatedTs(b.complete);
@@ -16169,7 +16282,6 @@ let CS77_FILTER_LOW_REP = 20;
       if (a.kind !== b.kind) return a.kind === "hbd-hive" ? -1 : 1;
       return a.requestId - b.requestId;
     });
-    wallet.conversions = rows;
   }
 
   function clearDelegationView() {
@@ -16672,10 +16784,10 @@ let CS77_FILTER_LOW_REP = 20;
     const props = w.props;
     const rates = walletShownRates(w);
     const hiveStake = own ? walletStakeButton("hive", "stake") : "";
-    const hiveSend = own ? walletSendButton("hive") : "";
+    const hiveSend = own ? "hive" : "";
     const hiveUnstake = own ? walletStakeButton("hive", "unstake") : "";
     const hbdStake = own ? walletStakeButton("hbd", "stake") : "";
-    const hbdSend = own ? walletSendButton("hbd") : "";
+    const hbdSend = own ? "hbd" : "";
     const hbdUnstake = own ? walletStakeButton("hbd", "unstake") : "";
     return `
       <div class="wallet-page">
@@ -16705,9 +16817,11 @@ let CS77_FILTER_LOW_REP = 20;
               </tbody>
             </table>
           </div>
-          ${walletPowerDownNote(w, own)}
-          ${walletHbdUnstakeNotes(w, own)}
-          ${walletConversionNotes(w)}
+          <div id="walletBalanceNotes">
+            ${walletPowerDownNote(w, own)}
+            ${walletHbdUnstakeNotes(w, own)}
+            ${walletConversionNotes(w)}
+          </div>
         </section>
         <section class="wallet-section">
           <h2>Transactions</h2>
@@ -16868,6 +16982,35 @@ let CS77_FILTER_LOW_REP = 20;
     }
     cancelWalletBalanceAnim();
     paintWalletBalanceAmounts(wallet);
+  }
+
+  function paintWalletBalanceNotes(wallet) {
+    const box = $("#walletBalanceNotes");
+    if (!box || !wallet) return;
+    const own = isOwnAuthor(wallet.name);
+    box.innerHTML =
+      walletPowerDownNote(wallet, own) +
+      walletHbdUnstakeNotes(wallet, own) +
+      walletConversionNotes(wallet);
+  }
+
+  // convert pays hive later, at the median price. collateralized_convert pays
+  // hbd immediately. That payout depends on the min history price, so a local
+  // hive→hbd note does not invent a received amount.
+  function applyWalletConvert(wallet, asset, amount, requestId) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    applyWalletSend(wallet, asset, amount);
+    const hiveToHbd = asset === "hive";
+    if (!Array.isArray(wallet.conversions)) wallet.conversions = [];
+    wallet.conversions.push({
+      kind: hiveToHbd ? "hive-hbd" : "hbd-hive",
+      requestId: requestId,
+      amount: roundAsset(amount, 3),
+      received: hiveToHbd ? null : 0,
+      complete: new Date(Date.now() + CONVERSION_DELAY_MS).toISOString(),
+    });
+    sortWalletConversions(wallet.conversions);
+    paintWalletBalanceNotes(wallet);
   }
 
   function walletMaxFor(kind, wallet) {
@@ -17567,6 +17710,253 @@ let CS77_FILTER_LOW_REP = 20;
         !cancelled
       );
       sendDialogBusy(false);
+    }
+  }
+
+  function convertDirection(asset) {
+    if (asset === "hive") {
+      return { asset: "hive", dest: "hbd", op: "collateralized_convert", chain: "HIVE" };
+    }
+    return { asset: "hbd", dest: "hive", op: "convert", chain: "HBD" };
+  }
+
+  function convertLeadText(asset) {
+    const dir = convertDirection(asset);
+    return "Convert " + dir.asset + " into " + dir.dest + ".";
+  }
+
+  function convertNoteText(asset) {
+    if (asset === "hive") {
+      return "hive converts to hbd immediately. The hive stays locked as collateral for 3.5 days. About half of that hive is paid as hbd, after a 5% fee. Extra collateral returns when the conversion settles.";
+    }
+    return "hbd converts to hive after 3.5 days. The hive amount is the median price when the conversion completes.";
+  }
+
+  function setConvertStatus(msg, isError) {
+    const el = $("#convertStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function paintConvertAvailable() {
+    const el = $("#convertAvailable");
+    if (!el) return;
+    const asset = convertState.asset === "hive" ? "hive" : "hbd";
+    const max = roundAsset(sendMaxFor(asset, profileState.wallet), 3);
+    const disabled = convertState.pending || !(max >= 0.001);
+    el.innerHTML =
+      "Available: " + availableAmountButton(formatHiveLike(Math.max(0, max), asset), disabled) + ".";
+    const maxBtn = $("#convertMax");
+    if (maxBtn) maxBtn.disabled = disabled;
+  }
+
+  function setConvertAsset(asset) {
+    const next = asset === "hive" ? "hive" : "hbd";
+    convertState.asset = next;
+    const root = $("#convertAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("[data-convert-asset]");
+      for (let i = 0; i < buttons.length; i++) {
+        const on = buttons[i].getAttribute("data-convert-asset") === next;
+        buttons[i].classList.toggle("is-active", on);
+        buttons[i].setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    }
+    const lead = $("#convertLead");
+    if (lead) lead.textContent = convertLeadText(next);
+    const note = $("#convertNote");
+    if (note) note.textContent = convertNoteText(next);
+    const unit = $("#convertAmountUnit");
+    if (unit) unit.textContent = next;
+    setConvertStatus("");
+    paintConvertAvailable();
+  }
+
+  function convertDialogBusy(on) {
+    convertState.pending = on;
+    const submit = $("#convertSubmit");
+    if (submit) submit.disabled = on;
+    const root = $("#convertAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = on;
+    }
+    paintConvertAvailable();
+  }
+
+  function closeConvertOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") {
+      const ov = $("#convertOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    const ov = $("#convertOverlay");
+    if (ov) ov.hidden = true;
+    convertState.asset = "hbd";
+    convertState.pending = false;
+    const amount = $("#convertAmount");
+    if (amount) amount.value = "";
+    const available = $("#convertAvailable");
+    if (available) available.textContent = "";
+    const note = $("#convertNote");
+    if (note) note.textContent = "";
+    setConvertStatus("");
+    const submit = $("#convertSubmit");
+    if (submit) submit.disabled = false;
+    const maxBtn = $("#convertMax");
+    if (maxBtn) maxBtn.disabled = false;
+    const root = $("#convertAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+    }
+  }
+
+  function openConvertOverlay(asset) {
+    const wallet = profileState.wallet;
+    if (!wallet || !isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    convertState.pending = false;
+    const amount = $("#convertAmount");
+    if (amount) {
+      amount.value = "";
+      amount.placeholder = "0.000";
+    }
+    setConvertStatus("");
+    const submit = $("#convertSubmit");
+    if (submit) submit.disabled = false;
+    const root = $("#convertAsset");
+    if (root) {
+      const buttons = root.querySelectorAll("button");
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+    }
+    setConvertAsset(asset);
+    const ov = $("#convertOverlay");
+    if (ov) ov.hidden = false;
+    if (amount && !isMobileViewport()) amount.focus();
+  }
+
+  function fillConvertMax() {
+    const input = $("#convertAmount");
+    if (!input || convertState.pending) return;
+    const asset = convertState.asset === "hive" ? "hive" : "hbd";
+    const max = roundAsset(sendMaxFor(asset, profileState.wallet), 3);
+    if (!(max >= 0.001)) return;
+    input.value = max.toFixed(3);
+  }
+
+  // requestid is a uint32, unique among this owner's open requests of that type.
+  async function nextConversionRequestId(account, asset) {
+    const used = new Set();
+    const want = asset === "hive" ? "hive-hbd" : "hbd-hive";
+    const wallet = profileState.wallet;
+    const local =
+      wallet && wallet.name === account && Array.isArray(wallet.conversions) ? wallet.conversions : [];
+    for (let i = 0; i < local.length; i++) {
+      if (local[i] && local[i].kind === want && Number.isFinite(local[i].requestId)) {
+        used.add(local[i].requestId);
+      }
+    }
+    try {
+      const raw =
+        asset === "hive"
+          ? await HiveApi.getCollateralizedConversionRequests(account)
+          : await HiveApi.getConversionRequests(account);
+      const list = Array.isArray(raw) ? raw : [];
+      for (let i = 0; i < list.length; i++) {
+        const id = conversionRequestId(list[i]);
+        if (id != null) used.add(id);
+      }
+    } catch {
+      // Ids already shown on this wallet still count.
+    }
+    let id = Math.floor(Date.now() / 1000);
+    while (used.has(id)) id += 1;
+    return id >>> 0;
+  }
+
+  async function submitConvert() {
+    if (convertState.pending || ownerSignOpen()) return;
+    const user = observer();
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(profileState.author) || wallet.name !== user) return;
+    const asset = convertState.asset === "hive" ? "hive" : "hbd";
+    const amount = roundAsset(parseAmountInput($("#convertAmount") && $("#convertAmount").value), 3);
+    if (amount < 0.001) {
+      setConvertStatus("Enter an amount of at least 0.001.", true);
+      return;
+    }
+    const max = roundAsset(sendMaxFor(asset, wallet), 3);
+    if (amount > max + 0.0000001) {
+      setConvertStatus("That is more than " + formatHiveLike(max, asset) + ".", true);
+      return;
+    }
+    convertDialogBusy(true);
+    setConvertStatus("");
+    const dir = convertDirection(asset);
+    let requestId = 0;
+    try {
+      requestId = await nextConversionRequestId(user, asset);
+    } catch (err) {
+      convertDialogBusy(false);
+      setConvertStatus((err && err.message) || "Could not start this conversion.", true);
+      return;
+    }
+    const ov = $("#convertOverlay");
+    if (!ov || ov.hidden || observer() !== user || !isOwnAuthor(profileState.author)) {
+      if (ov && !ov.hidden) convertDialogBusy(false);
+      return;
+    }
+    const shown = formatHiveLike(amount, asset);
+    const operations = [
+      [
+        dir.op,
+        {
+          owner: user,
+          requestid: requestId,
+          amount: formatChainAmount(amount, dir.chain, 3),
+        },
+      ],
+    ];
+    const copy = {
+      title: "Sign convert",
+      lead:
+        "Use hive keychain (recommended) or enter the active key of @" +
+        user +
+        ". Converts " +
+        shown +
+        " to " +
+        dir.dest +
+        ".",
+      cancelMessage: "The conversion was not started.",
+      failMessage: "Could not start this conversion.",
+    };
+    try {
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: "Active",
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+        onKeychain: function () {
+          setConvertStatus("Waiting for Keychain…", false);
+        },
+      });
+      closeConvertOverlay();
+      resourceGen += 1;
+      applyWalletConvert(profileState.wallet, asset, amount, requestId);
+    } catch (err) {
+      const cancelled = Boolean(err && err.ownerCancel);
+      setConvertStatus(
+        cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
+        !cancelled
+      );
+      convertDialogBusy(false);
     }
   }
 
@@ -18383,6 +18773,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function profileSectionHtml(html) {
+    closeWalletMore();
     const status = $("#profileSectionStatus");
     if (status) status.outerHTML = html;
     else view.insertAdjacentHTML("beforeend", html);
@@ -20975,7 +21366,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // One signer for subspace owner settings, role changes, creating a subspace,
-  // wallet stake, unstake, or send, delegations, and encrypting or decrypting
+  // wallet stake, unstake, send, or convert, delegations, and encrypting or decrypting
   // a transfer memo. Pass the account, operations, authority, and the dialog
   // copy. A login that can already sign that authority does so without the
   // dialog: a stored posting key for Posting, or Hive Keychain for the role
@@ -24131,6 +24522,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideVoteSlider();
     closeProfileMore();
     closeContentMore();
+    closeWalletMore();
     hideContentDelete(true);
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
@@ -24140,12 +24532,14 @@ let CS77_FILTER_LOW_REP = 20;
         if (signSource === "wallet") {
           closeWalletOverlay();
           closeSendOverlay();
+          closeConvertOverlay();
         }
       }
     }
     if (!ownerSignBusy) {
       closeDelegateOverlay();
       closeSendOverlay();
+      closeConvertOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();
@@ -25278,6 +25672,31 @@ let CS77_FILTER_LOW_REP = 20;
         if (profileMoreEl.closest(".content-more-item")) closeContentMore();
         return;
       }
+      const inWalletMoreMenu = Boolean(
+        profileMoreEl && profileMoreEl.closest(".wallet-more-menu")
+      );
+      const inWalletMore = Boolean(
+        profileMoreEl && (profileMoreEl.closest(".wallet-more") || inWalletMoreMenu)
+      );
+      if (!inWalletMore) closeWalletMore();
+      if (inWalletMoreMenu) {
+        const convertItem = profileMoreEl.closest(".wallet-more-item");
+        if (convertItem) {
+          e.preventDefault();
+          const asset = convertItem.getAttribute("data-convert-asset") || "hbd";
+          closeWalletMore();
+          openConvertOverlay(asset);
+        }
+        return;
+      }
+      if (inWalletMore) {
+        const walletMoreBtn = profileMoreEl.closest(".wallet-more-btn");
+        if (walletMoreBtn) {
+          e.preventDefault();
+          toggleWalletMore(walletMoreBtn);
+        }
+        return;
+      }
       if (inContentMore) {
         const contentMoreBtn = profileMoreEl.closest(".content-more-btn");
         if (contentMoreBtn) {
@@ -25830,6 +26249,43 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && sendOverlay.contains(active)) return;
         closeSendOverlay();
+      });
+    }
+
+    const convertOverlay = $("#convertOverlay");
+    if (convertOverlay) {
+      const convertCancel = $("#convertCancel");
+      const convertSubmit = $("#convertSubmit");
+      const convertMax = $("#convertMax");
+      const convertAmount = $("#convertAmount");
+      const convertAsset = $("#convertAsset");
+      if (convertCancel) convertCancel.addEventListener("click", closeConvertOverlay);
+      if (convertSubmit) convertSubmit.addEventListener("click", submitConvert);
+      if (convertMax) convertMax.addEventListener("click", fillConvertMax);
+      const convertAvailable = $("#convertAvailable");
+      if (convertAvailable) {
+        convertAvailable.addEventListener("click", (e) => {
+          if (!e.target.closest(".wallet-available-amt")) return;
+          fillConvertMax();
+        });
+      }
+      if (convertAmount) {
+        convertAmount.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitConvert();
+        });
+      }
+      if (convertAsset) {
+        convertAsset.addEventListener("click", (e) => {
+          const tab = e.target.closest("[data-convert-asset]");
+          if (!tab || convertState.pending) return;
+          setConvertAsset(tab.getAttribute("data-convert-asset") || "hbd");
+        });
+      }
+      convertOverlay.addEventListener("click", (e) => {
+        if (e.target !== convertOverlay) return;
+        const active = document.activeElement;
+        if (active && convertOverlay.contains(active)) return;
+        closeConvertOverlay();
       });
     }
 
