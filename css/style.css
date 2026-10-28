@@ -5208,19 +5208,56 @@ body:has(#peopleOverlay:not([hidden])) {
 }
 
 .people-card-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  column-gap: 0.75rem;
   flex: 0 0 auto;
   margin-bottom: 0.85rem;
 }
 
 .people-card-head h2 {
   margin-bottom: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-card .people-search {
+  grid-column: 2;
+  width: 16rem;
+  max-width: 100%;
+  margin: 0;
+  justify-self: center;
+}
+
+.people-card .people-search input {
+  width: 100%;
+  margin: 0;
+  padding: 0.7rem 2.85rem 0.7rem 0.9rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  outline: none;
+}
+
+.people-card .people-search input:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+.people-card .people-search input::placeholder {
+  color: var(--gray-dim);
+  opacity: 0.85;
 }
 
 .people-close {
+  grid-column: 3;
+  justify-self: end;
   appearance: none;
   -webkit-appearance: none;
   display: inline-flex;
@@ -6988,6 +7025,35 @@ body:has(#peopleOverlay:not([hidden])) {
     min-height: 0;
     max-height: none;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .people-card-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .people-card-head h2 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .people-close {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    z-index: 2;
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .people-card .people-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    /* Placeholder lines up with the @name after the 28px avatar. */
+    width: auto;
+    max-width: none;
+    margin-top: 0.7rem;
+    margin-left: calc(28px + 0.55rem - 0.9rem);
+    justify-self: stretch;
   }
 }
 

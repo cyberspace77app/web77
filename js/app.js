@@ -252,6 +252,8 @@ let CS77_FILTER_LOW_REP = 20;
     open: false,
     kind: "",
     id: "",
+    query: "",
+    prefixChecked: false,
     names: [],
     seen: new Set(),
     cursor: "",
@@ -260,6 +262,8 @@ let CS77_FILTER_LOW_REP = 20;
     holdAuto: false,
     error: "",
   };
+  let peopleSearchTimer = 0;
+  let peopleChainGen = 0;
   // The open panel is its own history entry so the browser back button closes it.
   let peopleHistoryOn = false;
   let peopleHistoryPop = false;
@@ -17317,8 +17321,50 @@ let CS77_FILTER_LOW_REP = 20;
     return "Followers";
   }
 
-  function peopleEmptyHtml(kind, error) {
+  function peopleQueryFromRaw(raw) {
+    return String(raw || "")
+      .trim()
+      .replace(/^@+/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9.\-]/g, "")
+      .slice(0, 16);
+  }
+
+  // Names are alphabetical. A query keeps names that start with it and stops
+  // once a later name shows the prefix is finished.
+  function peopleNamesForQuery(names, query) {
+    const kept = [];
+    let past = false;
+    const q = query || "";
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      if (!q || name.indexOf(q) === 0) kept.push(name);
+      else if (name > q) {
+        past = true;
+        break;
+      }
+    }
+    return { kept, past };
+  }
+
+  // No Hive account can start with this text, so the open list cannot either.
+  async function peoplePrefixExists(query, gen) {
+    if (!query) return true;
+    if (!/^[a-z][a-z0-9.\-]{0,15}$/.test(query)) return false;
+    try {
+      const found = await HiveApi.lookupAccounts(query, 1);
+      if (peopleList.gen !== gen || !peopleList.open) return false;
+      const name = String((found && found[0]) || "").toLowerCase();
+      return name.indexOf(query) === 0;
+    } catch (err) {
+      if (peopleList.gen !== gen || !peopleList.open) return false;
+      return true;
+    }
+  }
+
+  function peopleEmptyHtml(kind, error, query) {
     if (!error) {
+      if (query) return `<p class="people-empty">No matching usernames.</p>`;
       const note =
         kind === "following"
           ? "Not following anyone yet."
@@ -17358,8 +17404,19 @@ let CS77_FILTER_LOW_REP = 20;
     const state = peopleList;
     if (!list || !status) return;
     if (!state.names.length && !state.loading) {
+      if (state.query && !state.done && !state.error) {
+        list.className = "follow-list";
+        list.innerHTML = "";
+        status.className = "loading-row";
+        status.hidden = false;
+        status.innerHTML = state.holdAuto
+          ? ""
+          : `<span class="btn-loader" aria-hidden="true"></span> Loading…`;
+        if (more) more.hidden = !state.holdAuto;
+        return;
+      }
       list.className = "";
-      list.innerHTML = peopleEmptyHtml(state.kind, state.error);
+      list.innerHTML = peopleEmptyHtml(state.kind, state.error, state.query);
       status.hidden = true;
       status.textContent = "";
       if (more) more.hidden = !state.error;
@@ -17391,7 +17448,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     status.hidden = true;
     status.textContent = "";
-    if (more) more.hidden = true;
+    if (more) more.hidden = !(state.holdAuto && state.query && !state.done);
   }
 
   function appendPeopleAccounts(names) {
@@ -17429,36 +17486,52 @@ let CS77_FILTER_LOW_REP = 20;
     const before = state.names.length;
     let failed = false;
     try {
-      if (kind === "subscribers") {
+      if (state.query && !state.cursor && !state.names.length && !state.prefixChecked) {
+        state.prefixChecked = true;
+        const exists = await peoplePrefixExists(state.query, gen);
+        if (state.gen !== gen || !state.open) return false;
+        if (!exists) state.done = true;
+      }
+      if (!state.done && kind === "subscribers") {
         let guard = 0;
-        while (guard++ < 30 && state.gen === gen && state.open && !state.done) {
+        const pageGuard = state.query ? 1 : 30;
+        while (guard++ < pageGuard && state.gen === gen && state.open && !state.done) {
           const previous = state.cursor;
           const rows = await HiveApi.listSubscribers(id, previous, COMMUNITY_SUBSCRIBER_PAGE);
           if (state.gen !== gen || !state.open) return false;
           setNodeLabel();
           const step = peopleSubscriberNames(rows, previous, state.seen);
-          for (let i = 0; i < step.names.length; i++) state.names.push(step.names[i]);
+          const picked = peopleNamesForQuery(step.names, state.query);
+          for (let i = 0; i < picked.kept.length; i++) state.names.push(picked.kept[i]);
           if (step.last && step.last !== previous) state.cursor = step.last;
-          if (!rows.length || rows.length < COMMUNITY_SUBSCRIBER_PAGE || !step.last || step.last === previous) {
+          if (
+            picked.past ||
+            !rows.length ||
+            rows.length < COMMUNITY_SUBSCRIBER_PAGE ||
+            !step.last ||
+            step.last === previous
+          ) {
             state.done = true;
           }
-          if (step.names.length) {
-            appendPeopleAccounts(step.names);
+          if (picked.kept.length) {
+            appendPeopleAccounts(picked.kept);
             break;
           }
         }
-      } else {
+      } else if (!state.done) {
+        const followLimit = state.query ? 1000 : FOLLOW_PAGE;
         const rows =
           kind === "following"
-            ? await HiveApi.getFollowing(id, state.cursor, FOLLOW_PAGE)
-            : await HiveApi.getFollowers(id, state.cursor, FOLLOW_PAGE);
+            ? await HiveApi.getFollowing(id, state.cursor, followLimit)
+            : await HiveApi.getFollowers(id, state.cursor, followLimit);
         if (state.gen !== gen || !state.open) return false;
         setNodeLabel();
         const names = followNamesFromRows(rows, kind, state.cursor);
-        for (let i = 0; i < names.length; i++) state.names.push(names[i]);
+        const picked = peopleNamesForQuery(names, state.query);
+        for (let i = 0; i < picked.kept.length; i++) state.names.push(picked.kept[i]);
         if (names.length) state.cursor = names[names.length - 1];
-        if (!rows.length || rows.length < FOLLOW_PAGE || !names.length) state.done = true;
-        appendPeopleAccounts(names);
+        if (picked.past || !rows.length || rows.length < followLimit || !names.length) state.done = true;
+        appendPeopleAccounts(picked.kept);
       }
     } catch (err) {
       if (state.gen !== gen || !state.open) return false;
@@ -17471,22 +17544,103 @@ let CS77_FILTER_LOW_REP = 20;
     if (state.gen !== gen || !state.open) return false;
     paintPeopleList();
     if (failed || state.done) return false;
+    if (state.query) return true;
     return state.names.length > before;
+  }
+
+  function peopleListNeedsMore() {
+    const state = peopleList;
+    if (!state.open || state.done || state.holdAuto || state.loading || !state.id) return false;
+    if (state.query && state.names.length < 24) return true;
+    return peopleTailNearView();
   }
 
   async function fillAndChainPeople() {
     const gen = peopleList.gen;
-    let chain = await fillPeoplePage();
-    while (chain && peopleList.gen === gen && peopleList.open && peopleTailNearView()) {
-      chain = await fillPeoplePage();
+    if (peopleChainGen === gen) return;
+    peopleChainGen = gen;
+    try {
+      let chain = await fillPeoplePage();
+      let guard = 0;
+      const guardLimit = peopleList.query ? (peopleList.kind === "subscribers" ? 80 : 40) : 12;
+      while (
+        chain &&
+        guard++ < guardLimit &&
+        peopleList.gen === gen &&
+        peopleList.open &&
+        peopleListNeedsMore()
+      ) {
+        chain = await fillPeoplePage();
+      }
+      if (
+        peopleList.gen === gen &&
+        peopleList.open &&
+        peopleList.query &&
+        !peopleList.done &&
+        !peopleList.error &&
+        peopleList.names.length < 24
+      ) {
+        peopleList.holdAuto = true;
+        paintPeopleList();
+      }
+    } finally {
+      if (peopleChainGen === gen) peopleChainGen = 0;
     }
   }
 
   function maybeLoadMorePeople() {
-    const state = peopleList;
-    if (!state.open || state.loading || state.holdAuto || state.done || !state.id) return;
-    if (!peopleTailNearView()) return;
+    if (!peopleListNeedsMore()) return;
     fillAndChainPeople();
+  }
+
+  function applyPeopleSearch(raw) {
+    if (!peopleList.open) return;
+    const next = peopleQueryFromRaw(raw);
+    if (next === peopleList.query) return;
+    if (peopleSearchTimer) {
+      clearTimeout(peopleSearchTimer);
+      peopleSearchTimer = 0;
+    }
+    peopleList.gen += 1;
+    peopleList.query = next;
+    peopleList.prefixChecked = false;
+    peopleList.names = [];
+    peopleList.seen = new Set();
+    peopleList.cursor = "";
+    peopleList.done = false;
+    peopleList.loading = false;
+    peopleList.holdAuto = false;
+    peopleList.error = "";
+    const list = document.getElementById("peopleList");
+    if (list) {
+      list.className = "follow-list";
+      list.innerHTML = "";
+    }
+    const status = document.getElementById("peopleStatus");
+    if (status) {
+      status.hidden = false;
+      status.className = "loading-row";
+      status.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Loading…`;
+    }
+    const more = document.getElementById("peopleMoreBtn");
+    if (more) more.hidden = true;
+    const scroller = document.getElementById("peopleScroll");
+    if (scroller) scroller.scrollTop = 0;
+    fillAndChainPeople();
+  }
+
+  function schedulePeopleSearch(raw) {
+    if (peopleSearchTimer) clearTimeout(peopleSearchTimer);
+    const next = peopleQueryFromRaw(raw);
+    if (!next || next === peopleList.query) {
+      peopleSearchTimer = 0;
+      if (next !== peopleList.query) applyPeopleSearch(raw);
+      return;
+    }
+    peopleSearchTimer = setTimeout(() => {
+      peopleSearchTimer = 0;
+      applyPeopleSearch(raw);
+    }, 200);
   }
 
   function peopleHistoryState(kind, id) {
@@ -17505,10 +17659,16 @@ let CS77_FILTER_LOW_REP = 20;
       if (overlayEl) overlayEl.hidden = true;
       return;
     }
+    if (peopleSearchTimer) {
+      clearTimeout(peopleSearchTimer);
+      peopleSearchTimer = 0;
+    }
     peopleList.gen += 1;
     peopleList.open = false;
     peopleList.kind = "";
     peopleList.id = "";
+    peopleList.query = "";
+    peopleList.prefixChecked = false;
     peopleList.names = [];
     peopleList.seen = new Set();
     peopleList.cursor = "";
@@ -17516,6 +17676,8 @@ let CS77_FILTER_LOW_REP = 20;
     peopleList.loading = false;
     peopleList.holdAuto = false;
     peopleList.error = "";
+    const peopleSearch = document.getElementById("peopleSearch");
+    if (peopleSearch) peopleSearch.value = "";
     if (overlayEl) overlayEl.hidden = true;
     paintPeopleCounts();
     if (peopleHistoryOn && !skipHistory) {
@@ -17534,10 +17696,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (kind !== "followers" && kind !== "following" && kind !== "subscribers") return;
     const overlayEl = $("#peopleOverlay");
     if (!overlayEl) return;
+    if (peopleSearchTimer) {
+      clearTimeout(peopleSearchTimer);
+      peopleSearchTimer = 0;
+    }
     peopleList.gen += 1;
     peopleList.open = true;
     peopleList.kind = kind;
     peopleList.id = id;
+    peopleList.query = "";
+    peopleList.prefixChecked = false;
     peopleList.names = [];
     peopleList.seen = new Set();
     peopleList.cursor = "";
@@ -17545,6 +17713,8 @@ let CS77_FILTER_LOW_REP = 20;
     peopleList.loading = false;
     peopleList.holdAuto = false;
     peopleList.error = "";
+    const peopleSearch = document.getElementById("peopleSearch");
+    if (peopleSearch) peopleSearch.value = "";
     const title = $("#peopleTitle");
     if (title) title.textContent = peopleTitle(kind);
     const list = document.getElementById("peopleList");
@@ -24302,6 +24472,23 @@ let CS77_FILTER_LOW_REP = 20;
     const peopleClose = $("#peopleClose");
     const peopleMore = $("#peopleMoreBtn");
     if (peopleClose) peopleClose.addEventListener("click", closePeoplePanel);
+    const peopleSearchForm = $("#peopleSearchForm");
+    const peopleSearch = $("#peopleSearch");
+    if (peopleSearchForm) {
+      peopleSearchForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (peopleSearchTimer) {
+          clearTimeout(peopleSearchTimer);
+          peopleSearchTimer = 0;
+        }
+        applyPeopleSearch(peopleSearch ? peopleSearch.value : "");
+      });
+    }
+    if (peopleSearch) {
+      peopleSearch.addEventListener("input", () => {
+        schedulePeopleSearch(peopleSearch.value);
+      });
+    }
     if (peopleMore) {
       peopleMore.addEventListener("click", () => {
         if (peopleList.loading) return;
