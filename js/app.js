@@ -15824,6 +15824,7 @@ let CS77_FILTER_LOW_REP = 20;
     return `<div class="wallet-more">
       <button type="button" class="wallet-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
       <div class="wallet-more-menu" role="menu" hidden>
+        <a class="wallet-more-item" role="menuitem" href="https://hivehub.dev/market/swap" target="_blank" rel="noopener noreferrer">Swap</a>
         <button type="button" class="wallet-more-item" role="menuitem" data-convert-asset="${kind}">Convert</button>
       </div>
     </div>`;
@@ -25680,13 +25681,15 @@ let CS77_FILTER_LOW_REP = 20;
       );
       if (!inWalletMore) closeWalletMore();
       if (inWalletMoreMenu) {
-        const convertItem = profileMoreEl.closest(".wallet-more-item");
+        const convertItem = profileMoreEl.closest("[data-convert-asset]");
         if (convertItem) {
           e.preventDefault();
           const asset = convertItem.getAttribute("data-convert-asset") || "hbd";
           closeWalletMore();
           openConvertOverlay(asset);
+          return;
         }
+        if (profileMoreEl.closest(".wallet-more-item")) setTimeout(closeWalletMore, 0);
         return;
       }
       if (inWalletMore) {
