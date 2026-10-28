@@ -14784,6 +14784,19 @@ let CS77_FILTER_LOW_REP = 20;
     //curation_reward: "curation reward",
     //comment_benefactor_reward: "benefactor reward",
     interest: "hbd interest",
+    limit_order_create: "limit order create",
+    limit_order_create2: "limit order create2",
+    limit_order_cancel: "limit order cancel",
+    fill_order: "fill order",
+    limit_order_cancelled: "limit order cancelled",
+  };
+
+  const WALLET_ORDER_FIELDS = {
+    limit_order_create: ["owner", "orderid", "amount_to_sell", "min_to_receive", "fill_or_kill", "expiration"],
+    limit_order_create2: ["owner", "orderid", "amount_to_sell", "exchange_rate", "fill_or_kill", "expiration"],
+    limit_order_cancel: ["owner", "orderid"],
+    fill_order: ["current_owner", "current_orderid", "current_pays", "open_owner", "open_orderid", "open_pays"],
+    limit_order_cancelled: ["seller", "orderid", "amount_back"],
   };
 
   function walletTxAmounts(type, payload, props) {
@@ -14813,6 +14826,16 @@ let CS77_FILTER_LOW_REP = 20;
       push(payload.reward);
     } else if (type === "interest") {
       push(payload.interest);
+    } else if (type === "fill_order") {
+      push(payload.current_pays);
+      push(payload.open_pays);
+    } else if (type === "limit_order_create") {
+      push(payload.amount_to_sell);
+      push(payload.min_to_receive);
+    } else if (type === "limit_order_create2") {
+      push(payload.amount_to_sell);
+    } else if (type === "limit_order_cancelled") {
+      push(payload.amount_back);
     }
     return parts.filter(Boolean).join(" · ");
   }
@@ -14978,6 +15001,52 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (type === "claim_reward_balance") return "pending rewards claimed";
     return "";
+  }
+
+  function walletOrderAccountKey(key) {
+    return key === "owner" || key === "current_owner" || key === "open_owner" || key === "seller";
+  }
+
+  function walletAssetText(val, props) {
+    const s = String(val || "").trim();
+    if (!/^-?\d+(?:\.\d+)?\s+[A-Za-z]+$/.test(s)) return "";
+    return chainAssetToLower(s, props);
+  }
+
+  function walletOrderValueHtml(key, value, props) {
+    if (value == null || value === "") return "";
+    if (key === "exchange_rate" && typeof value === "object") {
+      const base = walletAssetText(value.base, props);
+      const quote = walletAssetText(value.quote, props);
+      if (!base && !quote) return "";
+      return HiveMd.escapeHtml([base, quote].filter(Boolean).join(" / "));
+    }
+    if (typeof value === "boolean") return value ? "true" : "false";
+    if (typeof value === "number") return HiveMd.escapeHtml(String(value));
+    if (typeof value === "object") return "";
+    const text = String(value).trim();
+    if (!text) return "";
+    if (walletOrderAccountKey(key)) return walletAccountHtml(text);
+    const asset = walletAssetText(text, props);
+    if (asset) return HiveMd.escapeHtml(asset);
+    return HiveMd.escapeHtml(text);
+  }
+
+  function walletTxFieldsHtml(type, payload, props) {
+    const keys = WALLET_ORDER_FIELDS[type];
+    if (!keys || !payload) return "";
+    let html = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+      const value = walletOrderValueHtml(key, payload[key], props);
+      if (!value) continue;
+      html +=
+        `<div class="wallet-tx-field"><span class="wallet-tx-field-key">${HiveMd.escapeHtml(key)}</span>` +
+        value +
+        "</div>";
+    }
+    return html ? `<div class="wallet-tx-fields">${html}</div>` : "";
   }
 
   function walletTxMemo(type, payload) {
@@ -15184,6 +15253,7 @@ let CS77_FILTER_LOW_REP = 20;
     const payload = op[1] || {};
     const amount = walletTxAmounts(type, payload, props);
     const detail = walletTxDetail(type, payload);
+    const fields = walletTxFieldsHtml(type, payload, props);
     const memo = walletTxMemoHtml(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
     const abs = rec.timestamp ? formatCreatedUtc(rec.timestamp) : "";
@@ -15200,6 +15270,7 @@ let CS77_FILTER_LOW_REP = 20;
       <div class="wallet-tx-main">
         <span class="wallet-tx-type">${HiveMd.escapeHtml(WALLET_TX_TYPES[type])}</span>
         ${detail ? `<span class="wallet-tx-detail">${detail}</span>` : ""}
+        ${fields || ""}
         ${memo || ""}
       </div>
       <div class="wallet-tx-side">

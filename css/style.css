@@ -4785,7 +4785,8 @@ a.tag:hover {
 }
 
 .wallet-tx-detail a.mention,
-.wallet-tx-memo a.mention {
+.wallet-tx-memo a.mention,
+.wallet-tx-field a.mention {
   color: inherit;
   text-shadow: none;
 }
@@ -4793,9 +4794,34 @@ a.tag:hover {
 .wallet-tx-detail a.mention:hover,
 .wallet-tx-detail a.mention:focus-visible,
 .wallet-tx-memo a.mention:hover,
-.wallet-tx-memo a.mention:focus-visible {
+.wallet-tx-memo a.mention:focus-visible,
+.wallet-tx-field a.mention:hover,
+.wallet-tx-field a.mention:focus-visible {
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
+}
+
+.wallet-tx-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  margin-top: 0.35rem;
+}
+
+.wallet-tx-field {
+  font-family: var(--font-body);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.wallet-tx-field-key {
+  color: var(--gray);
+}
+
+.wallet-tx-field-key::after {
+  content: ": ";
 }
 
 .wallet-tx-memo {
