@@ -4597,6 +4597,17 @@ a.tag:hover {
   line-height: 1.45;
 }
 
+.wallet-powerdown-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.85rem;
+}
+
+.wallet-powerdown-cancel {
+  flex: 0 0 auto;
+}
+
 .wallet-powerdown {
   display: inline-block;
   position: relative;
@@ -5054,6 +5065,12 @@ a.wallet-tx-time:hover {
   flex: 1;
   min-width: 0;
   margin-bottom: 0;
+}
+
+#walletOverlay.is-confirm-only label[for="walletAmount"],
+#walletOverlay.is-confirm-only .wallet-amount-row,
+#walletOverlay.is-confirm-only #walletOpAvailable {
+  display: none;
 }
 
 #walletOverlay .wallet-amount-row,

@@ -15817,7 +15817,7 @@ let CS77_FILTER_LOW_REP = 20;
     return '<span class="session-stat-tip" id="walletPowerDownTip" role="tooltip">' + lines + "</span>";
   }
 
-  function walletPowerDownNote(wallet) {
+  function walletPowerDownNote(wallet, own) {
     if (!wallet || wallet.toWithdrawVests <= 0) return "";
     const total = HiveApi.vestsToHive(wallet.toWithdrawVests, wallet.props);
     const done = HiveApi.vestsToHive(wallet.withdrawnVests, wallet.props);
@@ -15825,13 +15825,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (left <= 0) return "";
     const text = "Powering down " + formatHiveLike(left, "hive") + " remaining.";
     const schedule = powerDownSchedule(wallet);
-    if (!schedule) return `<p class="wallet-note">${HiveMd.escapeHtml(text)}</p>`;
-    return (
-      '<p class="wallet-note"><span class="wallet-powerdown" tabindex="0" aria-describedby="walletPowerDownTip">' +
-      HiveMd.escapeHtml(text) +
-      walletPowerDownTip(schedule) +
-      "</span></p>"
-    );
+    const body = schedule
+      ? '<span class="wallet-powerdown" tabindex="0" aria-describedby="walletPowerDownTip">' +
+        HiveMd.escapeHtml(text) +
+        walletPowerDownTip(schedule) +
+        "</span>"
+      : HiveMd.escapeHtml(text);
+    const cancel = own
+      ? '<button type="button" class="btn-ghost btn-compact wallet-powerdown-cancel">Cancel</button>'
+      : "";
+    return '<p class="wallet-note wallet-powerdown-note">' + body + cancel + "</p>";
   }
 
   function clearDelegationView() {
@@ -16367,7 +16370,7 @@ let CS77_FILTER_LOW_REP = 20;
               </tbody>
             </table>
           </div>
-          ${walletPowerDownNote(w)}
+          ${walletPowerDownNote(w, own)}
         </section>
         <section class="wallet-section">
           <h2>Transactions</h2>
@@ -16392,6 +16395,13 @@ let CS77_FILTER_LOW_REP = 20;
         symbol: "hive",
       };
     }
+    if (kind === "cancel-powerdown") {
+      return {
+        title: "Cancel unstake hive",
+        lead: "Stop the power down. Weekly payouts end, and the remaining hive stays staked.",
+        symbol: "hive",
+      };
+    }
     if (kind === "stake-hbd") {
       return {
         title: "Stake hbd",
@@ -16407,6 +16417,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function walletSignCopy(kind, user, amount) {
+    if (kind === "cancel-powerdown") {
+      return {
+        title: "Cancel unstake hive",
+        lead:
+          "Use hive keychain (recommended) or enter the active key of @" +
+          user +
+          ". Stops the power down. The remaining hive stays staked.",
+        cancelMessage: "The power down was not cancelled.",
+        failMessage: "Could not cancel this power down.",
+      };
+    }
     const unstake = kind.indexOf("unstake") === 0;
     const symbol = kind.indexOf("hbd") === -1 ? "hive" : "hbd";
     const shown = formatHiveLike(amount, symbol);
@@ -16521,7 +16542,10 @@ let CS77_FILTER_LOW_REP = 20;
   function closeWalletOverlay() {
     if (ownerSignSession && ownerSignSession.source === "wallet") return;
     const ov = $("#walletOverlay");
-    if (ov) ov.hidden = true;
+    if (ov) {
+      ov.hidden = true;
+      ov.classList.remove("is-confirm-only");
+    }
     walletOpState.kind = "";
     walletOpState.max = 0;
     walletOpState.pending = false;
@@ -16535,7 +16559,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function openWalletOverlay(kind) {
+    const cancelPower = kind === "cancel-powerdown";
     if (
+      !cancelPower &&
       kind !== "stake-hive" &&
       kind !== "unstake-hive" &&
       kind !== "stake-hbd" &&
@@ -16551,8 +16577,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const copy = walletOpCopy(kind);
-    const max = walletMaxFor(kind, wallet);
-    if (max <= 0) {
+    const max = cancelPower ? 0 : walletMaxFor(kind, wallet);
+    if (!cancelPower && max <= 0) {
       showError("No " + copy.symbol + " available for this.");
       return;
     }
@@ -16566,7 +16592,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (lead) lead.textContent = copy.lead;
     const available = $("#walletOpAvailable");
     if (available) {
-      available.innerHTML = "Available: " + availableAmountButton(formatHiveLike(max, copy.symbol)) + ".";
+      available.innerHTML = cancelPower
+        ? ""
+        : "Available: " + availableAmountButton(formatHiveLike(max, copy.symbol)) + ".";
     }
     const input = $("#walletAmount");
     if (input) {
@@ -16577,8 +16605,31 @@ let CS77_FILTER_LOW_REP = 20;
     const submit = $("#walletOpSubmit");
     if (submit) submit.disabled = false;
     const ov = $("#walletOverlay");
-    if (ov) ov.hidden = false;
-    if (input) input.focus();
+    if (ov) {
+      ov.classList.toggle("is-confirm-only", cancelPower);
+      ov.hidden = false;
+    }
+    if (cancelPower) {
+      if (submit) submit.focus();
+    } else if (input) input.focus();
+  }
+
+  // withdraw_vesting of 0 stops the weekly payout. PeakD and Ecency do the same.
+  function applyWalletPowerDownCancel(wallet) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    wallet.toWithdrawVests = 0;
+    wallet.withdrawnVests = 0;
+    wallet.withdrawRate = 0;
+    wallet.nextWithdrawal = "";
+    const accounts = walletAccounts(wallet);
+    for (let i = 0; i < accounts.length; i++) {
+      accounts[i].to_withdraw = 0;
+      accounts[i].withdrawn = 0;
+      accounts[i].vesting_withdraw_rate = "0.000000 VESTS";
+      accounts[i].next_vesting_withdrawal = "1970-01-01T00:00:00";
+    }
+    const note = view.querySelector(".wallet-powerdown-note");
+    if (note) note.remove();
   }
 
   function fillWalletMax() {
@@ -16608,15 +16659,19 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     if (!kind || !wallet || !user || !isOwnAuthor(profileState.author)) return;
     if (walletOpState.pending || ownerSignOpen()) return;
-    const amount = roundAsset(parseAmountInput($("#walletAmount") && $("#walletAmount").value), 3);
-    if (amount < 0.001) {
-      setWalletOpStatus("Enter an amount of at least 0.001.", true);
-      return;
-    }
-    const max = roundAsset(walletMaxFor(kind, wallet), 3);
-    if (amount > max + 0.0000001) {
-      setWalletOpStatus("That is more than " + formatHiveLike(max, walletOpState.symbol) + ".", true);
-      return;
+    const cancelPower = kind === "cancel-powerdown";
+    let amount = 0;
+    if (!cancelPower) {
+      amount = roundAsset(parseAmountInput($("#walletAmount") && $("#walletAmount").value), 3);
+      if (amount < 0.001) {
+        setWalletOpStatus("Enter an amount of at least 0.001.", true);
+        return;
+      }
+      const max = roundAsset(walletMaxFor(kind, wallet), 3);
+      if (amount > max + 0.0000001) {
+        setWalletOpStatus("That is more than " + formatHiveLike(max, walletOpState.symbol) + ".", true);
+        return;
+      }
     }
     walletOpState.pending = true;
     const submit = $("#walletOpSubmit");
@@ -16640,6 +16695,13 @@ let CS77_FILTER_LOW_REP = 20;
           [
             "withdraw_vesting",
             { account: user, vesting_shares: formatChainAmount(vests, "VESTS", 6) },
+          ],
+        ];
+      } else if (kind === "cancel-powerdown") {
+        operations = [
+          [
+            "withdraw_vesting",
+            { account: user, vesting_shares: "0.000000 VESTS" },
           ],
         ];
       } else if (kind === "stake-hbd") {
@@ -16700,6 +16762,11 @@ let CS77_FILTER_LOW_REP = 20;
         // paint the pre-stake account over the balances just applied.
         resourceGen += 1;
         applyWalletStake(profileState.wallet, kind, amount);
+        return;
+      }
+      if (kind === "cancel-powerdown") {
+        resourceGen += 1;
+        applyWalletPowerDownCancel(profileState.wallet);
         return;
       }
       currentViewKey = "";
@@ -24906,6 +24973,12 @@ let CS77_FILTER_LOW_REP = 20;
       if (stakeBtn && inInteractiveSurface(stakeBtn)) {
         e.preventDefault();
         openWalletOverlay(stakeBtn.getAttribute("data-wallet-op") || "");
+        return;
+      }
+      const cancelPowerBtn = e.target.closest(".wallet-powerdown-cancel");
+      if (cancelPowerBtn && inInteractiveSurface(cancelPowerBtn)) {
+        e.preventDefault();
+        openWalletOverlay("cancel-powerdown");
         return;
       }
       const sendBtn = e.target.closest(".wallet-send-btn");
