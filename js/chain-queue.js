@@ -1,17 +1,16 @@
 /**
- * Blockchain operation queue. Jobs are handed to a worker thread and
- * broadcast in the background, one at a time, with a stored posting key
- * or Hive Keychain.
+ * Blockchain operation queue. Jobs run one at a time on this page.
+ * Signing and broadcast use a stored posting key or Hive Keychain,
+ * both of which stay on the page thread.
  */
 (function (global) {
   "use strict";
 
   const listeners = new Set();
   const pending = new Map();
+  const queue = [];
   let seq = 0;
-  let worker = null;
-  let fallback = null;
-  let queueSize = 0;
+  let inflight = null;
 
   function emit(event) {
     listeners.forEach((fn) => {
@@ -26,6 +25,10 @@
   function nextId() {
     seq += 1;
     return "cs77-op-" + seq + "-" + Date.now();
+  }
+
+  function queueSize() {
+    return queue.length + (inflight ? 1 : 0);
   }
 
   function executeOp(op) {
@@ -78,148 +81,40 @@
     else job.reject(error instanceof Error ? error : new Error(error || "Operation failed."));
   }
 
-  function handleWorkerMessage(msg) {
-    if (!msg || !msg.type) return;
-    if (typeof msg.size === "number") queueSize = msg.size;
-
-    if (msg.type === "queued") {
-      emit({ type: "queued", id: msg.id, size: queueSize });
-      return;
-    }
-
-    if (msg.type === "process") {
-      emit({ type: "process", id: msg.id, op: msg.op, size: queueSize });
-      executeOp(msg.op)
-        .then((result) => {
-          postResult(msg.id, true, "", result);
-        })
-        .catch((err) => {
-          postResult(msg.id, false, (err && err.message) || String(err), null);
-        });
-      return;
-    }
-
-    if (msg.type === "done") {
-      emit({ type: "done", id: msg.id, result: msg.result, size: queueSize });
-      settle(msg.id, true, null, msg.result);
-      return;
-    }
-
-    if (msg.type === "failed") {
-      emit({ type: "failed", id: msg.id, error: msg.error, size: queueSize });
-      settle(msg.id, false, msg.error, null);
-      return;
-    }
-
-    if (msg.type === "idle") {
-      queueSize = 0;
-      emit({ type: "idle", size: 0 });
-    }
-  }
-
-  function cloneResult(result) {
-    try {
-      return JSON.parse(JSON.stringify(result || null));
-    } catch {
-      return successPayload();
-    }
-  }
-
-  function successPayload() {
-    return { success: true };
-  }
-
-  function postResult(id, success, error, result) {
-    const payload = {
-      type: "result",
-      id,
-      success,
-      error: error || "",
-      result: success ? cloneResult(result) : null,
-    };
-    if (worker) {
-      try {
-        worker.postMessage(payload);
-      } catch {
-        worker.postMessage({
-          type: "result",
-          id,
-          success,
-          error: error || "",
-          result: success ? successPayload() : null,
-        });
-      }
-      return;
-    }
-    if (fallback) fallback.result(id, success, error, payload.result);
-  }
-
-  function FallbackQueue() {
-    this.queue = [];
-    this.inflight = null;
-  }
-
-  FallbackQueue.prototype.size = function () {
-    return this.queue.length + (this.inflight ? 1 : 0);
-  };
-
-  FallbackQueue.prototype.enqueue = function (job) {
-    this.queue.push(job);
-    handleWorkerMessage({ type: "queued", id: job.id, size: this.size() });
-    this.pump();
-  };
-
-  FallbackQueue.prototype.result = function (id, success, error, result) {
-    if (!this.inflight || this.inflight.id !== id) return;
-    this.inflight = null;
-    handleWorkerMessage({
+  function finish(id, success, error, result) {
+    if (!inflight || inflight.id !== id) return;
+    inflight = null;
+    const event = {
       type: success ? "done" : "failed",
       id,
-      error,
-      result,
-      size: this.size(),
-    });
-    this.pump();
-  };
+      size: queueSize(),
+    };
+    if (success) event.result = result;
+    else event.error = error || "";
+    emit(event);
+    settle(id, success, error, result);
+    pump();
+  }
 
-  FallbackQueue.prototype.pump = function () {
-    if (this.inflight) return;
-    if (!this.queue.length) {
-      handleWorkerMessage({ type: "idle", size: 0 });
+  function pump() {
+    if (inflight) return;
+    if (!queue.length) {
+      emit({ type: "idle", size: 0 });
       return;
     }
-    this.inflight = this.queue.shift();
-    const job = this.inflight;
+    inflight = queue.shift();
+    const job = inflight;
     setTimeout(() => {
-      handleWorkerMessage({
-        type: "process",
-        id: job.id,
-        op: job.op,
-        size: this.size(),
-      });
+      if (inflight !== job) return;
+      emit({ type: "process", id: job.id, op: job.op, size: queueSize() });
+      executeOp(job.op)
+        .then((result) => {
+          finish(job.id, true, "", result);
+        })
+        .catch((err) => {
+          finish(job.id, false, (err && err.message) || String(err), null);
+        });
     }, 0);
-  };
-
-  function startWorker() {
-    try {
-      const url = new URL("js/chain-worker.js", document.baseURI || location.href);
-      worker = new Worker(url.href);
-      worker.onmessage = (event) => handleWorkerMessage(event.data);
-      worker.onerror = () => {
-        if (worker) {
-          try {
-            worker.terminate();
-          } catch {
-            /* ignore */
-          }
-          worker = null;
-        }
-        if (!fallback) fallback = new FallbackQueue();
-      };
-    } catch {
-      worker = null;
-      fallback = new FallbackQueue();
-    }
   }
 
   function enqueue(op) {
@@ -233,12 +128,9 @@
     const promise = new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject, op });
     });
-    if (worker) {
-      worker.postMessage({ type: "enqueue", id, op });
-    } else {
-      if (!fallback) fallback = new FallbackQueue();
-      fallback.enqueue({ id, op });
-    }
+    queue.push({ id, op });
+    emit({ type: "queued", id, size: queueSize() });
+    pump();
     return { id, promise };
   }
 
@@ -325,10 +217,8 @@
   }
 
   function size() {
-    return queueSize;
+    return queueSize();
   }
-
-  startWorker();
 
   global.ChainQueue = {
     enqueue,
