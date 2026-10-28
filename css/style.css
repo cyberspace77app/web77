@@ -4984,6 +4984,33 @@ a.wallet-tx-time:hover {
   display: none;
 }
 
+.wallet-available-amt {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.wallet-available-amt:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.wallet-available-amt:disabled,
+.wallet-available-amt:disabled:hover {
+  color: inherit;
+  text-shadow: none;
+  cursor: default;
+}
+
 #delegateRcUnit {
   flex: 0 0 auto;
   width: auto;

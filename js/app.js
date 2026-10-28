@@ -16289,6 +16289,16 @@ let CS77_FILTER_LOW_REP = 20;
     return 0;
   }
 
+  function availableAmountButton(amountText, disabled) {
+    return (
+      '<button type="button" class="wallet-available-amt"' +
+      (disabled ? " disabled" : "") +
+      ">" +
+      HiveMd.escapeHtml(amountText) +
+      "</button>"
+    );
+  }
+
   function setWalletOpStatus(msg, isError) {
     const el = $("#walletOpStatus");
     if (!el) return;
@@ -16344,7 +16354,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (lead) lead.textContent = copy.lead;
     const available = $("#walletOpAvailable");
     if (available) {
-      available.textContent = "Available: " + formatHiveLike(max, copy.symbol) + ".";
+      available.innerHTML = "Available: " + availableAmountButton(formatHiveLike(max, copy.symbol)) + ".";
     }
     const input = $("#walletAmount");
     if (input) {
@@ -16563,16 +16573,21 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       const max = delegateRcMax(target);
-      let text = "Available: " + formatRcAmount(max) + " rc.";
+      let text = "Available: " + availableAmountButton(formatRcAmount(max) + " rc", delegateState.pending) + ".";
       const about = rcHiveHint(max, wallet && wallet.props);
-      if (about) text += " " + about;
+      if (about) text += " " + HiveMd.escapeHtml(about);
       if (target) {
         const current = outgoingRcAmount(target);
         if (current > 0n) {
-          text += " This includes " + formatRcAmount(current) + " rc already delegated to @" + target + ".";
+          text +=
+            " This includes " +
+            HiveMd.escapeHtml(formatRcAmount(current) + " rc") +
+            " already delegated to @" +
+            HiveMd.escapeHtml(target) +
+            ".";
         }
       }
-      hint.textContent = text;
+      hint.innerHTML = text;
       return;
     }
     if (!wallet || !delegationView.loaded || delegationView.outgoingHp == null) {
@@ -16580,14 +16595,22 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const maxHive = HiveApi.vestsToHive(delegateHpCapVests(target), wallet.props);
-    let text = "Available: " + formatHiveLike(floorAsset(maxHive, 3), "hive") + ".";
+    let text =
+      "Available: " +
+      availableAmountButton(formatHiveLike(floorAsset(maxHive, 3), "hive"), delegateState.pending) +
+      ".";
     if (target) {
       const current = outgoingHpVests(target);
       if (current > 0) {
-        text += " This includes " + formatDelegationHive(current, wallet.props) + " already delegated to @" + target + ".";
+        text +=
+          " This includes " +
+          HiveMd.escapeHtml(formatDelegationHive(current, wallet.props)) +
+          " already delegated to @" +
+          HiveMd.escapeHtml(target) +
+          ".";
       }
     }
-    hint.textContent = text;
+    hint.innerHTML = text;
   }
 
   function applyDelegatedAmountPlaceholder() {
@@ -16653,10 +16676,12 @@ let CS77_FILTER_LOW_REP = 20;
     const cancel = $("#delegateCancel");
     const max = $("#delegateMax");
     const unit = $("#delegateRcUnit");
+    const amountBtn = $("#delegateHint .wallet-available-amt");
     if (submit) submit.disabled = on;
     if (cancel) cancel.disabled = on;
     if (max) max.disabled = on;
     if (unit) unit.disabled = on;
+    if (amountBtn) amountBtn.disabled = on;
   }
 
   function openDelegateDialog(prefill) {
@@ -24587,6 +24612,13 @@ let CS77_FILTER_LOW_REP = 20;
       if (walletCancel) walletCancel.addEventListener("click", closeWalletOverlay);
       if (walletSubmit) walletSubmit.addEventListener("click", submitWalletOp);
       if (walletMax) walletMax.addEventListener("click", fillWalletMax);
+      const walletAvailable = $("#walletOpAvailable");
+      if (walletAvailable) {
+        walletAvailable.addEventListener("click", (e) => {
+          if (!e.target.closest(".wallet-available-amt")) return;
+          fillWalletMax();
+        });
+      }
       if (walletAmount) {
         walletAmount.addEventListener("keydown", (e) => {
           if (e.key === "Enter") submitWalletOp();
@@ -24608,6 +24640,13 @@ let CS77_FILTER_LOW_REP = 20;
       if (delegateCancel) delegateCancel.addEventListener("click", closeDelegateOverlay);
       if (delegateSubmit) delegateSubmit.addEventListener("click", submitDelegate);
       if (delegateMax) delegateMax.addEventListener("click", fillDelegateMax);
+      const delegateHint = $("#delegateHint");
+      if (delegateHint) {
+        delegateHint.addEventListener("click", (e) => {
+          if (!e.target.closest(".wallet-available-amt")) return;
+          fillDelegateMax();
+        });
+      }
       if (delegateUser) {
         delegateUser.addEventListener("input", updateDelegateHint);
         delegateUser.addEventListener("keydown", (e) => {
