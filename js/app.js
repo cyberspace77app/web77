@@ -273,7 +273,12 @@ let CS77_FILTER_LOW_REP = 20;
     max: 0,
     symbol: "hive",
     pending: false,
+    requestId: 0,
   };
+  // Request ids cancelled in this session. A chain read can still list them
+  // until the broadcast lands, so those rows stay hidden and their hbd is
+  // counted back into staked hbd.
+  const hiddenHbdUnstakes = Object.create(null);
   const sendState = {
     asset: "hive",
     pending: false,
@@ -15797,24 +15802,15 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function walletPowerDownTip(schedule) {
-    const rows = [
-      ["initiated", schedule.initiated],
-      ["remains", schedule.remains],
-      ["next payout", schedule.nextText],
-      ["amount", schedule.amountText],
-    ];
-    const lines = rows
-      .map(function (row) {
-        return (
-          '<span class="wallet-powerdown-line"><span class="wallet-powerdown-k">' +
-          HiveMd.escapeHtml(row[0]) +
-          "</span><span>" +
-          HiveMd.escapeHtml(row[1]) +
-          "</span></span>"
-        );
-      })
-      .join("");
-    return '<span class="session-stat-tip" id="walletPowerDownTip" role="tooltip">' + lines + "</span>";
+    return walletScheduleTip(
+      [
+        ["initiated", schedule.initiated],
+        ["remains", schedule.remains],
+        ["next payout", schedule.nextText],
+        ["amount", schedule.amountText],
+      ],
+      "walletPowerDownTip"
+    );
   }
 
   function walletPowerDownNote(wallet, own) {
@@ -15835,6 +15831,345 @@ let CS77_FILTER_LOW_REP = 20;
       ? '<button type="button" class="btn-ghost btn-compact wallet-powerdown-cancel">Cancel</button>'
       : "";
     return '<p class="wallet-note wallet-powerdown-note">' + body + cancel + "</p>";
+  }
+
+  // HIVE_SAVINGS_WITHDRAW_TIME. transfer_from_savings pays the whole amount
+  // once, three days after the request. complete is that payout time.
+  const SAVINGS_WITHDRAW_MS = 3 * 24 * 60 * 60 * 1000;
+
+  function savingsAsset(amount) {
+    if (amount && typeof amount === "object") {
+      const nai = String(amount.nai || "");
+      const symbol = nai === "@@000000013" ? "HBD" : nai === "@@000000021" ? "HIVE" : "";
+      if (!symbol) return null;
+      const places = Number(amount.precision);
+      const decimals = Number.isFinite(places) && places >= 0 ? places : 3;
+      const raw = String(amount.amount == null ? "" : amount.amount);
+      const neg = raw.charAt(0) === "-";
+      const digits = neg ? raw.slice(1) : raw;
+      if (!/^\d+$/.test(digits)) return null;
+      const padded = decimals > 0 ? digits.padStart(decimals + 1, "0") : digits;
+      const whole = decimals > 0 ? padded.slice(0, -decimals) : padded;
+      const frac = decimals > 0 ? padded.slice(-decimals) : "";
+      const value = Number((neg ? "-" : "") + whole + (frac ? "." + frac : ""));
+      if (!Number.isFinite(value)) return null;
+      return { symbol: symbol, amount: value };
+    }
+    const match = String(amount || "")
+      .trim()
+      .match(/(-?[\d.]+)\s*([A-Za-z]+)/);
+    if (!match) return null;
+    const value = Number(match[1]);
+    if (!Number.isFinite(value)) return null;
+    return { symbol: match[2].toUpperCase(), amount: value };
+  }
+
+  function savingsRequestId(value) {
+    const n = Number(value);
+    if (!Number.isSafeInteger(n) || n < 0 || n > 0xffffffff) return null;
+    return n;
+  }
+
+  function parseHbdUnstake(row) {
+    if (!row) return null;
+    const asset = savingsAsset(row.amount);
+    if (!asset || asset.symbol !== "HBD" || !(asset.amount > 0)) return null;
+    const requestId = savingsRequestId(row.request_id);
+    if (requestId == null) return null;
+    return {
+      requestId: requestId,
+      amount: asset.amount,
+      complete: String(row.complete || ""),
+    };
+  }
+
+  function hbdUnstakeSchedule(row) {
+    const completeMs = parseCreatedTs(row.complete);
+    if (!Number.isFinite(completeMs)) return null;
+    if (completeMs < Date.UTC(2016, 0, 1) || completeMs >= Date.UTC(2030, 0, 1)) return null;
+    const initiated = formatCreatedUtc(new Date(completeMs - SAVINGS_WITHDRAW_MS).toISOString());
+    const payout = completeMs <= Date.now() ? "due now" : formatCreatedUtc(row.complete);
+    if (!initiated || !payout) return null;
+    return {
+      initiated: initiated,
+      remains: formatPowerDownRemain(completeMs - Date.now()),
+      payout: payout,
+      amountText: formatHiveLike(roundAsset(row.amount, 3), "hbd"),
+    };
+  }
+
+  function walletScheduleTip(rows, tipId) {
+    const lines = rows
+      .map(function (row) {
+        return (
+          '<span class="wallet-powerdown-line"><span class="wallet-powerdown-k">' +
+          HiveMd.escapeHtml(row[0]) +
+          "</span><span>" +
+          HiveMd.escapeHtml(row[1]) +
+          "</span></span>"
+        );
+      })
+      .join("");
+    return (
+      '<span class="session-stat-tip" id="' +
+      HiveMd.escapeHtml(tipId) +
+      '" role="tooltip">' +
+      lines +
+      "</span>"
+    );
+  }
+
+  function walletHbdUnstakeNote(row, own) {
+    const text = "Unstaking " + formatHiveLike(roundAsset(row.amount, 3), "hbd") + " remaining.";
+    const schedule = hbdUnstakeSchedule(row);
+    const tipId = "walletHbdUnstakeTip-" + row.requestId;
+    const body = schedule
+      ? '<span class="wallet-hbd-unstake" tabindex="0" aria-describedby="' +
+        tipId +
+        '">' +
+        HiveMd.escapeHtml(text) +
+        walletScheduleTip(
+          [
+            ["initiated", schedule.initiated],
+            ["remains", schedule.remains],
+            ["payout", schedule.payout],
+            ["amount", schedule.amountText],
+          ],
+          tipId
+        ) +
+        "</span>"
+      : HiveMd.escapeHtml(text);
+    const cancel = own
+      ? '<button type="button" class="btn-ghost btn-compact wallet-hbd-unstake-cancel" data-request-id="' +
+        row.requestId +
+        '">Cancel</button>'
+      : "";
+    return (
+      '<p class="wallet-note wallet-hbd-unstake-note" data-request-id="' +
+      row.requestId +
+      '">' +
+      body +
+      cancel +
+      "</p>"
+    );
+  }
+
+  function walletHbdUnstakeNotes(wallet, own) {
+    const rows = wallet && Array.isArray(wallet.hbdUnstakes) ? wallet.hbdUnstakes : [];
+    if (!rows.length) return "";
+    return rows
+      .map(function (row) {
+        return walletHbdUnstakeNote(row, own);
+      })
+      .join("");
+  }
+
+  function findHbdUnstake(wallet, requestId) {
+    const id = savingsRequestId(requestId);
+    if (id == null || !wallet || !Array.isArray(wallet.hbdUnstakes)) return null;
+    for (let i = 0; i < wallet.hbdUnstakes.length; i++) {
+      if (wallet.hbdUnstakes[i].requestId === id) return wallet.hbdUnstakes[i];
+    }
+    return null;
+  }
+
+  function hideHbdUnstake(name, requestId, amount) {
+    const key = String(name || "");
+    const id = savingsRequestId(requestId);
+    if (!key || id == null) return;
+    if (!hiddenHbdUnstakes[key]) hiddenHbdUnstakes[key] = Object.create(null);
+    hiddenHbdUnstakes[key][String(id)] = roundAsset(amount, 3);
+  }
+
+  // savings_withdraw_requests is the pending count for hive and hbd together.
+  // The list is loaded only when that count is above zero.
+  async function attachHbdUnstakes(wallet) {
+    if (!wallet) return;
+    wallet.hbdUnstakes = [];
+    const count = Number(wallet.account && wallet.account.savings_withdraw_requests) || 0;
+    if (count <= 0) {
+      delete hiddenHbdUnstakes[wallet.name];
+      return;
+    }
+    let raw = [];
+    try {
+      raw = await HiveApi.getSavingsWithdrawFrom(wallet.name);
+    } catch {
+      raw = [];
+    }
+    const parsed = [];
+    const chainIds = Object.create(null);
+    const list = Array.isArray(raw) ? raw : [];
+    for (let i = 0; i < list.length; i++) {
+      const row = parseHbdUnstake(list[i]);
+      if (!row) continue;
+      chainIds[String(row.requestId)] = true;
+      parsed.push(row);
+    }
+    const bag = hiddenHbdUnstakes[wallet.name];
+    if (bag) {
+      const ids = Object.keys(bag);
+      for (let i = 0; i < ids.length; i++) {
+        if (!chainIds[ids[i]]) delete bag[ids[i]];
+      }
+      if (!Object.keys(bag).length) delete hiddenHbdUnstakes[wallet.name];
+    }
+    const stillHidden = hiddenHbdUnstakes[wallet.name];
+    let extra = 0;
+    const visible = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const id = String(parsed[i].requestId);
+      if (stillHidden && stillHidden[id] != null) {
+        extra += Number(stillHidden[id]) || 0;
+        continue;
+      }
+      visible.push(parsed[i]);
+    }
+    visible.sort(function (a, b) {
+      const ta = parseCreatedTs(a.complete);
+      const tb = parseCreatedTs(b.complete);
+      const da = Number.isFinite(ta) ? ta : 0;
+      const db = Number.isFinite(tb) ? tb : 0;
+      if (da !== db) return da - db;
+      return a.requestId - b.requestId;
+    });
+    if (extra > 0) {
+      wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + extra, 3);
+    }
+    wallet.hbdUnstakes = visible;
+  }
+
+  // HIVE_CONVERSION_DELAY and HIVE_COLLATERALIZED_CONVERSION_DELAY. Both are
+  // 84 hours. The account object has no pending count, so both lists load
+  // with the wallet. Neither request can be cancelled.
+  const CONVERSION_DELAY_MS = 84 * 60 * 60 * 1000;
+
+  function conversionRequestId(row) {
+    if (!row) return null;
+    if (row.requestid != null && row.requestid !== "") return savingsRequestId(row.requestid);
+    return savingsRequestId(row.request_id);
+  }
+
+  function parseHbdToHive(row) {
+    const asset = savingsAsset(row && row.amount);
+    const requestId = conversionRequestId(row);
+    if (!asset || asset.symbol !== "HBD" || !(asset.amount > 0) || requestId == null) return null;
+    return {
+      kind: "hbd-hive",
+      requestId: requestId,
+      amount: asset.amount,
+      received: 0,
+      complete: String(row.conversion_date || ""),
+    };
+  }
+
+  function parseHiveToHbd(row) {
+    const collateral = savingsAsset(row && row.collateral_amount);
+    const received = savingsAsset(row && row.converted_amount);
+    const requestId = conversionRequestId(row);
+    if (!collateral || collateral.symbol !== "HIVE" || !(collateral.amount > 0) || requestId == null) {
+      return null;
+    }
+    return {
+      kind: "hive-hbd",
+      requestId: requestId,
+      amount: collateral.amount,
+      received: received && received.symbol === "HBD" && received.amount >= 0 ? received.amount : 0,
+      complete: String(row.conversion_date || ""),
+    };
+  }
+
+  function conversionSchedule(row) {
+    const completeMs = parseCreatedTs(row.complete);
+    if (!Number.isFinite(completeMs)) return null;
+    if (completeMs < Date.UTC(2016, 0, 1) || completeMs >= Date.UTC(2030, 0, 1)) return null;
+    const initiated = formatCreatedUtc(new Date(completeMs - CONVERSION_DELAY_MS).toISOString());
+    const when = completeMs <= Date.now() ? "due now" : formatCreatedUtc(row.complete);
+    if (!initiated || !when) return null;
+    return {
+      initiated: initiated,
+      remains: formatPowerDownRemain(completeMs - Date.now()),
+      when: when,
+    };
+  }
+
+  function walletConversionNote(row) {
+    const hiveToHbd = row.kind === "hive-hbd";
+    const arrow = hiveToHbd ? "hive→hbd" : "hbd→hive";
+    const text =
+      "Ongoing " + formatGroupedNumber(roundAsset(row.amount, 3), 3) + " " + arrow + " conversion.";
+    const schedule = conversionSchedule(row);
+    const tipId = "walletConversionTip-" + (hiveToHbd ? "hive-" : "hbd-") + row.requestId;
+    const rows = schedule
+      ? hiveToHbd
+        ? [
+            ["initiated", schedule.initiated],
+            ["remains", schedule.remains],
+            ["settles", schedule.when],
+            ["collateral", formatHiveLike(roundAsset(row.amount, 3), "hive")],
+            ["received", formatHiveLike(roundAsset(row.received, 3), "hbd")],
+          ]
+        : [
+            ["initiated", schedule.initiated],
+            ["remains", schedule.remains],
+            ["converts", schedule.when],
+            ["amount", formatHiveLike(roundAsset(row.amount, 3), "hbd")],
+            ["receives", "hive at the median price"],
+          ]
+      : null;
+    const body = rows
+      ? '<span class="wallet-conversion" tabindex="0" aria-describedby="' +
+        tipId +
+        '">' +
+        HiveMd.escapeHtml(text) +
+        walletScheduleTip(rows, tipId) +
+        "</span>"
+      : HiveMd.escapeHtml(text);
+    return '<p class="wallet-note wallet-conversion-note">' + body + "</p>";
+  }
+
+  function walletConversionNotes(wallet) {
+    const rows = wallet && Array.isArray(wallet.conversions) ? wallet.conversions : [];
+    if (!rows.length) return "";
+    return rows
+      .map(function (row) {
+        return walletConversionNote(row);
+      })
+      .join("");
+  }
+
+  async function attachConversions(wallet) {
+    if (!wallet) return;
+    wallet.conversions = [];
+    const loaded = await Promise.all([
+      HiveApi.getConversionRequests(wallet.name).catch(function () {
+        return [];
+      }),
+      HiveApi.getCollateralizedConversionRequests(wallet.name).catch(function () {
+        return [];
+      }),
+    ]);
+    const rows = [];
+    const hbdList = Array.isArray(loaded[0]) ? loaded[0] : [];
+    const hiveList = Array.isArray(loaded[1]) ? loaded[1] : [];
+    for (let i = 0; i < hbdList.length; i++) {
+      const row = parseHbdToHive(hbdList[i]);
+      if (row) rows.push(row);
+    }
+    for (let i = 0; i < hiveList.length; i++) {
+      const row = parseHiveToHbd(hiveList[i]);
+      if (row) rows.push(row);
+    }
+    rows.sort(function (a, b) {
+      const ta = parseCreatedTs(a.complete);
+      const tb = parseCreatedTs(b.complete);
+      const da = Number.isFinite(ta) ? ta : 0;
+      const db = Number.isFinite(tb) ? tb : 0;
+      if (da !== db) return da - db;
+      if (a.kind !== b.kind) return a.kind === "hbd-hive" ? -1 : 1;
+      return a.requestId - b.requestId;
+    });
+    wallet.conversions = rows;
   }
 
   function clearDelegationView() {
@@ -16371,6 +16706,8 @@ let CS77_FILTER_LOW_REP = 20;
             </table>
           </div>
           ${walletPowerDownNote(w, own)}
+          ${walletHbdUnstakeNotes(w, own)}
+          ${walletConversionNotes(w)}
         </section>
         <section class="wallet-section">
           <h2>Transactions</h2>
@@ -16402,6 +16739,13 @@ let CS77_FILTER_LOW_REP = 20;
         symbol: "hive",
       };
     }
+    if (kind === "cancel-hbd-unstake") {
+      return {
+        title: "Cancel unstake hbd",
+        lead: "Stop this unstake. The hbd stays staked.",
+        symbol: "hbd",
+      };
+    }
     if (kind === "stake-hbd") {
       return {
         title: "Stake hbd",
@@ -16426,6 +16770,19 @@ let CS77_FILTER_LOW_REP = 20;
           ". Stops the power down. The remaining hive stays staked.",
         cancelMessage: "The power down was not cancelled.",
         failMessage: "Could not cancel this power down.",
+      };
+    }
+    if (kind === "cancel-hbd-unstake") {
+      return {
+        title: "Cancel unstake hbd",
+        lead:
+          "Use hive keychain (recommended) or enter the active key of @" +
+          user +
+          ". Stops the unstake of " +
+          formatHiveLike(amount, "hbd") +
+          ". The hbd stays staked.",
+        cancelMessage: "The unstake was not cancelled.",
+        failMessage: "Could not cancel this unstake.",
       };
     }
     const unstake = kind.indexOf("unstake") === 0;
@@ -16549,6 +16906,7 @@ let CS77_FILTER_LOW_REP = 20;
     walletOpState.kind = "";
     walletOpState.max = 0;
     walletOpState.pending = false;
+    walletOpState.requestId = 0;
     const input = $("#walletAmount");
     if (input) input.value = "";
     const available = $("#walletOpAvailable");
@@ -16558,10 +16916,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (submit) submit.disabled = false;
   }
 
-  function openWalletOverlay(kind) {
+  function openWalletOverlay(kind, requestId) {
     const cancelPower = kind === "cancel-powerdown";
+    const cancelHbd = kind === "cancel-hbd-unstake";
+    const confirmOnly = cancelPower || cancelHbd;
     if (
-      !cancelPower &&
+      !confirmOnly &&
       kind !== "stake-hive" &&
       kind !== "unstake-hive" &&
       kind !== "stake-hbd" &&
@@ -16576,9 +16936,11 @@ let CS77_FILTER_LOW_REP = 20;
       openLogin();
       return;
     }
+    const hbdRow = cancelHbd ? findHbdUnstake(wallet, requestId) : null;
+    if (cancelHbd && !hbdRow) return;
     const copy = walletOpCopy(kind);
-    const max = cancelPower ? 0 : walletMaxFor(kind, wallet);
-    if (!cancelPower && max <= 0) {
+    const max = confirmOnly ? 0 : walletMaxFor(kind, wallet);
+    if (!confirmOnly && max <= 0) {
       showError("No " + copy.symbol + " available for this.");
       return;
     }
@@ -16586,13 +16948,18 @@ let CS77_FILTER_LOW_REP = 20;
     walletOpState.max = max;
     walletOpState.symbol = copy.symbol;
     walletOpState.pending = false;
+    walletOpState.requestId = hbdRow ? hbdRow.requestId : 0;
     const title = $("#walletOpTitle");
     if (title) title.textContent = copy.title;
     const lead = $("#walletOpLead");
-    if (lead) lead.textContent = copy.lead;
+    if (lead) {
+      lead.textContent = hbdRow
+        ? "Stop the unstake of " + formatHiveLike(hbdRow.amount, "hbd") + ". The hbd stays staked."
+        : copy.lead;
+    }
     const available = $("#walletOpAvailable");
     if (available) {
-      available.innerHTML = cancelPower
+      available.innerHTML = confirmOnly
         ? ""
         : "Available: " + availableAmountButton(formatHiveLike(max, copy.symbol)) + ".";
     }
@@ -16606,10 +16973,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (submit) submit.disabled = false;
     const ov = $("#walletOverlay");
     if (ov) {
-      ov.classList.toggle("is-confirm-only", cancelPower);
+      ov.classList.toggle("is-confirm-only", confirmOnly);
       ov.hidden = false;
     }
-    if (cancelPower) {
+    if (confirmOnly) {
       if (submit) submit.focus();
     } else if (input) input.focus();
   }
@@ -16629,6 +16996,26 @@ let CS77_FILTER_LOW_REP = 20;
       accounts[i].next_vesting_withdrawal = "1970-01-01T00:00:00";
     }
     const note = view.querySelector(".wallet-powerdown-note");
+    if (note) note.remove();
+  }
+
+  // cancel_transfer_from_savings puts that request's hbd back into savings.
+  function applyWalletHbdUnstakeCancel(wallet, requestId) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const row = findHbdUnstake(wallet, requestId);
+    if (!row) return;
+    hideHbdUnstake(wallet.name, row.requestId, row.amount);
+    const next = [];
+    for (let i = 0; i < wallet.hbdUnstakes.length; i++) {
+      if (wallet.hbdUnstakes[i].requestId !== row.requestId) next.push(wallet.hbdUnstakes[i]);
+    }
+    wallet.hbdUnstakes = next;
+    wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + row.amount, 3);
+    cancelWalletBalanceAnim();
+    paintWalletBalanceAmounts(wallet);
+    const note = view.querySelector(
+      '.wallet-hbd-unstake-note[data-request-id="' + row.requestId + '"]'
+    );
     if (note) note.remove();
   }
 
@@ -16660,8 +17047,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (!kind || !wallet || !user || !isOwnAuthor(profileState.author)) return;
     if (walletOpState.pending || ownerSignOpen()) return;
     const cancelPower = kind === "cancel-powerdown";
+    const cancelHbd = kind === "cancel-hbd-unstake";
     let amount = 0;
-    if (!cancelPower) {
+    if (!cancelPower && !cancelHbd) {
       amount = roundAsset(parseAmountInput($("#walletAmount") && $("#walletAmount").value), 3);
       if (amount < 0.001) {
         setWalletOpStatus("Enter an amount of at least 0.001.", true);
@@ -16704,6 +17092,16 @@ let CS77_FILTER_LOW_REP = 20;
             { account: user, vesting_shares: "0.000000 VESTS" },
           ],
         ];
+      } else if (kind === "cancel-hbd-unstake") {
+        const row = findHbdUnstake(wallet, walletOpState.requestId);
+        if (!row) throw new Error("That unstake is no longer pending.");
+        amount = row.amount;
+        operations = [
+          [
+            "cancel_transfer_from_savings",
+            { from: user, request_id: row.requestId },
+          ],
+        ];
       } else if (kind === "stake-hbd") {
         operations = [
           [
@@ -16744,6 +17142,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const copy = walletSignCopy(kind, user, amount);
+    const savedRequestId = walletOpState.requestId;
     try {
       await signWithDialog(user, operations, {
         source: "wallet",
@@ -16767,6 +17166,11 @@ let CS77_FILTER_LOW_REP = 20;
       if (kind === "cancel-powerdown") {
         resourceGen += 1;
         applyWalletPowerDownCancel(profileState.wallet);
+        return;
+      }
+      if (kind === "cancel-hbd-unstake") {
+        resourceGen += 1;
+        applyWalletHbdUnstakeCancel(profileState.wallet, savedRequestId);
         return;
       }
       currentViewKey = "";
@@ -18601,6 +19005,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (stakeRatesReady && stakeRates) wallet.stakeApr = stakeRates;
+    await Promise.all([attachHbdUnstakes(wallet), attachConversions(wallet)]);
+    if (!profileRouteStill(name, tab)) return;
     if (delegationView.account && delegationView.account !== wallet.name) clearDelegationView();
     delegationView.open = false;
     profileState.wallet = wallet;
@@ -24979,6 +25385,12 @@ let CS77_FILTER_LOW_REP = 20;
       if (cancelPowerBtn && inInteractiveSurface(cancelPowerBtn)) {
         e.preventDefault();
         openWalletOverlay("cancel-powerdown");
+        return;
+      }
+      const cancelHbdBtn = e.target.closest(".wallet-hbd-unstake-cancel");
+      if (cancelHbdBtn && inInteractiveSurface(cancelHbdBtn)) {
+        e.preventDefault();
+        openWalletOverlay("cancel-hbd-unstake", cancelHbdBtn.getAttribute("data-request-id"));
         return;
       }
       const sendBtn = e.target.closest(".wallet-send-btn");

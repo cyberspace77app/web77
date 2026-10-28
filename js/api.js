@@ -1180,6 +1180,20 @@
     return Array.isArray(result) ? result : [];
   }
 
+  async function getConversionRequests(account) {
+    const name = accountName(account);
+    if (!name) return [];
+    const result = await hiveRpc("condenser_api.get_conversion_requests", [name]);
+    return Array.isArray(result) ? result : [];
+  }
+
+  async function getCollateralizedConversionRequests(account) {
+    const name = accountName(account);
+    if (!name) return [];
+    const result = await hiveRpc("condenser_api.get_collateralized_conversion_requests", [name]);
+    return Array.isArray(result) ? result : [];
+  }
+
   // get_vesting_delegations is inclusive on the start delegatee. A full page
   // is continued from its last name, and that name is skipped once.
   const DELEGATION_PAGE = 1000;
@@ -1460,6 +1474,8 @@
     getAccountHistory,
     getWalletHistory,
     getSavingsWithdrawFrom,
+    getConversionRequests,
+    getCollateralizedConversionRequests,
     getOutgoingVestingDelegations,
     getOutgoingRcDelegations,
     getIncomingHpDelegations,

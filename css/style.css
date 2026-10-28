@@ -4597,31 +4597,39 @@ a.tag:hover {
   line-height: 1.45;
 }
 
-.wallet-powerdown-note {
+.wallet-powerdown-note,
+.wallet-hbd-unstake-note {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem 0.85rem;
 }
 
-.wallet-powerdown-cancel {
+.wallet-powerdown-cancel,
+.wallet-hbd-unstake-cancel {
   flex: 0 0 auto;
 }
 
-.wallet-powerdown {
+.wallet-powerdown,
+.wallet-hbd-unstake,
+.wallet-conversion {
   display: inline-block;
   position: relative;
   max-width: 100%;
   outline: none;
 }
 
-.wallet-powerdown:focus-visible {
+.wallet-powerdown:focus-visible,
+.wallet-hbd-unstake:focus-visible,
+.wallet-conversion:focus-visible {
   outline: 1px solid var(--gray);
   outline-offset: 3px;
   border-radius: 2px;
 }
 
-.wallet-powerdown .session-stat-tip {
+.wallet-powerdown .session-stat-tip,
+.wallet-hbd-unstake .session-stat-tip,
+.wallet-conversion .session-stat-tip {
   left: 0;
   right: auto;
   z-index: 8;
@@ -4649,14 +4657,26 @@ a.tag:hover {
 
 .wallet-powerdown:hover .session-stat-tip,
 .wallet-powerdown:focus .session-stat-tip,
-.wallet-powerdown:focus-visible .session-stat-tip {
+.wallet-powerdown:focus-visible .session-stat-tip,
+.wallet-hbd-unstake:hover .session-stat-tip,
+.wallet-hbd-unstake:focus .session-stat-tip,
+.wallet-hbd-unstake:focus-visible .session-stat-tip,
+.wallet-conversion:hover .session-stat-tip,
+.wallet-conversion:focus .session-stat-tip,
+.wallet-conversion:focus-visible .session-stat-tip {
   opacity: 1;
   visibility: visible;
 }
 
 .wallet-section:has(.wallet-powerdown:hover),
 .wallet-section:has(.wallet-powerdown:focus),
-.wallet-section:has(.wallet-powerdown:focus-visible) {
+.wallet-section:has(.wallet-powerdown:focus-visible),
+.wallet-section:has(.wallet-hbd-unstake:hover),
+.wallet-section:has(.wallet-hbd-unstake:focus),
+.wallet-section:has(.wallet-hbd-unstake:focus-visible),
+.wallet-section:has(.wallet-conversion:hover),
+.wallet-section:has(.wallet-conversion:focus),
+.wallet-section:has(.wallet-conversion:focus-visible) {
   position: relative;
   z-index: 8;
 }
