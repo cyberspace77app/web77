@@ -4414,7 +4414,7 @@ a.tag:hover {
   }
 }
 
-.wallet-table tr.is-reward-in .wallet-value {
+.wallet-table tr.is-balance-in .wallet-value {
   animation: wallet-balance-receive 900ms ease;
 }
 
@@ -4430,7 +4430,7 @@ a.tag:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wallet-table tr.is-reward-in .wallet-value {
+  .wallet-table tr.is-balance-in .wallet-value {
     animation: none;
   }
 }

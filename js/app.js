@@ -14122,7 +14122,7 @@ let CS77_FILTER_LOW_REP = 20;
     profileState.pending = false;
     profileState.mutePending = false;
     profileState.claimPending = false;
-    claimAnimToken += 1;
+    cancelWalletBalanceAnim();
     profileState.wallet = null;
     profileState.walletTx = null;
     closePeoplePanel();
@@ -15513,11 +15513,33 @@ let CS77_FILTER_LOW_REP = 20;
     return view.querySelector('.wallet-table tr[data-balance="' + label + '"]');
   }
 
-  function rewardBalanceRows(wallet) {
+  const WALLET_ANIM_FIELDS = [
+    ["hive", "hive"],
+    ["hbd", "hbd"],
+    ["staked hive", "stakedHive"],
+    ["staked hbd", "stakedHbd"],
+  ];
+
+  let walletAnimToken = 0;
+
+  function walletBalanceSnapshot(wallet) {
+    return {
+      hive: Number(wallet.hive) || 0,
+      hbd: Number(wallet.hbd) || 0,
+      stakedHive: Number(wallet.stakedHive) || 0,
+      stakedHbd: Number(wallet.stakedHbd) || 0,
+    };
+  }
+
+  function claimReceiveLabels(wallet) {
     const labels = [];
     if ((Number(wallet.rewardHive) || 0) > 0) labels.push("hive");
     if ((Number(wallet.rewardHbd) || 0) > 0) labels.push("hbd");
     if ((Number(wallet.rewardVests) || 0) > 0) labels.push("staked hive");
+    return labels;
+  }
+
+  function walletReceiveRows(labels) {
     const rows = [];
     for (let i = 0; i < labels.length; i++) {
       const row = walletBalanceTableRow(labels[i]);
@@ -15526,80 +15548,95 @@ let CS77_FILTER_LOW_REP = 20;
     return rows;
   }
 
-  let claimAnimToken = 0;
+  function markWalletReceive(rows) {
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].classList.remove("is-balance-in");
+      void rows[i].offsetWidth;
+      rows[i].classList.add("is-balance-in");
+    }
+  }
 
-  function claimedBalanceTargets(wallet) {
-    return {
-      hive: roundAsset((Number(wallet.hive) || 0) + (Number(wallet.rewardHive) || 0), 3),
-      hbd: roundAsset((Number(wallet.hbd) || 0) + (Number(wallet.rewardHbd) || 0), 3),
-      stakedHive: roundAsset(
-        (Number(wallet.stakedHive) || 0) + (Number(wallet.rewardVestingHive) || 0),
-        3
-      ),
-    };
+  function clearWalletReceive(rows) {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].isConnected) rows[i].classList.remove("is-balance-in");
+    }
+  }
+
+  function cancelWalletBalanceAnim() {
+    walletAnimToken += 1;
+    if (!view) return;
+    clearWalletReceive(view.querySelectorAll(".wallet-table tr.is-balance-in"));
   }
 
   function countWalletBalances(from, to, ms, token) {
-    const fields = [
-      ["hive", from.hive, to.hive],
-      ["hbd", from.hbd, to.hbd],
-      ["staked hive", from.stakedHive, to.stakedHive],
-    ];
-    if (ms <= 0) {
-      paintWalletBalanceAmounts(to);
-      return;
+    const fields = [];
+    for (let i = 0; i < WALLET_ANIM_FIELDS.length; i++) {
+      const key = WALLET_ANIM_FIELDS[i][1];
+      const fromValue = Number(from[key]) || 0;
+      const toValue = Number(to[key]) || 0;
+      if (fromValue === toValue) continue;
+      fields.push([WALLET_ANIM_FIELDS[i][0], fromValue, toValue]);
     }
-    const started = performance.now();
-    function frame(now) {
-      if (token !== claimAnimToken) return;
-      const t = Math.min(1, (now - started) / ms);
-      const eased = t === 1 ? 1 : 1 - Math.pow(1 - t, 2);
+    if (!fields.length) return;
+    function paint(t, eased) {
       for (let i = 0; i < fields.length; i++) {
         const fromValue = fields[i][1];
         const toValue = fields[i][2];
-        if (fromValue === toValue) continue;
         const row = walletBalanceTableRow(fields[i][0]);
         const el = row && row.querySelector(".wallet-value");
         if (!el || !el.isConnected) continue;
         el.textContent = formatAssetNumber(t === 1 ? toValue : fromValue + (toValue - fromValue) * eased);
       }
+    }
+    if (ms <= 0) {
+      paint(1, 1);
+      return;
+    }
+    const started = performance.now();
+    function frame(now) {
+      if (token !== walletAnimToken) return;
+      const t = Math.min(1, Math.max(0, (now - started) / ms));
+      const eased = t === 1 ? 1 : 1 - Math.pow(1 - t, 2);
+      paint(t, eased);
       if (t < 1) requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
   }
 
+  // Count changed balances and flash the rows that gained value. Claim and
+  // stake both use this. prefers-reduced-motion paints the final numbers.
+  function animateWalletBalances(wallet, from, to, receiveLabels, done) {
+    const token = ++walletAnimToken;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const countMs = reduced ? 0 : 1500;
+    clearWalletReceive(view.querySelectorAll(".wallet-table tr.is-balance-in"));
+    const rows = walletReceiveRows(receiveLabels);
+    markWalletReceive(rows);
+    countWalletBalances(from, to, countMs, token);
+    window.setTimeout(() => {
+      if (token !== walletAnimToken || profileState.wallet !== wallet) return;
+      clearWalletReceive(rows);
+      if (done) done();
+    }, countMs + (reduced ? 0 : 240));
+  }
+
   function animateClaimRewards(wallet) {
-    const token = ++claimAnimToken;
     const rewards = view.querySelector(".wallet-rewards");
-    const rows = rewardBalanceRows(wallet);
-    const from = {
-      hive: Number(wallet.hive) || 0,
-      hbd: Number(wallet.hbd) || 0,
-      stakedHive: Number(wallet.stakedHive) || 0,
-    };
-    const targets = claimedBalanceTargets(wallet);
+    const from = walletBalanceSnapshot(wallet);
+    const receiveLabels = claimReceiveLabels(wallet);
     if (!rewards) {
       applyClaimedRewards(wallet);
       profileState.claimPending = false;
+      cancelWalletBalanceAnim();
       paintWalletBalanceAmounts(wallet);
       return;
     }
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const countMs = reduced ? 0 : 1500;
     rewards.remove();
-    for (let i = 0; i < rows.length; i++) {
-      rows[i].classList.remove("is-reward-in");
-      void rows[i].offsetWidth;
-      rows[i].classList.add("is-reward-in");
-    }
     applyClaimedRewards(wallet);
     profileState.claimPending = false;
-    countWalletBalances(from, targets, countMs, token);
-    window.setTimeout(() => {
-      if (token !== claimAnimToken || profileState.wallet !== wallet) return;
-      for (let i = 0; i < rows.length; i++) rows[i].classList.remove("is-reward-in");
+    animateWalletBalances(wallet, from, walletBalanceSnapshot(wallet), receiveLabels, () => {
       if (accountState.account && accountState.user === wallet.name) syncOwnProfileBanner();
-    }, countMs + (reduced ? 0 : 240));
+    });
   }
 
   function formatAprPercent(rate) {
@@ -16299,12 +16336,16 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Stake moves liquid hive or hbd immediately. The chain account can still
-  // show the old balances for a moment, so the table is updated here.
+  // show the old balances for a moment, so the table is updated here. The
+  // staked row counts up with the same flash a claim uses.
   function applyWalletStake(wallet, kind, amount) {
     if (!wallet || wallet !== profileState.wallet) return;
     const moved = roundAsset(amount, 3);
     if (!(moved >= 0.001)) return;
+    if (kind !== "stake-hive" && kind !== "stake-hbd") return;
+    const from = walletBalanceSnapshot(wallet);
     const accounts = walletAccounts(wallet);
+    const receiveLabel = kind === "stake-hive" ? "staked hive" : "staked hbd";
     if (kind === "stake-hive") {
       const vests = HiveApi.hiveToVests(moved, wallet.props);
       wallet.hive = roundAsset(Math.max(0, (Number(wallet.hive) || 0) - moved), 3);
@@ -16317,7 +16358,7 @@ let CS77_FILTER_LOW_REP = 20;
         accounts[i].balance = wallet.hiveStr;
         accounts[i].vesting_shares = vestsStr;
       }
-    } else if (kind === "stake-hbd") {
+    } else {
       wallet.hbd = roundAsset(Math.max(0, (Number(wallet.hbd) || 0) - moved), 3);
       wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + moved, 3);
       wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
@@ -16326,12 +16367,9 @@ let CS77_FILTER_LOW_REP = 20;
         accounts[i].hbd_balance = wallet.hbdStr;
         accounts[i].savings_hbd_balance = savingsStr;
       }
-    } else {
-      return;
     }
-    claimAnimToken += 1;
-    paintWalletBalanceAmounts(wallet);
     if (kind === "stake-hive" && accountState.user === wallet.name) syncOwnProfileBanner();
+    animateWalletBalances(wallet, from, walletBalanceSnapshot(wallet), [receiveLabel]);
   }
 
   function applyWalletSend(wallet, asset, amount) {
@@ -16348,7 +16386,7 @@ let CS77_FILTER_LOW_REP = 20;
       wallet.hiveStr = formatChainAmount(wallet.hive, "HIVE", 3);
       for (let i = 0; i < accounts.length; i++) accounts[i].balance = wallet.hiveStr;
     }
-    claimAnimToken += 1;
+    cancelWalletBalanceAnim();
     paintWalletBalanceAmounts(wallet);
   }
 
@@ -18426,7 +18464,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (profileBannerReady(name)) {
       profileState.page = tab;
       profileState.claimPending = false;
-      claimAnimToken += 1;
+      cancelWalletBalanceAnim();
       profileState.wallet = null;
       profileState.walletTx = null;
       setProfileMeta(name, tab, profileState.profile);
@@ -18479,7 +18517,7 @@ let CS77_FILTER_LOW_REP = 20;
       profileState.pending = false;
       profileState.mutePending = false;
       profileState.claimPending = false;
-      claimAnimToken += 1;
+      cancelWalletBalanceAnim();
       profileState.wallet = null;
       profileState.walletTx = null;
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
