@@ -4374,6 +4374,51 @@ a.tag:hover {
   margin: 0 0 0.85rem;
 }
 
+.wallet-tools-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+}
+
+.wallet-token-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  min-width: 12.5rem;
+  padding: 1rem 1.2rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+}
+
+.wallet-token-count {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-token-label {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  color: var(--gray);
+}
+
+.wallet-token-group .wallet-claim-tokens-btn {
+  margin-top: 0.35rem;
+}
+
+a.wallet-tools-keys {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .wallet-rewards {
   border: 1px solid var(--border-hot);
   background: rgba(227, 19, 55, 0.08);
@@ -5161,7 +5206,8 @@ a.wallet-tx-time:hover {
 
 #walletOverlay .wallet-amount-row,
 #sendOverlay .wallet-amount-row,
-#convertOverlay .wallet-amount-row {
+#convertOverlay .wallet-amount-row,
+#claimTokensOverlay .wallet-amount-row {
   margin-bottom: 0.35rem;
 }
 
@@ -5194,7 +5240,8 @@ a.wallet-tx-time:hover {
 
 #walletOpAvailable:empty,
 #sendAvailable:empty,
-#convertAvailable:empty {
+#convertAvailable:empty,
+#claimTokensAvailable:empty {
   display: none;
 }
 
@@ -5286,13 +5333,15 @@ a.wallet-tx-time:hover {
 
 #walletOpStatus:empty,
 #sendStatus:empty,
-#convertStatus:empty {
+#convertStatus:empty,
+#claimTokensStatus:empty {
   display: none;
 }
 
 #walletOpStatus.is-error,
 #sendStatus.is-error,
 #convertStatus.is-error,
+#claimTokensStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }

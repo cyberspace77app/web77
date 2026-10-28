@@ -195,7 +195,13 @@
     }).replace(/"UINT64:(-?\d+)"/g, "$1");
   }
 
-  async function hiveRpcOnce(node, method, params, timeoutMs) {
+  // JSON.parse rounds integers past 2^53. RC mana and curve coefficients need the exact digits.
+  function parseHiveJson(text) {
+    const quoted = String(text).replace(/([:\[,]\s*)(-?\d{16,})(?=\s*[,}\]])/g, '$1"$2"');
+    return JSON.parse(quoted);
+  }
+
+  async function hiveRpcOnce(node, method, params, timeoutMs, preserveBig) {
     const timeout = Math.max(1000, timeoutMs || RPC_TIMEOUT_MS);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -214,7 +220,7 @@
       const text = await res.text();
       let data = null;
       try {
-        data = text ? JSON.parse(text) : null;
+        data = text ? (preserveBig ? parseHiveJson(text) : JSON.parse(text)) : null;
       } catch {
         /* non-JSON */
       }
@@ -286,14 +292,14 @@
     return parsed.url;
   }
 
-  async function hiveRpc(method, params) {
+  async function hiveRpc(method, params, preserveBig) {
     const nodes = nodeList();
     let lastErr;
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       try {
-        const result = await hiveRpcOnce(node, method, params);
+        const result = await hiveRpcOnce(node, method, params, undefined, preserveBig);
         activeNode = node;
         return result;
       } catch (err) {
@@ -1428,6 +1434,169 @@
     return mana < room ? mana : room;
   }
 
+  // A zero-fee claim_account spends RC. hive-tx expires in 60s, and the chain
+  // rounds that lifetime up to one hour of transaction state. The signed
+  // transaction size includes one 65-byte signature. pending_claimed_accounts
+  // is a uint16. One subsidized claim needs 10000 of available_account_subsidies.
+  const HIVE_RC_REGEN_TIME = VOTE_MANA_REGEN_SECONDS;
+  const HIVE_BLOCK_INTERVAL = 3;
+  const HIVE_ACCOUNT_SUBSIDY_PRECISION = 10000;
+  const HIVE_PENDING_CLAIMED_ACCOUNTS_MAX = 65535;
+  const HIVE_MAX_TRANSACTION_SIZE = 65536;
+  const CLAIM_ACCOUNT_OP_ID = 22;
+  const CLAIM_ASSET_BYTES = 16;
+  const CLAIM_SIGNATURE_BYTES = 65;
+  const CLAIM_TX_EXPIRATION_HOURS = 1;
+
+  function varintBytes(value) {
+    const n = value >>> 0;
+    if (n < 128) return 1;
+    if (n < 16384) return 2;
+    if (n < 2097152) return 3;
+    if (n < 268435456) return 4;
+    return 5;
+  }
+
+  function claimAccountTxBytes(nameLength, count) {
+    const name = nameLength > 0 ? nameLength : 0;
+    const n = count > 0 ? count : 0;
+    const op =
+      varintBytes(CLAIM_ACCOUNT_OP_ID) + varintBytes(name) + name + CLAIM_ASSET_BYTES + varintBytes(0);
+    return 2 + 4 + 4 + varintBytes(n) + op * n + varintBytes(0) + varintBytes(1) + CLAIM_SIGNATURE_BYTES;
+  }
+
+  function maxClaimOpsForSize(nameLength) {
+    let lo = 0;
+    let hi = HIVE_PENDING_CLAIMED_ACCOUNTS_MAX;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2);
+      if (claimAccountTxBytes(nameLength, mid) <= HIVE_MAX_TRANSACTION_SIZE) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function vestAmountRaw(val) {
+    if (val && typeof val === "object" && val.amount != null) return intBig(val.amount);
+    const s = String(val == null ? "" : val).trim();
+    const m = s.match(/^(-?)(\d+)(?:\.(\d+))?/);
+    if (!m) return 0n;
+    const frac = (m[3] || "").padEnd(6, "0").slice(0, 6);
+    const digits = (m[2] + frac).replace(/^0+(?=\d)/, "");
+    try {
+      const n = BigInt(digits || "0");
+      return m[1] === "-" ? -n : n;
+    } catch {
+      return 0n;
+    }
+  }
+
+  function rcCurveCost(curve, pool, count, regen) {
+    if (count <= 0n || regen <= 0n || !curve) return 0n;
+    const shift = intBig(curve.shift);
+    let num = regen * intBig(curve.coeff_a);
+    if (shift > 0n) num >>= shift;
+    num += 1n;
+    num *= count;
+    let denom = intBig(curve.coeff_b);
+    if (pool > 0n) denom += pool;
+    if (denom <= 0n) return num + 1n;
+    return num / denom + 1n;
+  }
+
+  function claimResourceCounts(opCount, txSize, stateInfo, execInfo) {
+    const hours = BigInt(CLAIM_TX_EXPIRATION_HOURS);
+    const state = intBig(stateInfo && stateInfo.transaction_base_size) * hours;
+    const exec =
+      intBig(execInfo && execInfo.claim_account_time) * BigInt(opCount) +
+      intBig(execInfo && execInfo.transaction_time) +
+      intBig(execInfo && execInfo.verify_authority_time);
+    return {
+      resource_history_bytes: BigInt(txSize),
+      resource_new_accounts: BigInt(opCount),
+      resource_market_bytes: 0n,
+      resource_state_bytes: state,
+      resource_execution_time: exec,
+    };
+  }
+
+  function claimTxRcCost(opCount, nameLength, params, poolRoot, regen) {
+    const names = params && params.resource_names;
+    const curves = params && params.resource_params;
+    const pools = poolRoot && poolRoot.resource_pool;
+    const sizeInfo = params && params.size_info;
+    const stateInfo = sizeInfo && sizeInfo.resource_state_bytes;
+    const execInfo = sizeInfo && sizeInfo.resource_execution_time;
+    if (!Array.isArray(names) || !curves || !pools || !stateInfo || !execInfo) {
+      throw new Error("Could not load the resource credit cost.");
+    }
+    const counts = claimResourceCounts(opCount, claimAccountTxBytes(nameLength, opCount), stateInfo, execInfo);
+    let total = 0n;
+    for (let i = 0; i < names.length; i++) {
+      const key = names[i];
+      const row = curves[key];
+      const dynamics = row && row.resource_dynamics_params;
+      const unit = intBig(dynamics && dynamics.resource_unit);
+      if (!row || unit <= 0n) throw new Error("Could not load the resource credit cost.");
+      const count = (counts[key] || 0n) * unit;
+      const pool = intBig(pools[key] && pools[key].pool);
+      total += rcCurveCost(row.price_curve_params, pool, count, regen);
+    }
+    return total;
+  }
+
+  // How many zero-fee claim_account operations the current RC mana can pay,
+  // also limited by the subsidy pool, the uint16 token field, and transaction size.
+  async function claimAccountQuote(username) {
+    const name = accountName(username);
+    if (!name) throw new Error("Could not load the resource credit cost.");
+    const now = Math.floor(Date.now() / 1000);
+    const [accounts, props, rcResult, params, pools] = await Promise.all([
+      hiveRpc("condenser_api.get_accounts", [[name]], true),
+      hiveRpc("condenser_api.get_dynamic_global_properties", [], true),
+      hiveRpc("rc_api.find_rc_accounts", { accounts: [name] }, true),
+      hiveRpc("rc_api.get_resource_params", {}, true),
+      hiveRpc("rc_api.get_resource_pool", {}, true),
+    ]);
+    const account = Array.isArray(accounts) ? accounts[0] : null;
+    if (!account || accountName(account.name) !== name || !props) {
+      throw new Error("Could not load the resource credit cost.");
+    }
+    const pendingRaw = Number(account.pending_claimed_accounts);
+    const pending = Number.isFinite(pendingRaw) && pendingRaw > 0 ? Math.floor(pendingRaw) : 0;
+    const room = Math.max(0, HIVE_PENDING_CLAIMED_ACCOUNTS_MAX - pending);
+    const subsidies = intBig(props.available_account_subsidies);
+    const subsidySlots =
+      subsidies > 0n ? Number(subsidies / BigInt(HIVE_ACCOUNT_SUBSIDY_PRECISION)) : 0;
+    const sizeCap = maxClaimOpsForSize(name.length);
+    let cap = room;
+    if (subsidySlots < cap) cap = subsidySlots;
+    if (sizeCap < cap) cap = sizeCap;
+    const rcList = rcResult && rcResult.rc_accounts;
+    const rcAccount = Array.isArray(rcList) && rcList.length ? rcList[0] : null;
+    const mana = rcCurrentMana(rcAccount, now);
+    const regenDiv = BigInt(Math.floor(HIVE_RC_REGEN_TIME / HIVE_BLOCK_INTERVAL));
+    const regen = regenDiv > 0n ? vestAmountRaw(props.total_vesting_shares) / regenDiv : 0n;
+    if (regen <= 0n) throw new Error("Could not load the resource credit cost.");
+    let max = 0;
+    if (cap > 0 && mana > 0n) {
+      const costOf = function (n) {
+        return claimTxRcCost(n, name.length, params, pools, regen);
+      };
+      if (costOf(1) <= mana) {
+        let lo = 1;
+        let hi = cap;
+        while (lo < hi) {
+          const mid = Math.floor((lo + hi + 1) / 2);
+          if (costOf(mid) <= mana) lo = mid;
+          else hi = mid - 1;
+        }
+        max = lo;
+      }
+    }
+    return { pending: pending, max: max };
+  }
+
   global.HiveApi = {
     PAGE_SIZE,
     hiveRpc,
@@ -1482,6 +1651,7 @@
     getIncomingRcDelegations,
     findRcAccount,
     rcDelegable,
+    claimAccountQuote,
     parseAsset,
     vestsToHive,
     hiveToVests,

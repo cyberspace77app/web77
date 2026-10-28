@@ -288,6 +288,13 @@ let CS77_FILTER_LOW_REP = 20;
     asset: "hbd",
     pending: false,
   };
+  const claimState = {
+    pending: false,
+    loading: false,
+    ready: false,
+    max: 0,
+    loadGen: 0,
+  };
   const delegationView = {
     loadGen: 0,
     account: "",
@@ -5733,6 +5740,11 @@ let CS77_FILTER_LOW_REP = 20;
     const delegateOv = $("#delegateOverlay");
     if (delegateOv && !delegateOv.hidden) {
       closeDelegateOverlay();
+      return;
+    }
+    const claimOv = $("#claimTokensOverlay");
+    if (claimOv && !claimOv.hidden) {
+      closeClaimTokensOverlay();
       return;
     }
     const convertOv = $("#convertOverlay");
@@ -16780,6 +16792,26 @@ let CS77_FILTER_LOW_REP = 20;
     paintDelegationPanel();
   }
 
+  function accountTokenLabel(count) {
+    return count === 1 ? "account creation token" : "account creation tokens";
+  }
+
+  function walletToolsHtml(wallet) {
+    const count = subspaceClaimedTokens(wallet && wallet.account);
+    return `
+      <section class="wallet-section wallet-tools">
+        <h2>Tools</h2>
+        <div class="wallet-tools-line">
+          <div class="wallet-token-group">
+            <div class="wallet-token-count" id="walletTokenCount">${count}</div>
+            <div class="wallet-token-label" id="walletTokenLabel">${accountTokenLabel(count)}</div>
+            <button type="button" class="btn-primary btn-compact wallet-claim-tokens-btn">Claim</button>
+          </div>
+          <a class="btn-ghost btn-compact wallet-tools-keys" href="${appHref("/settings/keys")}">Generate Keys</a>
+        </div>
+      </section>`;
+  }
+
   function walletPageHtml(wallet, own) {
     const w = wallet || {};
     const props = w.props;
@@ -16824,6 +16856,7 @@ let CS77_FILTER_LOW_REP = 20;
             ${walletConversionNotes(w)}
           </div>
         </section>
+        ${own ? walletToolsHtml(w) : ""}
         <section class="wallet-section">
           <h2>Transactions</h2>
           <div id="walletTxBody">${walletHistoryHtml(profileState.walletTx, props)}</div>
@@ -17958,6 +17991,256 @@ let CS77_FILTER_LOW_REP = 20;
         !cancelled
       );
       convertDialogBusy(false);
+    }
+  }
+
+  function setClaimStatus(msg, isError) {
+    const el = $("#claimTokensStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function paintWalletTokenCount(wallet) {
+    const count = subspaceClaimedTokens(wallet && wallet.account);
+    const num = $("#walletTokenCount");
+    const label = $("#walletTokenLabel");
+    if (num) num.textContent = String(count);
+    if (label) label.textContent = accountTokenLabel(count);
+  }
+
+  function applyWalletClaimTokens(wallet, count) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const n = Math.floor(Number(count));
+    if (!(n >= 1)) return;
+    const accounts = walletAccounts(wallet);
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      if (!account) continue;
+      account.pending_claimed_accounts = subspaceClaimedTokens(account) + n;
+    }
+    paintWalletTokenCount(wallet);
+  }
+
+  function paintClaimMax() {
+    const el = $("#claimTokensAvailable");
+    const maxBtn = $("#claimTokensMax");
+    const submit = $("#claimTokensSubmit");
+    if (!el) return;
+    if (claimState.loading) {
+      el.textContent = "Max: \u2026";
+      if (maxBtn) maxBtn.disabled = true;
+      if (submit && !claimState.pending) submit.disabled = true;
+      return;
+    }
+    if (!claimState.ready) {
+      el.textContent = "";
+      if (maxBtn) maxBtn.disabled = true;
+      if (submit && !claimState.pending) submit.disabled = true;
+      return;
+    }
+    const max = claimState.max;
+    const noun = max === 1 ? "token" : "tokens";
+    const disabled = claimState.pending || !(max >= 1);
+    let html = "Max: " + availableAmountButton(String(max), disabled) + " " + noun + ".";
+    if (max >= 1) html += " That spends the current resource credits.";
+    else html += " The current resource credits cannot pay for a token.";
+    el.innerHTML = html;
+    if (maxBtn) maxBtn.disabled = disabled;
+    if (submit && !claimState.pending) submit.disabled = false;
+  }
+
+  function claimDialogBusy(on) {
+    claimState.pending = on;
+    const submit = $("#claimTokensSubmit");
+    if (submit) submit.disabled = on || claimState.loading || !claimState.ready;
+    paintClaimMax();
+  }
+
+  function closeClaimTokensOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "wallet") {
+      const ov = $("#claimTokensOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    const ov = $("#claimTokensOverlay");
+    if (ov) ov.hidden = true;
+    claimState.loadGen += 1;
+    claimState.pending = false;
+    claimState.loading = false;
+    claimState.ready = false;
+    claimState.max = 0;
+    const amount = $("#claimTokensAmount");
+    if (amount) amount.value = "";
+    const available = $("#claimTokensAvailable");
+    if (available) available.textContent = "";
+    setClaimStatus("");
+    const submit = $("#claimTokensSubmit");
+    if (submit) submit.disabled = false;
+    const maxBtn = $("#claimTokensMax");
+    if (maxBtn) maxBtn.disabled = false;
+  }
+
+  function parseClaimCount(raw) {
+    const s = String(raw == null ? "" : raw).trim();
+    if (!s) return { empty: true };
+    if (!/^\d+$/.test(s) || s.length > 6) return { invalid: true };
+    const n = Number(s);
+    if (!Number.isSafeInteger(n)) return { invalid: true };
+    return { n: n };
+  }
+
+  async function loadClaimQuote() {
+    const gen = ++claimState.loadGen;
+    const user = observer();
+    claimState.loading = true;
+    claimState.ready = false;
+    claimState.max = 0;
+    setClaimStatus("");
+    paintClaimMax();
+    try {
+      if (!window.HiveApi || typeof HiveApi.claimAccountQuote !== "function") {
+        throw new Error("Could not load the resource credit cost.");
+      }
+      const quote = await HiveApi.claimAccountQuote(user);
+      if (gen !== claimState.loadGen) return;
+      const ov = $("#claimTokensOverlay");
+      if (!ov || ov.hidden || observer() !== user) return;
+      claimState.loading = false;
+      claimState.ready = true;
+      const max = quote && Number(quote.max);
+      claimState.max = Number.isFinite(max) && max > 0 ? Math.floor(max) : 0;
+      paintClaimMax();
+    } catch (err) {
+      if (gen !== claimState.loadGen) return;
+      const ov = $("#claimTokensOverlay");
+      if (!ov || ov.hidden) return;
+      claimState.loading = false;
+      claimState.ready = false;
+      claimState.max = 0;
+      setClaimStatus((err && err.message) || "Could not load the resource credit cost.", true);
+      paintClaimMax();
+    }
+  }
+
+  function openClaimTokensOverlay() {
+    const wallet = profileState.wallet;
+    if (!wallet || !isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    claimState.pending = false;
+    const amount = $("#claimTokensAmount");
+    if (amount) {
+      amount.value = "";
+      amount.placeholder = "0";
+    }
+    const submit = $("#claimTokensSubmit");
+    if (submit) submit.disabled = true;
+    const maxBtn = $("#claimTokensMax");
+    if (maxBtn) maxBtn.disabled = true;
+    setClaimStatus("");
+    const ov = $("#claimTokensOverlay");
+    if (ov) ov.hidden = false;
+    if (amount && !isMobileViewport()) amount.focus();
+    loadClaimQuote();
+  }
+
+  function fillClaimMax() {
+    const input = $("#claimTokensAmount");
+    if (!input || claimState.pending || claimState.loading || !claimState.ready) return;
+    if (!(claimState.max >= 1)) return;
+    input.value = String(claimState.max);
+  }
+
+  async function submitClaimTokens() {
+    if (claimState.pending || claimState.loading || ownerSignOpen()) return;
+    const user = observer();
+    const wallet = profileState.wallet;
+    if (!user || !wallet || !isOwnAuthor(profileState.author) || wallet.name !== user) return;
+    if (!claimState.ready) {
+      setClaimStatus("Could not load the resource credit cost.", true);
+      return;
+    }
+    const parsed = parseClaimCount($("#claimTokensAmount") && $("#claimTokensAmount").value);
+    if (parsed.empty) {
+      setClaimStatus("Enter a number of tokens.", true);
+      return;
+    }
+    if (parsed.invalid) {
+      setClaimStatus("Enter a whole number of tokens.", true);
+      return;
+    }
+    const count = parsed.n;
+    if (count < 1) {
+      setClaimStatus("Enter at least 1 token.", true);
+      return;
+    }
+    const max = claimState.max;
+    if (!(max >= 1)) {
+      setClaimStatus("The current resource credits cannot pay for a token.", true);
+      return;
+    }
+    if (count > max) {
+      const noun = max === 1 ? "token" : "tokens";
+      setClaimStatus("That is more than " + max + " " + noun + ".", true);
+      return;
+    }
+    claimDialogBusy(true);
+    setClaimStatus("");
+    const operations = [];
+    for (let i = 0; i < count; i++) {
+      operations.push([
+        "claim_account",
+        {
+          creator: user,
+          fee: "0.000 HIVE",
+          extensions: [],
+        },
+      ]);
+    }
+    const noun = count === 1 ? "token" : "tokens";
+    const copy = {
+      title: "Sign claim",
+      lead:
+        "Use hive keychain (recommended) or enter the active key of @" +
+        user +
+        ". Claims " +
+        count +
+        " account creation " +
+        noun +
+        " with resource credits.",
+      cancelMessage: "The claim was not started.",
+      failMessage: "Could not claim these tokens.",
+    };
+    const ov = $("#claimTokensOverlay");
+    if (!ov || ov.hidden || observer() !== user || !isOwnAuthor(profileState.author)) {
+      if (ov && !ov.hidden) claimDialogBusy(false);
+      return;
+    }
+    try {
+      await signWithDialog(user, operations, {
+        source: "wallet",
+        authority: "Active",
+        title: copy.title,
+        lead: copy.lead,
+        cancelMessage: copy.cancelMessage,
+        failMessage: copy.failMessage,
+        onKeychain: function () {
+          setClaimStatus("Waiting for Keychain\u2026", false);
+        },
+      });
+      closeClaimTokensOverlay();
+      resourceGen += 1;
+      applyWalletClaimTokens(profileState.wallet, count);
+    } catch (err) {
+      const cancelled = Boolean(err && err.ownerCancel);
+      setClaimStatus(
+        cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
+        !cancelled
+      );
+      claimDialogBusy(false);
     }
   }
 
@@ -21367,7 +21650,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // One signer for subspace owner settings, role changes, creating a subspace,
-  // wallet stake, unstake, send, or convert, delegations, and encrypting or decrypting
+  // wallet stake, unstake, send, convert, or claim, delegations, and encrypting or decrypting
   // a transfer memo. Pass the account, operations, authority, and the dialog
   // copy. A login that can already sign that authority does so without the
   // dialog: a stored posting key for Posting, or Hive Keychain for the role
@@ -24534,6 +24817,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeWalletOverlay();
           closeSendOverlay();
           closeConvertOverlay();
+          closeClaimTokensOverlay();
         }
       }
     }
@@ -24541,6 +24825,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeDelegateOverlay();
       closeSendOverlay();
       closeConvertOverlay();
+      closeClaimTokensOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();
@@ -25821,6 +26106,12 @@ let CS77_FILTER_LOW_REP = 20;
         openSendOverlay(sendBtn.getAttribute("data-send-asset") || "hive");
         return;
       }
+      const claimTokensBtn = e.target.closest(".wallet-claim-tokens-btn");
+      if (claimTokensBtn && inInteractiveSurface(claimTokensBtn)) {
+        e.preventDefault();
+        openClaimTokensOverlay();
+        return;
+      }
       const delegatedToggle = e.target.closest(".wallet-delegated-toggle");
       if (delegatedToggle && inInteractiveSurface(delegatedToggle)) {
         e.preventDefault();
@@ -26289,6 +26580,35 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && convertOverlay.contains(active)) return;
         closeConvertOverlay();
+      });
+    }
+
+    const claimTokensOverlay = $("#claimTokensOverlay");
+    if (claimTokensOverlay) {
+      const claimCancel = $("#claimTokensCancel");
+      const claimSubmit = $("#claimTokensSubmit");
+      const claimMax = $("#claimTokensMax");
+      const claimAmount = $("#claimTokensAmount");
+      if (claimCancel) claimCancel.addEventListener("click", closeClaimTokensOverlay);
+      if (claimSubmit) claimSubmit.addEventListener("click", submitClaimTokens);
+      if (claimMax) claimMax.addEventListener("click", fillClaimMax);
+      const claimAvailable = $("#claimTokensAvailable");
+      if (claimAvailable) {
+        claimAvailable.addEventListener("click", (e) => {
+          if (!e.target.closest(".wallet-available-amt")) return;
+          fillClaimMax();
+        });
+      }
+      if (claimAmount) {
+        claimAmount.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitClaimTokens();
+        });
+      }
+      claimTokensOverlay.addEventListener("click", (e) => {
+        if (e.target !== claimTokensOverlay) return;
+        const active = document.activeElement;
+        if (active && claimTokensOverlay.contains(active)) return;
+        closeClaimTokensOverlay();
       });
     }
 
