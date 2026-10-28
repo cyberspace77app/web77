@@ -1,8 +1,8 @@
 # CyberSpace77 — web77
 
-CyberSpace77 is a lightweight, open-source, decentralized, social media web app for the hive blockchain.
+CyberSpace77 is a modern, open-source, decentralized, social media web app powered by the hive blockchain.
 
-It is designed as a single-page application (SPA) that runs directly in your browser, with minimal requirements. You can also run it locally on your PC, making the frontend more resilient to censorship or availability issues at the web-hosting level.
+It is designed as a single-page application (SPA) that runs directly in your browser with minimal requirements. You can also run it locally on your PC, improving resilience against censorship and reducing dependence on any single app, website, or hosting provider.
 
 ## Features
 
@@ -34,7 +34,7 @@ Then open 127.0.0.1:8777 in your web browser.
 
 ## Status
 
-**Alpha software:** CyberSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
+**Alpha software:** CyberSpace77 is currently under active alpha development. Moving fast and breaking stuff. Reviewing tx before you sign them recommended, as always. **Use at your own risk.**
 
 ## Dependencies
 
