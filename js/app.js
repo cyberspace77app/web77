@@ -15723,13 +15723,115 @@ let CS77_FILTER_LOW_REP = 20;
     </tr>`;
   }
 
+  // HIVE_VESTING_WITHDRAW_INTERVAL_SECONDS. The first payout is one week after
+  // the power down is set. Each payout then moves next_vesting_withdrawal ahead
+  // by one week. A changed amount starts that clock over.
+  const POWER_DOWN_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function powerDownSteps(amount, rate) {
+    if (!(amount > 0) || !(rate > 0)) return 0;
+    const full = Math.floor(amount / rate + 1e-8);
+    const leftover = amount - full * rate;
+    if (leftover > rate * 1e-6 && leftover > 1e-8) return full + 1;
+    return full;
+  }
+
+  function formatPowerDownRemain(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) return "due now";
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    const week = 7 * day;
+    const units = [
+      ["week", week],
+      ["day", day],
+      ["hour", hour],
+      ["minute", minute],
+    ];
+    const parts = [];
+    let left = ms;
+    for (let i = 0; i < units.length && parts.length < 2; i++) {
+      const n = Math.floor(left / units[i][1]);
+      if (n <= 0) continue;
+      parts.push(n + " " + units[i][0] + (n === 1 ? "" : "s"));
+      left -= n * units[i][1];
+    }
+    if (!parts.length) return "less than a minute";
+    return parts.join(" ");
+  }
+
+  function formatPowerDownHive(vests, props) {
+    const hive = HiveApi.vestsToHive(vests, props);
+    const shown = roundAsset(hive, 3);
+    if (!(shown > 0) && vests > 0) return "<0.001 hive";
+    return formatHiveLike(shown, "hive");
+  }
+
+  function powerDownSchedule(wallet) {
+    if (!wallet) return null;
+    const toWithdraw = Number(wallet.toWithdrawVests) || 0;
+    const withdrawn = Number(wallet.withdrawnVests) || 0;
+    const rate = Number(wallet.withdrawRate) || 0;
+    const remaining = toWithdraw - withdrawn;
+    if (!(remaining > 1e-9) || !(rate > 0)) return null;
+    const nextMs = parseCreatedTs(wallet.nextWithdrawal);
+    if (!Number.isFinite(nextMs)) return null;
+    if (nextMs < Date.UTC(2016, 0, 1) || nextMs >= Date.UTC(2030, 0, 1)) return null;
+    const paymentsMade = powerDownSteps(withdrawn, rate);
+    const paymentsLeft = powerDownSteps(remaining, rate);
+    if (paymentsLeft < 1) return null;
+    let nextVests = Math.min(rate, remaining);
+    const vesting = Number(wallet.vestingShares) || 0;
+    if (nextVests > vesting) nextVests = Math.max(0, vesting);
+    const initiatedMs = nextMs - (paymentsMade + 1) * POWER_DOWN_WEEK_MS;
+    const endsMs = nextMs + (paymentsLeft - 1) * POWER_DOWN_WEEK_MS;
+    const initiated = formatCreatedUtc(new Date(initiatedMs).toISOString());
+    const nextText = nextMs <= Date.now() ? "due now" : formatCreatedUtc(wallet.nextWithdrawal);
+    if (!initiated || !nextText) return null;
+    return {
+      initiated: initiated,
+      remains: formatPowerDownRemain(endsMs - Date.now()),
+      nextText: nextText,
+      amountText: formatPowerDownHive(nextVests, wallet.props),
+    };
+  }
+
+  function walletPowerDownTip(schedule) {
+    const rows = [
+      ["initiated", schedule.initiated],
+      ["remains", schedule.remains],
+      ["next payout", schedule.nextText],
+      ["amount", schedule.amountText],
+    ];
+    const lines = rows
+      .map(function (row) {
+        return (
+          '<span class="wallet-powerdown-line"><span class="wallet-powerdown-k">' +
+          HiveMd.escapeHtml(row[0]) +
+          "</span><span>" +
+          HiveMd.escapeHtml(row[1]) +
+          "</span></span>"
+        );
+      })
+      .join("");
+    return '<span class="session-stat-tip" id="walletPowerDownTip" role="tooltip">' + lines + "</span>";
+  }
+
   function walletPowerDownNote(wallet) {
     if (!wallet || wallet.toWithdrawVests <= 0) return "";
     const total = HiveApi.vestsToHive(wallet.toWithdrawVests, wallet.props);
     const done = HiveApi.vestsToHive(wallet.withdrawnVests, wallet.props);
     const left = Math.max(0, total - done);
     if (left <= 0) return "";
-    return `<p class="wallet-note">Powering down ${formatHiveLike(left, "hive")} remaining.</p>`;
+    const text = "Powering down " + formatHiveLike(left, "hive") + " remaining.";
+    const schedule = powerDownSchedule(wallet);
+    if (!schedule) return `<p class="wallet-note">${HiveMd.escapeHtml(text)}</p>`;
+    return (
+      '<p class="wallet-note"><span class="wallet-powerdown" tabindex="0" aria-describedby="walletPowerDownTip">' +
+      HiveMd.escapeHtml(text) +
+      walletPowerDownTip(schedule) +
+      "</span></p>"
+    );
   }
 
   function clearDelegationView() {
