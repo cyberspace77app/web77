@@ -1589,7 +1589,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   let openSlider = null;
-  // Set for the keyboard upvote so a hidden vote button docks the panel.
+  // Set for the keyboard upvote so the panel docks when it would sit off screen.
   let feedKeyDockSlider = false;
 
   function sliderModeForBtn(btn) {
@@ -1674,33 +1674,34 @@ let CS77_FILTER_LOW_REP = 20;
     panel.style.zIndex = "";
   }
 
-  function voteBtnVisible(rect) {
-    if (!rect || rect.width < 1 || rect.height < 1) return false;
+  function dockVoteSlider(panel) {
+    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    panel.style.top = "auto";
+    panel.style.bottom = "16px";
+    panel.style.left = "0px";
+    const width = panel.offsetWidth || panel.getBoundingClientRect().width;
+    const left = Math.max(8, Math.round((vw - width) / 2));
+    panel.style.left = Math.min(left, Math.max(8, vw - width - 8)) + "px";
+  }
+
+  // The anchored panel is in view when its border box sits inside the viewport.
+  function votePanelFits(panel) {
+    const box = panel.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1) return false;
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    return rect.bottom > 0 && rect.top < vh;
+    return box.top >= -1 && box.bottom <= vh + 1;
   }
 
   function placeVoteSlider(btn, panel) {
     const rect = btn.getBoundingClientRect();
-    const dock =
+    const keyboardDock =
       openSlider &&
       openSlider.panel === panel &&
-      openSlider.dockWhenHidden &&
-      !voteBtnVisible(rect);
+      openSlider.dockWhenHidden;
     panel.style.position = "fixed";
     panel.style.zIndex = "64";
     panel.style.transform = "";
     panel.style.right = "auto";
-    if (dock) {
-      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-      panel.style.top = "auto";
-      panel.style.bottom = "16px";
-      panel.style.left = "0px";
-      const width = panel.offsetWidth || panel.getBoundingClientRect().width;
-      const left = Math.max(8, Math.round((vw - width) / 2));
-      panel.style.left = Math.min(left, Math.max(8, vw - width - 8)) + "px";
-      return;
-    }
     panel.style.bottom = "";
     panel.style.top = Math.round(rect.bottom + 18) + "px";
     panel.style.left = Math.round(rect.left + 6) + "px";
@@ -1710,6 +1711,9 @@ let CS77_FILTER_LOW_REP = 20;
       panel.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
     }
     if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
+    // A partly visible arrow still anchors the panel under itself, which can
+    // leave the panel below the fold. Keyboard upvote docks it instead.
+    if (keyboardDock && !votePanelFits(panel)) dockVoteSlider(panel);
   }
 
   function repositionOpenSlider(e) {
