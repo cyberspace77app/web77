@@ -6116,6 +6116,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (tagsHead) tagsHead.hidden = comment;
     if (tagsWrap) tagsWrap.hidden = comment;
     if (body) body.placeholder = comment ? "Write your comment…" : "Write your post…";
+    paintPublishTitlePlaceholder();
     if (pageEl) {
       pageEl.classList.toggle("is-editing", editing);
       pageEl.classList.toggle("is-editing-comment", comment);
@@ -6181,6 +6182,7 @@ let CS77_FILTER_LOW_REP = 20;
         publishCommunityBeneficiary.community === normalizeCommunityName(publishDest.name)
           ? publishCommunityBeneficiary.account
           : "",
+      poll: pollDraftFromState(readPublishPoll()),
     };
   }
 
@@ -6362,6 +6364,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (body) body.value = publishBodyDraft;
     if (tagInput) tagInput.value = (state && state.tagInput) || "";
     applyPublishAdvanced(state);
+    applyPublishPoll(state && state.poll);
     const savedBeneficiary = normalizeLoginUser(state && state.communityBeneficiary);
     if (
       !publishEdit &&
@@ -6935,6 +6938,227 @@ let CS77_FILTER_LOW_REP = 20;
     if (add) add.disabled = list.length >= MAX_BENEFICIARIES;
   }
 
+  const PUBLISH_POLL_CHOICE_MAX = 50;
+
+  function publishPollWhole(raw) {
+    const text = String(raw == null ? "" : raw).trim();
+    if (!/^\d+$/.test(text)) return null;
+    const n = Number(text);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+
+  function publishPollIsOn() {
+    const btn = $("#publishPollBtn");
+    return Boolean(btn && btn.getAttribute("aria-pressed") === "true" && !editingComment());
+  }
+
+  function paintPublishTitlePlaceholder() {
+    const title = $("#publishTitle");
+    if (!title) return;
+    title.placeholder = !editingComment() && publishPollIsOn() ? "Poll question…" : "Teaser…";
+  }
+
+  function setPublishPollOpen(on) {
+    const btn = $("#publishPollBtn");
+    const panel = $("#publishPoll");
+    const open = Boolean(on) && !editingComment();
+    if (btn) {
+      btn.classList.toggle("is-set", open);
+      btn.setAttribute("aria-pressed", open ? "true" : "false");
+    }
+    if (panel) panel.hidden = !open;
+    paintPublishTitlePlaceholder();
+  }
+
+  function readPublishPollChoices() {
+    const root = $("#publishPollChoices");
+    if (!root) return ["", ""];
+    const values = Array.from(root.querySelectorAll("input")).map((input) => String(input.value || ""));
+    return values.length >= 2 ? values : ["", ""];
+  }
+
+  function paintPublishPollChoices(choices) {
+    const root = $("#publishPollChoices");
+    const add = $("#publishPollAdd");
+    if (!root) return;
+    const list = Array.isArray(choices) ? choices.map((item) => String(item == null ? "" : item).slice(0, 128)) : [];
+    while (list.length < 2) list.push("");
+    if (list.length > PUBLISH_POLL_CHOICE_MAX) list.length = PUBLISH_POLL_CHOICE_MAX;
+    root.innerHTML = list
+      .map((text, i) => {
+        const n = i + 1;
+        const remove =
+          list.length > 2
+            ? `<button type="button" class="publish-beneficiary-remove publish-poll-remove" aria-label="Remove choice ${n}">×</button>`
+            : "";
+        return `<div class="publish-poll-choice">
+          <span class="publish-poll-num">${n}</span>
+          <input type="text" maxlength="128" autocomplete="off" spellcheck="false" value="${HiveMd.escapeHtml(text)}" aria-label="Choice ${n}">
+          ${remove}
+        </div>`;
+      })
+      .join("");
+    if (add) add.disabled = list.length >= PUBLISH_POLL_CHOICE_MAX;
+  }
+
+  function readPublishPoll() {
+    const panel = $("#publishPoll");
+    const daysEl = $("#publishPollDays");
+    const ageEl = $("#publishPollAge");
+    const modeEl = $("#publishPollInterpretation");
+    const maxEl = $("#publishPollMax");
+    return {
+      on: publishPollIsOn(),
+      choices: readPublishPollChoices(),
+      days: daysEl ? daysEl.value : "7",
+      age: ageEl ? ageEl.value : "0",
+      interpretation: modeEl && modeEl.value === "tokens" ? "tokens" : "number_of_votes",
+      max: maxEl ? maxEl.value : "1",
+      savedDays: panel ? panel.getAttribute("data-days") || "" : "",
+      savedEnd: panel ? panel.getAttribute("data-end") || "" : "",
+      allowChanges: !panel || panel.getAttribute("data-changes") !== "false",
+      hideResults: !panel || panel.getAttribute("data-hide") !== "false",
+    };
+  }
+
+  function applyPublishPoll(poll) {
+    const panel = $("#publishPoll");
+    const daysEl = $("#publishPollDays");
+    const ageEl = $("#publishPollAge");
+    const modeEl = $("#publishPollInterpretation");
+    const maxEl = $("#publishPollMax");
+    const on = Boolean(poll && poll.on) && !editingComment();
+    paintPublishPollChoices(on && Array.isArray(poll.choices) ? poll.choices : ["", ""]);
+    if (daysEl) daysEl.value = on && poll.days != null && String(poll.days) !== "" ? String(poll.days) : "7";
+    if (ageEl) ageEl.value = on && poll.age != null && String(poll.age) !== "" ? String(poll.age) : "0";
+    if (modeEl) modeEl.value = on && poll.interpretation === "tokens" ? "tokens" : "number_of_votes";
+    if (maxEl) maxEl.value = on && poll.max != null && String(poll.max) !== "" ? String(poll.max) : "1";
+    if (panel) {
+      if (on && poll.savedEnd) panel.setAttribute("data-end", String(poll.savedEnd));
+      else panel.removeAttribute("data-end");
+      if (on && poll.savedDays != null && String(poll.savedDays) !== "") {
+        panel.setAttribute("data-days", String(poll.savedDays));
+      } else panel.removeAttribute("data-days");
+      if (on && poll.allowChanges === false) panel.setAttribute("data-changes", "false");
+      else panel.removeAttribute("data-changes");
+      if (on && poll.hideResults === false) panel.setAttribute("data-hide", "false");
+      else panel.removeAttribute("data-hide");
+    }
+    setPublishPollOpen(on);
+  }
+
+  function publishPollFilledChoices(poll) {
+    return poll.choices.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  function publishPollError(poll) {
+    if (!poll || !poll.on) return "";
+    const choices = publishPollFilledChoices(poll);
+    if (choices.length < 2) return "Add at least two choices.";
+    const seen = Object.create(null);
+    for (let i = 0; i < choices.length; i += 1) {
+      const key = choices[i].toLowerCase();
+      if (seen[key]) return "Choices must be different.";
+      seen[key] = true;
+    }
+    const days = publishPollWhole(poll.days);
+    if (days == null || days < 1 || days > 3650) return "Set the poll duration in days.";
+    const age = publishPollWhole(poll.age);
+    if (age == null || age > 36500) return "Set the minimum account age in days.";
+    const max = publishPollWhole(poll.max);
+    if (max == null || max < 1) return "Set how many choices a vote can include.";
+    if (max > choices.length) return "Max choices cannot be more than the number of choices.";
+    return "";
+  }
+
+  function applyPollMetadata(jsonMetadata, title) {
+    const poll = readPublishPoll();
+    if (!poll.on) {
+      if (String(jsonMetadata.content_type || "").toLowerCase() === "poll") {
+        delete jsonMetadata.content_type;
+        delete jsonMetadata.question;
+        delete jsonMetadata.choices;
+        delete jsonMetadata.preferred_interpretation;
+        delete jsonMetadata.token;
+        delete jsonMetadata.end_time;
+        delete jsonMetadata.max_choices_voted;
+        delete jsonMetadata.allow_vote_changes;
+        delete jsonMetadata.ui_hide_res_until_voted;
+        delete jsonMetadata.filters;
+        if (jsonMetadata.version === 1.1 || jsonMetadata.version === "1.1") delete jsonMetadata.version;
+      }
+      return "";
+    }
+    const error = publishPollError(poll);
+    if (error) return error;
+    const days = publishPollWhole(poll.days);
+    const age = publishPollWhole(poll.age);
+    const max = publishPollWhole(poll.max);
+    let end = Math.floor(Date.now() / 1000) + days * 86400;
+    if (poll.savedEnd && String(days) === String(poll.savedDays)) {
+      const saved = publishPollWhole(poll.savedEnd);
+      if (saved) end = saved;
+    }
+    jsonMetadata.content_type = "poll";
+    jsonMetadata.version = 1.1;
+    jsonMetadata.question = title;
+    jsonMetadata.choices = publishPollFilledChoices(poll);
+    jsonMetadata.preferred_interpretation = poll.interpretation === "tokens" ? "tokens" : "number_of_votes";
+    if (jsonMetadata.preferred_interpretation === "tokens") jsonMetadata.token = "HIVE:HP";
+    else delete jsonMetadata.token;
+    jsonMetadata.end_time = end;
+    jsonMetadata.max_choices_voted = max;
+    jsonMetadata.allow_vote_changes = poll.allowChanges !== false;
+    jsonMetadata.filters = { account_age: age };
+    jsonMetadata.ui_hide_res_until_voted = poll.hideResults !== false;
+    return "";
+  }
+
+  function pollDraftFromState(poll) {
+    if (!poll || !poll.on) return null;
+    return {
+      on: true,
+      choices: poll.choices.slice(),
+      days: String(poll.days == null ? "7" : poll.days),
+      age: String(poll.age == null ? "0" : poll.age),
+      interpretation: poll.interpretation === "tokens" ? "tokens" : "number_of_votes",
+      max: String(poll.max == null ? "1" : poll.max),
+      savedDays: poll.savedDays ? String(poll.savedDays) : "",
+      savedEnd: poll.savedEnd ? String(poll.savedEnd) : "",
+      allowChanges: poll.allowChanges !== false,
+      hideResults: poll.hideResults !== false,
+    };
+  }
+
+  function pollStateFromPost(post) {
+    if (!post || !window.HiveMd) return null;
+    const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+    if (String(meta.content_type || "").toLowerCase() !== "poll") return null;
+    const raw = Array.isArray(meta.choices) ? meta.choices : [];
+    const choices = raw.map((item) => String(item == null ? "" : item).slice(0, 128));
+    while (choices.length < 2) choices.push("");
+    const endMs = pollEndMs(meta.end_time);
+    const startMs = parseCreatedTs(post.created);
+    let days = 7;
+    if (Number.isFinite(endMs) && Number.isFinite(startMs) && endMs > startMs) {
+      days = Math.max(1, Math.round((endMs - startMs) / 86400000));
+    }
+    const ageRaw = meta.filters && Number(meta.filters.account_age);
+    const age = Number.isFinite(ageRaw) && ageRaw > 0 ? Math.floor(ageRaw) : 0;
+    return {
+      on: true,
+      choices,
+      days: String(days),
+      age: String(age),
+      interpretation: String(meta.preferred_interpretation || "") === "tokens" ? "tokens" : "number_of_votes",
+      max: String(pollMaxChoices(meta.max_choices_voted)),
+      savedDays: String(days),
+      savedEnd: Number.isFinite(endMs) ? String(Math.floor(endMs / 1000)) : "",
+      allowChanges: meta.allow_vote_changes !== false,
+      hideResults: meta.ui_hide_res_until_voted !== false,
+    };
+  }
+
   function publishAdvancedState() {
     return {
       description: readPublishDescription(),
@@ -6965,6 +7189,10 @@ let CS77_FILTER_LOW_REP = 20;
     return readPublishBeneficiaryRows().some((row) => {
       return String(row.account || "").trim() || String(row.percent || "").trim();
     });
+  }
+
+  function publishPollDirty() {
+    return publishPollIsOn();
   }
 
   function addPublishBeneficiaryRow() {
@@ -7132,7 +7360,8 @@ let CS77_FILTER_LOW_REP = 20;
         String(publishBodyDraft || "").trim() ||
         publishTags.length ||
         tagDraft ||
-        publishAdvancedDirty()
+        publishAdvancedDirty() ||
+        publishPollDirty()
     );
   }
 
@@ -7162,6 +7391,7 @@ let CS77_FILTER_LOW_REP = 20;
       const reward = normalizePublishReward(parsed.reward);
       const beneficiaries = beneficiariesFromStored(parsed.beneficiaries);
       const communityBeneficiary = normalizeLoginUser(parsed.communityBeneficiary);
+      const poll = pollDraftFromState(parsed.poll);
       if (
         !title &&
         !body &&
@@ -7170,7 +7400,8 @@ let CS77_FILTER_LOW_REP = 20;
         !dest &&
         !description.trim() &&
         reward === "default" &&
-        !beneficiaries.length
+        !beneficiaries.length &&
+        !poll
       ) {
         return null;
       }
@@ -7184,6 +7415,7 @@ let CS77_FILTER_LOW_REP = 20;
         reward,
         beneficiaries,
         communityBeneficiary: validLoginUser(communityBeneficiary) ? communityBeneficiary : "",
+        poll,
       };
     } catch {
       return null;
@@ -7208,6 +7440,7 @@ let CS77_FILTER_LOW_REP = 20;
           communityBeneficiary: validLoginUser(normalizeLoginUser(state.communityBeneficiary))
             ? normalizeLoginUser(state.communityBeneficiary)
             : "",
+          poll: pollDraftFromState(state.poll),
         })
       );
     } catch {
@@ -8379,6 +8612,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (body) body.value = "";
     if (tagInput) tagInput.value = "";
     applyPublishAdvanced(null);
+    applyPublishPoll(null);
     collapsePublishAdvanced();
     paintPublishDest();
     paintPublishTags();
@@ -8510,6 +8744,13 @@ let CS77_FILTER_LOW_REP = 20;
       setPublishStatus(commentEdit ? "Write the comment." : "Write the post body.", true);
       return;
     }
+    if (!commentEdit && publishPollIsOn()) {
+      const pollError = publishPollError(readPublishPoll());
+      if (pollError) {
+        setPublishStatus(pollError, true);
+        return;
+      }
+    }
     if (!hasSigner(user)) {
       setPublishStatus(signerNeededMessage(), true);
       return;
@@ -8570,6 +8811,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (!commentEdit) {
       applyLocationMetadata(jsonMetadata, body);
       applyDescriptionMetadata(jsonMetadata, normalizedPublishDescription());
+      const pollError = applyPollMetadata(jsonMetadata, title);
+      if (pollError) {
+        setPublishStatus(pollError, true);
+        return;
+      }
     }
 
     if (!editing) permlink = postPermlink(title);
@@ -8731,6 +8977,7 @@ let CS77_FILTER_LOW_REP = 20;
       description: comment ? "" : descriptionFromPost(post),
       reward: "default",
       beneficiaries: [],
+      poll: comment ? null : pollStateFromPost(post),
     });
     collapsePublishAdvanced();
     paintPublishChrome();
@@ -12446,6 +12693,16 @@ let CS77_FILTER_LOW_REP = 20;
           percent: String(row.percent || ""),
         }));
       }
+      const poll = pollDraftFromState(readPublishPoll());
+      if (poll) {
+        payload.poll = {
+          choices: poll.choices,
+          days: poll.days,
+          age: poll.age,
+          interpretation: poll.interpretation,
+          max: poll.max,
+        };
+      }
     }
     return payload;
   }
@@ -12532,6 +12789,19 @@ let CS77_FILTER_LOW_REP = 20;
         reward: publishEdit ? "default" : reward,
         beneficiaries,
       });
+      const loadedPoll = data.poll && typeof data.poll === "object" ? data.poll : null;
+      applyPublishPoll(
+        loadedPoll
+          ? {
+              on: true,
+              choices: Array.isArray(loadedPoll.choices) ? loadedPoll.choices : ["", ""],
+              days: loadedPoll.days,
+              age: loadedPoll.age,
+              interpretation: loadedPoll.interpretation,
+              max: loadedPoll.max,
+            }
+          : null
+      );
       if (
         description.trim() ||
         (!publishEdit && (reward !== "default" || beneficiaries.length))
@@ -12607,6 +12877,7 @@ let CS77_FILTER_LOW_REP = 20;
         !attachBtn ||
         attachBtn.id === "publishLocationBtn" ||
         attachBtn.id === "publishMdBtn" ||
+        attachBtn.id === "publishPollBtn" ||
         !root.contains(attachBtn)
       ) return;
       e.preventDefault();
@@ -27037,7 +27308,12 @@ let CS77_FILTER_LOW_REP = 20;
         e.target.id === "publishTagInput" ||
         e.target.id === "publishDescription" ||
         e.target.id === "publishReward" ||
-        (e.target.closest && e.target.closest(".publish-beneficiary-row"))
+        e.target.id === "publishPollDays" ||
+        e.target.id === "publishPollAge" ||
+        e.target.id === "publishPollInterpretation" ||
+        e.target.id === "publishPollMax" ||
+        (e.target.closest &&
+          (e.target.closest(".publish-beneficiary-row") || e.target.closest(".publish-poll-choice")))
       ) {
         if (e.target.id === "publishTitle") {
           // Predictive text keeps the word in composition. Refresh the ring
@@ -27090,6 +27366,15 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener("change", (e) => {
       if (e.target && e.target.id === "publishReward") {
         paintPublishRewardNote();
+        schedulePublishDraftSave();
+      }
+      if (
+        e.target &&
+        (e.target.id === "publishPollInterpretation" ||
+          e.target.id === "publishPollDays" ||
+          e.target.id === "publishPollAge" ||
+          e.target.id === "publishPollMax")
+      ) {
         schedulePublishDraftSave();
       }
       if (e.target && (e.target.id === "settingsVotePost" || e.target.id === "settingsVoteComment")) {
@@ -27470,6 +27755,7 @@ let CS77_FILTER_LOW_REP = 20;
         attachBtn &&
         attachBtn.id !== "publishLocationBtn" &&
         attachBtn.id !== "publishMdBtn" &&
+        attachBtn.id !== "publishPollBtn" &&
         inInteractiveSurface(attachBtn)
       ) {
         e.preventDefault();
@@ -28097,6 +28383,49 @@ let CS77_FILTER_LOW_REP = 20;
         if (e.target.closest("#publishLocationBtn")) {
           e.preventDefault();
           openLocationDialog();
+          return;
+        }
+        if (e.target.closest("#publishPollBtn")) {
+          e.preventDefault();
+          if (editingComment()) return;
+          const next = !publishPollIsOn();
+          if (next && document.querySelectorAll("#publishPollChoices input").length < 2) {
+            const current = readPublishPoll();
+            applyPublishPoll({
+              on: true,
+              choices: ["", ""],
+              days: current.days || "7",
+              age: current.age || "0",
+              interpretation: current.interpretation,
+              max: current.max || "1",
+            });
+          } else setPublishPollOpen(next);
+          schedulePublishDraftSave();
+          return;
+        }
+        if (e.target.closest("#publishPollAdd")) {
+          e.preventDefault();
+          const rows = readPublishPollChoices();
+          if (rows.length >= PUBLISH_POLL_CHOICE_MAX) return;
+          rows.push("");
+          paintPublishPollChoices(rows);
+          const inputs = document.querySelectorAll("#publishPollChoices input");
+          const last = inputs[inputs.length - 1];
+          if (last) last.focus();
+          schedulePublishDraftSave();
+          return;
+        }
+        const removePoll = e.target.closest(".publish-poll-remove");
+        if (removePoll) {
+          e.preventDefault();
+          const row = removePoll.closest(".publish-poll-choice");
+          const rows = readPublishPollChoices();
+          const index = row ? Array.from(row.parentNode.children).indexOf(row) : -1;
+          if (index >= 0 && rows.length > 2) {
+            rows.splice(index, 1);
+            paintPublishPollChoices(rows);
+            schedulePublishDraftSave();
+          }
           return;
         }
         if (e.target.closest("#publishMdBtn")) {

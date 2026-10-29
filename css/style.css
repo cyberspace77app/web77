@@ -6371,11 +6371,14 @@ body:has(#pollVotesOverlay:not([hidden])) {
   }
 }
 
-.publish-card.is-editing-comment #publishLocationBtn {
+.publish-card.is-editing-comment #publishLocationBtn,
+.publish-card.is-editing-comment #publishPollBtn,
+.publish-card.is-editing-comment .publish-poll {
   display: none !important;
 }
 
-#publishLocationBtn.is-set {
+#publishLocationBtn.is-set,
+#publishPollBtn.is-set {
   color: var(--yellow);
   border-color: var(--border-hot);
 }
@@ -6385,6 +6388,80 @@ body:has(#pollVotesOverlay:not([hidden])) {
   align-items: center;
   gap: 0.75rem;
   flex-wrap: nowrap;
+}
+
+.publish-poll-slot {
+  display: contents;
+}
+
+.publish-poll {
+  margin: 0 0 1rem;
+}
+
+.publish-poll > .publish-field-label:first-child {
+  margin-top: 0;
+}
+
+.publish-poll-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.publish-poll-num {
+  flex: 0 0 1.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-dim);
+}
+
+.publish-card .publish-poll-choice input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+#publishPollAdd {
+  margin-bottom: 1rem;
+}
+
+.publish-card .publish-poll input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.publish-card .publish-poll input[type="number"]::-webkit-outer-spin-button,
+.publish-card .publish-poll input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  display: none;
+}
+
+.publish-card .publish-poll select {
+  width: 100%;
+  margin: 0 0 1rem;
+  padding: 0.8rem 2.2rem 0.8rem 0.95rem;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg-input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 L6 6.5 L11 1.5' fill='none' stroke='%23d7d7d7' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+  background-size: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.publish-card .publish-poll select:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
 }
 
 .publish-md {
@@ -7090,6 +7167,48 @@ body:has(#pollVotesOverlay:not([hidden])) {
 
   .composer-hint {
     flex-basis: 100%;
+  }
+
+  .publish-card .publish-loc-tools {
+    display: contents;
+  }
+
+  .publish-card:not(.is-editing-comment) .composer-bar {
+    display: grid;
+    grid-template-columns: max-content max-content max-content;
+    justify-content: start;
+    align-items: center;
+  }
+
+  .publish-card:not(.is-editing-comment) .composer-bar > .composer-attach {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .publish-card:not(.is-editing-comment) #publishLocationBtn {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .publish-card:not(.is-editing-comment) .publish-md {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .publish-card:not(.is-editing-comment) .publish-poll-slot {
+    display: flex;
+    align-items: center;
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .publish-card:not(.is-editing-comment) .composer-hint {
+    grid-column: 2 / 4;
+    grid-row: 2;
+    justify-self: end;
+    align-self: center;
+    flex: none;
+    text-align: right;
   }
 
   .tags-add {

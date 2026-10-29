@@ -42,7 +42,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.37">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.40">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -519,6 +519,9 @@
           <button type="button" class="composer-attach" title="Attach image">Attach image</button>
           <div class="publish-loc-tools">
             <button type="button" class="composer-attach" id="publishLocationBtn" title="Add location">Add location</button>
+            <div class="publish-poll-slot">
+              <button type="button" class="composer-attach" id="publishPollBtn" title="Create poll" aria-pressed="false">Create poll</button>
+            </div>
             <div class="publish-md" id="publishMd">
               <button type="button" class="composer-attach" id="publishMdBtn" title="Markdown" aria-label="Markdown" aria-haspopup="menu" aria-expanded="false" aria-controls="publishMdMenu">···</button>
               <div class="publish-md-menu" id="publishMdMenu" hidden role="menu" aria-label="Markdown">
@@ -542,6 +545,22 @@
           <span class="composer-hint">Write in markdown.</span>
         </div>
         <p class="composer-status" hidden></p>
+      </div>
+      <div class="publish-poll" id="publishPoll" hidden>
+        <div class="publish-field-label">Choices</div>
+        <div id="publishPollChoices"></div>
+        <button type="button" class="publish-beneficiary-add" id="publishPollAdd">Add</button>
+        <label class="publish-field-label" for="publishPollDays">Poll duration (in days)</label>
+        <input id="publishPollDays" type="number" inputmode="numeric" min="1" max="3650" step="1" value="7">
+        <label class="publish-field-label" for="publishPollAge">Min account age (in days)</label>
+        <input id="publishPollAge" type="number" inputmode="numeric" min="0" max="36500" step="1" value="0">
+        <label class="publish-field-label" for="publishPollInterpretation">Vote interpretation</label>
+        <select id="publishPollInterpretation">
+          <option value="number_of_votes">By Number of Votes</option>
+          <option value="tokens">By Token</option>
+        </select>
+        <label class="publish-field-label" for="publishPollMax">Max choices</label>
+        <input id="publishPollMax" type="number" inputmode="numeric" min="1" max="50" step="1" value="1">
       </div>
       <div class="publish-tags-head">
         <span>Spaces</span>
@@ -651,6 +670,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.1"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.38"></script>
+  <script src="/js/app.js?v=0.19.39"></script>
 </body>
 </html>
