@@ -161,6 +161,19 @@ let CS77_FILTER_LOW_REP = 20;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
   let searchBox = "";
+  // Spaces directory search. Same tag lookup as /search/spaces, then ++ saves a favorite.
+  const spaceTagSearch = {
+    box: "",
+    query: "",
+    looked: false,
+    loading: false,
+    loadingMore: false,
+    error: "",
+    results: [],
+    done: false,
+    cursor: "",
+  };
+  let spaceTagSearchGen = 0;
   let trendingTagNamesCache = null;
   let trendingTagNamesAt = 0;
   // History entry id for the feed currently mounted in #view. A profile opened
@@ -10642,7 +10655,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!list) return;
     const tags = readFavoriteTags();
     if (!tags.length) {
-      list.innerHTML = `<p class="feed-hint tags-empty">No favorite tags yet. Add one below, or pick a suggestion.</p>`;
+      list.innerHTML = `<p class="feed-hint tags-empty">No favorite tags yet. Search below, or pick a suggestion.</p>`;
       return;
     }
     list.innerHTML = tags
@@ -10739,6 +10752,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteTags();
     paintLogoMenu();
     paintSearchResults();
+    paintSpaceTagSearch();
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
     return true;
   }
@@ -10751,45 +10765,208 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteTags();
     paintLogoMenu();
     paintSearchResults();
+    paintSpaceTagSearch();
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
   }
 
-  function addFavoriteFromInput() {
-    const input = $("#favTagInput");
-    if (!input) return;
-    const parts = String(input.value || "").split(/[,\s]+/).filter(Boolean);
-    input.value = "";
-    if (!parts.length) {
-      setTagsStatus("Enter a tag to add.", true);
+  function resetSpaceTagSearch() {
+    spaceTagSearch.query = "";
+    spaceTagSearch.looked = false;
+    spaceTagSearch.loading = false;
+    spaceTagSearch.loadingMore = false;
+    spaceTagSearch.error = "";
+    spaceTagSearch.results = [];
+    spaceTagSearch.done = false;
+    spaceTagSearch.cursor = "";
+  }
+
+  function setSpaceTagSearchMore(on) {
+    const more = $("#spaceTagSearchMore");
+    if (!more) return;
+    if (!on) {
+      more.hidden = true;
+      more.innerHTML = "";
       return;
     }
-    parts.forEach((p) => addFavoriteTag(p));
-    input.focus();
+    more.hidden = false;
+    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Searching…`;
+  }
+
+  function spaceTagSearchListNearEnd() {
+    const list = $("#spaceTagSearchResults");
+    if (!list || list.hidden || !spaceTagSearch.looked) return false;
+    const rect = list.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
+  }
+
+  function paintSpaceTagSearch() {
+    const block = $("#suggestTagsBlock");
+    if (block) block.hidden = Boolean(spaceTagSearch.looked);
+    const list = $("#spaceTagSearchResults");
+    if (!list) return;
+    const state = spaceTagSearch;
+    if (state.loading && !state.results.length) {
+      list.hidden = false;
+      list.className = "community-list";
+      list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+      return;
+    }
+    if (!state.looked) {
+      list.className = "";
+      list.innerHTML = "";
+      list.hidden = true;
+      return;
+    }
+    if (state.error && !state.results.length) {
+      list.hidden = false;
+      list.className = "community-list";
+      list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(state.error)}</p>`;
+      return;
+    }
+    if (!state.results.length) {
+      list.hidden = false;
+      list.className = "community-list";
+      if (!state.done) {
+        list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+        return;
+      }
+      list.innerHTML = `<p class="feed-hint tags-empty">No spaces matched that search.</p>`;
+      return;
+    }
+    list.hidden = false;
+    list.className = "tags-fav-list";
+    list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
+  }
+
+  function appendSpaceTagSearch(items) {
+    const list = $("#spaceTagSearchResults");
+    if (!list || !items || !items.length) return;
+    list.hidden = false;
+    list.className = "tags-fav-list";
+    const html = items.map((tag) => searchTagChipHtml(tag)).join("");
+    if (!list.querySelector(".fav-tag-chip")) list.innerHTML = html;
+    else list.insertAdjacentHTML("beforeend", html);
+  }
+
+  function maybeLoadMoreSpaceTagSearch() {
+    const state = spaceTagSearch;
+    if (parseRoute().name !== "tags") return;
+    if (!state.looked || state.loading || state.loadingMore || state.done) return;
+    if (!$("#spaceTagSearchResults")) return;
+    if (spaceTagSearchListNearEnd()) fillSpaceTagSearch(spaceTagSearchGen, false);
+  }
+
+  async function fillSpaceTagSearch(gen, first) {
+    const state = spaceTagSearch;
+    if (gen !== spaceTagSearchGen) return;
+    if (state.done || state.loadingMore) return;
+    if (!first && state.loading) return;
+    if (first) state.loading = true;
+    else state.loadingMore = true;
+    if (!first) setSpaceTagSearchMore(true);
+    try {
+      let added = [];
+      let loops = 0;
+      while (loops < 4 && !state.done) {
+        loops += 1;
+        const seen = state.results.concat(added);
+        const batch = await fetchSpaceSearchPage(state.query, state.cursor, seen);
+        if (gen !== spaceTagSearchGen) return;
+        state.cursor = batch.cursor || "";
+        state.done = Boolean(batch.done);
+        const fresh = takeNewSearchItems("spaces", seen, batch.items || []);
+        added = added.concat(fresh);
+        if (added.length || state.done) break;
+      }
+      if (gen !== spaceTagSearchGen) return;
+      const hadRows = state.results.length > 0;
+      if (added.length) state.results = state.results.concat(added);
+      state.error = "";
+      state.loading = false;
+      state.loadingMore = false;
+      setSpaceTagSearchMore(false);
+      if (parseRoute().name !== "tags") return;
+      if (!hadRows || !added.length) paintSpaceTagSearch();
+      else appendSpaceTagSearch(added);
+      maybeLoadMoreSpaceTagSearch();
+    } catch (err) {
+      if (gen !== spaceTagSearchGen) return;
+      state.loading = false;
+      state.loadingMore = false;
+      state.done = true;
+      setSpaceTagSearchMore(false);
+      if (!state.results.length) state.error = err.message || String(err);
+      else setTagsStatus(err.message || String(err), true);
+      if (parseRoute().name === "tags") paintSpaceTagSearch();
+    }
+  }
+
+  async function runSpaceTagSearch() {
+    const input = $("#spaceTagSearchInput");
+    if (!input) return;
+    spaceTagSearch.box = input.value;
+    const raw = String(input.value || "").trim();
+    spaceTagSearchGen += 1;
+    const gen = spaceTagSearchGen;
+    if (!raw) {
+      spaceTagSearch.box = "";
+      input.value = "";
+      resetSpaceTagSearch();
+      setTagsStatus("");
+      setSpaceTagSearchMore(false);
+      paintSpaceTagSearch();
+      return;
+    }
+    resetSpaceTagSearch();
+    spaceTagSearch.box = input.value;
+    spaceTagSearch.query = raw;
+    spaceTagSearch.looked = true;
+    spaceTagSearch.loading = true;
+    setTagsStatus("");
+    setSpaceTagSearchMore(false);
+    paintSpaceTagSearch();
+    await fillSpaceTagSearch(gen, true);
   }
 
   async function renderTagsPage() {
     setPageMeta("Spaces — CyberSpace77");
+    const searchValue = HiveMd.escapeHtml(spaceTagSearch.box);
     view.innerHTML = `
       <section class="cs77-page tags-page">
         <h2 class="page-title">Spaces</h2>
         <h2 class="tags-page-title">Favorite tags</h2>
         <p class="feed-hint">Saved in this browser.</p>
         <div class="tags-fav-list" id="favTagsList"></div>
-        <form class="tags-add" id="favTagsForm">
-          <input id="favTagInput" type="text" maxlength="24" placeholder="Add a tag" autocomplete="off" spellcheck="false" autocapitalize="off">
-          <button type="submit" class="btn-primary btn-compact">Add</button>
+        <form class="tags-add search-form" id="spaceTagSearchForm">
+          <input id="spaceTagSearchInput" type="text" maxlength="80" placeholder="Search" value="${searchValue}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search">
+          ${searchGlassHtml()}
         </form>
         <p class="tags-status" id="favTagsStatus" hidden></p>
-        <h2 class="tags-page-title">Suggested tags</h2>
-        <p class="feed-hint">From the current feed.</p>
-        <div class="tags-suggest-list" id="suggestTagsList"></div>
+        <div id="spaceTagSearchResults" hidden></div>
+        <div id="spaceTagSearchMore" class="loading-row" hidden></div>
+        <div id="suggestTagsBlock">
+          <h2 class="tags-page-title">Suggested tags</h2>
+          <p class="feed-hint">From the current feed.</p>
+          <div class="tags-suggest-list" id="suggestTagsList"></div>
+        </div>
       </section>
     `;
     paintFavoriteTags();
+    paintSpaceTagSearch();
+    maybeLoadMoreSpaceTagSearch();
     const needFeed = !feedState.items.length;
     paintSuggestedTags(needFeed);
-    const input = $("#favTagInput");
-    if (input && !isMobileViewport()) input.focus();
+    const input = $("#spaceTagSearchInput");
+    if (input && !isMobileViewport()) {
+      input.focus();
+      const end = input.value.length;
+      try {
+        input.setSelectionRange(end, end);
+      } catch {
+        /* unsupported input type */
+      }
+    }
     if (!needFeed) return;
     try {
       await ensureSuggestionFeed();
@@ -28412,6 +28589,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
     window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
     window.addEventListener("resize", maybeLoadMoreSearch);
+    window.addEventListener("scroll", maybeLoadMoreSpaceTagSearch, { passive: true });
+    window.addEventListener("resize", maybeLoadMoreSpaceTagSearch);
     bindSmartHeader();
     bindFeedKeys();
     bindWelcome();
@@ -28433,6 +28612,10 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener("input", (e) => {
       if (e.target && e.target.id === "searchInput") {
         scheduleUserSearch();
+        return;
+      }
+      if (e.target && e.target.id === "spaceTagSearchInput") {
+        spaceTagSearch.box = e.target.value;
         return;
       }
       const slider = e.target.closest(".vote-slider");
@@ -28945,9 +29128,9 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("submit", (e) => {
       if (!e.target || !inInteractiveSurface(e.target)) return;
-      if (e.target.id === "favTagsForm") {
+      if (e.target.id === "spaceTagSearchForm") {
         e.preventDefault();
-        addFavoriteFromInput();
+        runSpaceTagSearch();
         return;
       }
       if (e.target.id === "communitySearchForm") {
