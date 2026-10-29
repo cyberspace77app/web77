@@ -1343,7 +1343,11 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="content-more-item content-more-delete" role="menuitem">Delete</button>`;
   }
 
-  function contentMoreHtml(author, permlink, kind, children) {
+  function crossPostItemHtml() {
+    return `<button type="button" class="content-more-item content-more-cross" role="menuitem">Cross post</button>`;
+  }
+
+  function contentMoreHtml(author, permlink, kind, children, offerCrossPost) {
     const name = String(author || "").replace(/^@/, "");
     const link = String(permlink || "");
     if (!name || !link) return "";
@@ -1359,6 +1363,7 @@ let CS77_FILTER_LOW_REP = 20;
       const profileOffer = profilePinMenuOffer(name, link);
       if (profileOffer) items.push(pinMenuItemHtml(profileOffer));
     }
+    if (offerCrossPost) items.push(crossPostItemHtml());
     items.push(
       `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
       `<a class="content-more-item content-more-explorer" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerContentUrl(name, link))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
@@ -5451,6 +5456,8 @@ let CS77_FILTER_LOW_REP = 20;
     voteRefreshGen.clear();
     hideVoteUi();
     pendingPublish = false;
+    pendingCrossPost = null;
+    hideCrossPost(true);
     publishSubs = [];
     publishSubsUser = "";
     resetPublishForm();
@@ -5734,6 +5741,14 @@ let CS77_FILTER_LOW_REP = 20;
       if (scrollPeoplePanel(e)) return;
     }
     if (e.key !== "Escape") return;
+    if (crossPostOpen()) {
+      if (crossPostMenuOpen()) {
+        closeCrossPostMenu();
+        return;
+      }
+      if (!crossPostBusy) hideCrossPost();
+      return;
+    }
     if (contentDeleteOpen()) {
       hideContentDelete();
       return;
@@ -5892,6 +5907,7 @@ let CS77_FILTER_LOW_REP = 20;
   function closeLogin() {
     overlay.hidden = true;
     pendingPublish = false;
+    pendingCrossPost = null;
     loginBusy = false;
     const keyInput = $("#loginKey");
     if (keyInput) keyInput.value = "";
@@ -5904,6 +5920,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function finishLogin(username, method) {
     const resumePublish = pendingPublish;
+    const resumeCross = pendingCrossPost;
     sessionStorage.setItem(SESSION_KEY, username);
     if (method === "keychain") writeKeychainUser(username);
     else clearKeychainUser();
@@ -5924,6 +5941,10 @@ let CS77_FILTER_LOW_REP = 20;
       }
       currentViewKey = "";
       navigate(appHref("/publish"));
+      return;
+    }
+    if (resumeCross && resumeCross.author && resumeCross.permlink) {
+      if (!crossPostOpen()) openCrossPost(resumeCross.author, resumeCross.permlink);
       return;
     }
     currentViewKey = "";
@@ -9363,6 +9384,436 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  let crossPostEpoch = 0;
+  let crossPostGen = 0;
+  let crossPostAccessSeq = 0;
+  let crossPostBusy = false;
+  let crossPostTarget = null;
+  let crossPostSource = null;
+  let crossPostDest = null;
+  let crossPostSpaces = [];
+  let crossPostSpacesLoading = false;
+  let crossPostSpacesError = "";
+  let crossPostResolving = false;
+  let pendingCrossPost = null;
+
+  function crossPostOpen() {
+    const el = $("#crossPostOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function crossPostMenuOpen() {
+    const menu = $("#crossPostDestMenu");
+    return Boolean(menu && !menu.hidden);
+  }
+
+  function closeCrossPostMenu() {
+    const menu = $("#crossPostDestMenu");
+    const btn = $("#crossPostDestBtn");
+    if (menu) menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function setCrossPostStatus(message, isError) {
+    const el = $("#crossPostStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.hidden = !message;
+    el.classList.toggle("is-error", Boolean(isError && message));
+  }
+
+  function setCrossPostNote(message) {
+    const note = $("#crossPostDestNote");
+    if (!note) return;
+    const text = String(message || "");
+    note.textContent = text;
+    note.hidden = !text;
+  }
+
+  function paintCrossPostDest() {
+    const img = $("#crossPostDestAvatar");
+    const nameEl = $("#crossPostDestName");
+    const btn = $("#crossPostDestBtn");
+    if (!nameEl || !btn) return;
+    if (crossPostDest && crossPostDest.name) {
+      if (img) {
+        img.hidden = false;
+        img.src = HiveMd.avatarUrl(crossPostDest.name, "small");
+      }
+      nameEl.textContent = crossPostDest.title || crossPostDest.name;
+      btn.classList.remove("is-empty");
+    } else {
+      if (img) img.hidden = true;
+      nameEl.textContent = "Choose a subspace";
+      btn.classList.add("is-empty");
+    }
+  }
+
+  function paintCrossPostChrome() {
+    const submit = $("#crossPostSubmit");
+    const cancel = $("#crossPostCancel");
+    const msg = $("#crossPostMessage");
+    const destBtn = $("#crossPostDestBtn");
+    const ov = $("#crossPostOverlay");
+    if (ov) ov.classList.toggle("is-busy", crossPostBusy);
+    if (cancel) cancel.disabled = crossPostBusy;
+    if (msg) msg.disabled = crossPostBusy;
+    if (destBtn) destBtn.disabled = crossPostBusy;
+    if (submit) {
+      submit.disabled = crossPostBusy || crossPostResolving || !crossPostDest || !crossPostTarget;
+    }
+  }
+
+  function crossPostSpaceList(subs) {
+    const seen = new Set();
+    const list = [];
+    const add = (name, title) => {
+      const id = normalizeCommunityName(name);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      list.push({ name: id, title: String(title || "").trim() || id });
+    };
+    (Array.isArray(subs) ? subs : []).forEach((row) => add(row && row.name, row && row.title));
+    readFavoriteCommunities().forEach((row) => add(row.name, row.title));
+    list.sort((a, b) => String(a.title || a.name).localeCompare(String(b.title || b.name)));
+    return list;
+  }
+
+  function renderCrossPostMenu() {
+    const menu = $("#crossPostDestMenu");
+    if (!menu) return;
+    const selected = crossPostDest ? normalizeCommunityName(crossPostDest.name) : "";
+    if (crossPostSpacesLoading && !crossPostSpaces.length) {
+      menu.innerHTML = `<p class="publish-dest-empty">Loading subspaces…</p>`;
+      return;
+    }
+    if (!crossPostSpaces.length) {
+      const empty = crossPostSpacesError || "No subspaces yet.";
+      menu.innerHTML = `<p class="publish-dest-empty">${HiveMd.escapeHtml(empty)}</p>`;
+      return;
+    }
+    const seen = new Set();
+    const parts = [];
+    crossPostSpaces.forEach((row) => {
+      const id = normalizeCommunityName(row.name);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      parts.push(
+        destOptionHtml(id, row.title || id, HiveMd.avatarUrl(id, "small"), id === selected)
+      );
+    });
+    if (selected && !seen.has(selected)) {
+      parts.unshift(
+        destOptionHtml(
+          selected,
+          crossPostDest.title || selected,
+          HiveMd.avatarUrl(selected, "small"),
+          true
+        )
+      );
+    }
+    menu.innerHTML = parts.join("");
+  }
+
+  function toggleCrossPostMenu() {
+    if (crossPostBusy) return;
+    const menu = $("#crossPostDestMenu");
+    const btn = $("#crossPostDestBtn");
+    if (!menu || !btn) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) renderCrossPostMenu();
+  }
+
+  function noteCrossPostAccess(id, title) {
+    const seq = ++crossPostAccessSeq;
+    const user = observer();
+    setCrossPostNote("");
+    if (!id || !user || !window.HiveApi || typeof HiveApi.getCommunity !== "function") return;
+    HiveApi.getCommunity(id, user)
+      .then((info) => {
+        if (seq !== crossPostAccessSeq) return;
+        if (!crossPostDest || normalizeCommunityName(crossPostDest.name) !== id) return;
+        if (!info || !info.name) return;
+        const nextTitle = String(info.title || "").trim();
+        if (nextTitle && crossPostDest.title !== nextTitle) {
+          crossPostDest = { name: id, title: nextTitle };
+          paintCrossPostDest();
+          renderCrossPostMenu();
+        }
+        if (!communityAllowsPost(info)) {
+          setCrossPostNote(communityPostDeniedMessage(info, nextTitle || title));
+        }
+      })
+      .catch(() => {
+        /* The note stays empty. Cross-post still sends. */
+      });
+  }
+
+  function selectCrossPostDest(name, title) {
+    if (crossPostBusy) return;
+    const id = normalizeCommunityName(name);
+    if (!id) return;
+    closeCrossPostMenu();
+    const label = String(title || "").trim() || id;
+    crossPostDest = { name: id, title: label };
+    paintCrossPostDest();
+    renderCrossPostMenu();
+    paintCrossPostChrome();
+    noteCrossPostAccess(id, label);
+  }
+
+  function hideCrossPost(force) {
+    if (crossPostBusy && !force) return;
+    crossPostEpoch += 1;
+    crossPostGen += 1;
+    crossPostAccessSeq += 1;
+    const el = $("#crossPostOverlay");
+    if (el) {
+      el.hidden = true;
+      el.classList.remove("is-busy");
+    }
+    closeCrossPostMenu();
+    crossPostBusy = false;
+    crossPostResolving = false;
+    crossPostTarget = null;
+    crossPostSource = null;
+    crossPostDest = null;
+    setCrossPostStatus("");
+    setCrossPostNote("");
+    const msg = $("#crossPostMessage");
+    if (msg) {
+      msg.value = "";
+      msg.disabled = false;
+    }
+    paintCrossPostDest();
+    paintCrossPostChrome();
+  }
+
+  // Hivemind treats this as a cross-post when the first tag is cross-post and
+  // the metadata names the original. The sentence matches the Ecency body.
+  function crossPostBody(author, permlink, message) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    const intro =
+      "This is a cross post of [@" +
+      name +
+      "/" +
+      link +
+      "](/@" +
+      name +
+      "/" +
+      link +
+      ") by @" +
+      name +
+      ".";
+    const note = String(message || "").replace(/\s+/g, " ").trim();
+    if (!note) return intro;
+    return intro + "<br><br>" + note;
+  }
+
+  function crossPostPermlink(originalPermlink, community) {
+    const id = normalizeCommunityName(community);
+    const suffix = "-" + id;
+    let stem = String(originalPermlink || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const max = 255 - suffix.length;
+    if (stem.length > max) stem = stem.slice(0, Math.max(1, max)).replace(/-+$/g, "");
+    if (!stem) stem = "post";
+    return (stem + suffix).slice(0, 255);
+  }
+
+  async function loadCrossPostSpaces(gen) {
+    const user = observer();
+    crossPostSpacesLoading = true;
+    crossPostSpacesError = "";
+    crossPostSpaces = crossPostSpaceList([]);
+    renderCrossPostMenu();
+    let subs = [];
+    let failed = false;
+    try {
+      subs = await HiveApi.listAllSubscriptions(user);
+    } catch {
+      failed = true;
+      subs = [];
+    }
+    if (gen !== crossPostGen || observer() !== user) return;
+    crossPostSpacesLoading = false;
+    crossPostSpaces = crossPostSpaceList(subs);
+    crossPostSpacesError =
+      failed && !crossPostSpaces.length ? "Could not load subspaces." : "";
+    renderCrossPostMenu();
+  }
+
+  async function resolveCrossPostTarget(author, permlink, gen) {
+    crossPostResolving = true;
+    paintCrossPostChrome();
+    let post = postRecordForEdit(author, permlink);
+    if (!post || post.title == null || post.body == null) {
+      try {
+        post = await HiveApi.getPost(author, permlink);
+      } catch {
+        post = null;
+      }
+    }
+    if (gen !== crossPostGen) return;
+    if (!post || !post.author || !post.permlink) {
+      crossPostResolving = false;
+      paintCrossPostChrome();
+      setCrossPostStatus("Couldn't open this post.", true);
+      return;
+    }
+    const ref = crossPostRef(post);
+    if (ref) {
+      let orig =
+        post.original_entry && samePostId(post.original_entry, ref.author, ref.permlink)
+          ? post.original_entry
+          : null;
+      if (!orig) {
+        try {
+          orig = await HiveApi.getPost(ref.author, ref.permlink);
+        } catch {
+          orig = null;
+        }
+      }
+      if (gen !== crossPostGen) return;
+      if (!orig || !orig.author || !orig.permlink || !isRootPost(orig)) {
+        crossPostResolving = false;
+        paintCrossPostChrome();
+        setCrossPostStatus("Couldn't open the original post.", true);
+        return;
+      }
+      post = orig;
+    }
+    if (!isRootPost(post)) {
+      crossPostResolving = false;
+      hideCrossPost(true);
+      showError("Cross post is for posts.");
+      return;
+    }
+    if (gen !== crossPostGen) return;
+    crossPostResolving = false;
+    crossPostTarget = {
+      author: String(post.author || "").replace(/^@/, ""),
+      permlink: String(post.permlink || ""),
+      title: clampPublishTitle(String(post.title || "").trim()) || "Post",
+    };
+    paintCrossPostChrome();
+  }
+
+  function openCrossPost(author, permlink) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    if (!name || !link) return;
+    const user = observer();
+    if (!user) {
+      pendingCrossPost = { author: name, permlink: link };
+      openLogin();
+      return;
+    }
+    if (crossPostBusy) return;
+    const ov = $("#crossPostOverlay");
+    if (!ov) return;
+    pendingCrossPost = null;
+    crossPostEpoch += 1;
+    const gen = ++crossPostGen;
+    crossPostAccessSeq += 1;
+    crossPostBusy = false;
+    crossPostResolving = true;
+    crossPostTarget = null;
+    crossPostSource = { author: name, permlink: link };
+    crossPostDest = null;
+    crossPostSpaces = [];
+    crossPostSpacesLoading = false;
+    crossPostSpacesError = "";
+    const msg = $("#crossPostMessage");
+    if (msg) {
+      msg.value = "";
+      msg.disabled = false;
+    }
+    setCrossPostStatus("");
+    setCrossPostNote("");
+    paintCrossPostDest();
+    paintCrossPostChrome();
+    closeCrossPostMenu();
+    ov.classList.remove("is-busy");
+    ov.hidden = false;
+    const btn = $("#crossPostDestBtn");
+    if (btn) btn.focus();
+    loadCrossPostSpaces(gen);
+    resolveCrossPostTarget(name, link, gen);
+  }
+
+  async function submitCrossPost() {
+    if (crossPostBusy || crossPostResolving) return;
+    closeCrossPostMenu();
+    const user = observer();
+    if (!user) {
+      pendingCrossPost = crossPostSource;
+      openLogin();
+      return;
+    }
+    const dest = crossPostDest;
+    const target = crossPostTarget;
+    if (!dest || !dest.name) {
+      setCrossPostStatus("Choose a subspace.", true);
+      return;
+    }
+    if (!target || !target.author || !target.permlink) {
+      setCrossPostStatus("Couldn't open this post.", true);
+      return;
+    }
+    if (!hasSigner(user)) {
+      setCrossPostStatus(signerNeededMessage(), true);
+      return;
+    }
+    if (!window.ChainQueue || typeof ChainQueue.comment !== "function") {
+      setCrossPostStatus("Couldn't send the cross post.", true);
+      return;
+    }
+    const id = normalizeCommunityName(dest.name);
+    if (!id) {
+      setCrossPostStatus("Choose a subspace.", true);
+      return;
+    }
+    const message = ($("#crossPostMessage") && $("#crossPostMessage").value) || "";
+    const epoch = crossPostEpoch;
+    crossPostBusy = true;
+    paintCrossPostChrome();
+    setCrossPostStatus("Cross posting……", false);
+    try {
+      const queued = ChainQueue.comment({
+        author: user,
+        parentAuthor: "",
+        parentPermlink: id,
+        permlink: crossPostPermlink(target.permlink, id),
+        title: target.title,
+        body: crossPostBody(target.author, target.permlink, message),
+        jsonMetadata: {
+          tags: ["cross-post"],
+          app: APP_ID + "/" + APP_VERSION,
+          format: "markdown",
+          original_author: target.author,
+          original_permlink: target.permlink,
+        },
+      });
+      await queued.promise;
+      if (epoch !== crossPostEpoch) return;
+      crossPostBusy = false;
+      const href = communityHref(id);
+      hideCrossPost(true);
+      navigate(href);
+    } catch (err) {
+      if (epoch !== crossPostEpoch) return;
+      crossPostBusy = false;
+      paintCrossPostChrome();
+      setCrossPostStatus((err && err.message) || "Couldn't cross post this post.", true);
+    }
+  }
+
   function contentPageUrl(author, permlink) {
     try {
       return new URL(postPath({ author: author, permlink: permlink }), location.href).href;
@@ -9965,7 +10416,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(shown.children, postPath(shown))}
           ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
-          ${contentMoreHtml(shown.author, shown.permlink, "card", shown.children)}
+          ${contentMoreHtml(shown.author, shown.permlink, "card", shown.children, isRootPost(shown))}
         </div>
       </article>
     `;
@@ -14408,7 +14859,7 @@ let CS77_FILTER_LOW_REP = 20;
             ${voteControlHtml(root, "plain")}
             ${commentCountHtml(commentCount, "#comments")}
             ${payoutHtml(root, false)}
-            ${contentMoreHtml(root.author, root.permlink, "post", commentCount)}
+            ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root))}
           </div>
         </div>
         ${articleTagsHtml(root)}
@@ -14419,7 +14870,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(commentCount, "#comments")}
           ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
-          ${contentMoreHtml(root.author, root.permlink, "post", commentCount)}
+          ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root))}
         </div>
         <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
           ${composer}
@@ -15954,8 +16405,8 @@ let CS77_FILTER_LOW_REP = 20;
   function insertPinMenuItem(menu, html) {
     const existing = menu.querySelector(".content-more-pin");
     if (existing) existing.remove();
-    const copy = menu.querySelector(".content-more-copy");
-    if (copy) copy.insertAdjacentHTML("beforebegin", html);
+    const before = menu.querySelector(".content-more-cross") || menu.querySelector(".content-more-copy");
+    if (before) before.insertAdjacentHTML("beforebegin", html);
     else menu.insertAdjacentHTML("beforeend", html);
   }
 
@@ -27074,6 +27525,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeContentMore();
     closeWalletMore();
     hideContentDelete(true);
+    hideCrossPost(true);
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
@@ -28237,7 +28689,8 @@ let CS77_FILTER_LOW_REP = 20;
         const editItem = profileMoreEl.closest(".content-more-edit");
         const copyItem = profileMoreEl.closest(".content-more-copy");
         const deleteItem = profileMoreEl.closest(".content-more-delete");
-        if (editItem || copyItem || deleteItem) {
+        const crossItem = profileMoreEl.closest(".content-more-cross");
+        if (editItem || copyItem || deleteItem || crossItem) {
           e.preventDefault();
           const root = document.querySelector(".content-more.is-open");
           const deleteAuthor = root && root.getAttribute("data-author");
@@ -28246,6 +28699,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeContentMore();
           if (root && deleteItem) openContentDelete(deleteAuthor, deletePermlink, deleteKind);
           else if (root && editItem) editContentFromMore(root);
+          else if (root && crossItem) openCrossPost(deleteAuthor, deletePermlink);
           else if (root) copyContentLink(root);
           return;
         }
@@ -29275,6 +29729,63 @@ let CS77_FILTER_LOW_REP = 20;
           confirmContentDelete();
         }
       });
+    }
+    const crossPostOverlay = $("#crossPostOverlay");
+    if (crossPostOverlay) {
+      crossPostOverlay.addEventListener("click", (e) => {
+        if (crossPostBusy) return;
+        if (e.target === crossPostOverlay) {
+          const active = document.activeElement;
+          if (!active || !crossPostOverlay.contains(active)) hideCrossPost();
+          else closeCrossPostMenu();
+          return;
+        }
+        if (e.target.closest("#crossPostCancel")) {
+          e.preventDefault();
+          hideCrossPost();
+          return;
+        }
+        if (e.target.closest("#crossPostSubmit")) {
+          e.preventDefault();
+          submitCrossPost();
+          return;
+        }
+        if (e.target.closest("#crossPostDestBtn")) {
+          e.preventDefault();
+          toggleCrossPostMenu();
+          return;
+        }
+        const destOpt = e.target.closest("#crossPostDestMenu .publish-dest-option");
+        if (destOpt) {
+          e.preventDefault();
+          selectCrossPostDest(
+            destOpt.getAttribute("data-dest-name") || "",
+            destOpt.getAttribute("data-dest-title") || ""
+          );
+          return;
+        }
+        if (!e.target.closest("#crossPostDest")) closeCrossPostMenu();
+      });
+      crossPostOverlay.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (crossPostMenuOpen()) {
+          closeCrossPostMenu();
+          const btn = $("#crossPostDestBtn");
+          if (btn) btn.focus();
+          return;
+        }
+        if (!crossPostBusy) hideCrossPost();
+      });
+      const crossPostMessage = $("#crossPostMessage");
+      if (crossPostMessage) {
+        crossPostMessage.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" || e.isComposing) return;
+          e.preventDefault();
+          submitCrossPost();
+        });
+      }
     }
     const publishDiscard = $("#publishDiscard");
     if (publishDiscard) {

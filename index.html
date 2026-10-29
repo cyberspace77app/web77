@@ -42,7 +42,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.41">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.42">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -649,6 +649,30 @@
     </div>
   </div>
 
+  <div class="overlay" id="crossPostOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="crossPostTitle">
+      <h2 id="crossPostTitle">Cross post</h2>
+      <div class="publish-dest" id="crossPostDest">
+        <span class="publish-dest-label">Subspace</span>
+        <div class="publish-dest-picker">
+          <button type="button" class="publish-dest-btn is-empty" id="crossPostDestBtn" aria-haspopup="listbox" aria-expanded="false">
+            <img class="avatar" id="crossPostDestAvatar" alt="" width="24" height="24" hidden>
+            <span id="crossPostDestName">Choose a subspace</span>
+          </button>
+          <div class="publish-dest-menu" id="crossPostDestMenu" hidden role="listbox"></div>
+        </div>
+        <p class="publish-dest-note" id="crossPostDestNote" hidden></p>
+      </div>
+      <label class="login-label" for="crossPostMessage">Message</label>
+      <input id="crossPostMessage" type="text" autocomplete="off" placeholder="Add a comment" maxlength="500">
+      <p id="crossPostStatus" hidden></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="crossPostSubmit" disabled>Cross post</button>
+        <button type="button" class="btn-ghost" id="crossPostCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="publishDiscard" hidden>
     <div class="panel overlay-card login-card">
       <h2 id="publishDiscardTitle">Discard post</h2>
@@ -670,6 +694,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.1"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.50"></script>
+  <script src="/js/app.js?v=0.19.52"></script>
 </body>
 </html>

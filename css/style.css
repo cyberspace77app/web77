@@ -3927,6 +3927,34 @@ a.tag:hover {
   color: var(--red-bright);
 }
 
+#crossPostOverlay .overlay-card {
+  overflow: visible;
+}
+
+#crossPostDestBtn.is-empty span {
+  color: var(--gray-dim);
+}
+
+#crossPostMessage::placeholder {
+  color: var(--gray-dim);
+}
+
+#crossPostStatus {
+  margin-top: 0;
+}
+
+#crossPostStatus.is-error {
+  color: var(--red-bright);
+}
+
+#crossPostOverlay .btn-primary:disabled {
+  cursor: default;
+}
+
+#crossPostOverlay.is-busy .btn-primary:disabled {
+  cursor: wait;
+}
+
 .community-nsfw {
   color: var(--red-bright);
 }
