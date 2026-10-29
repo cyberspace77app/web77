@@ -4523,12 +4523,12 @@ let CS77_FILTER_LOW_REP = 20;
         } else if (accountMenuProfile) {
           syncAccountMenuBanner("show");
           accountMenuProfile = false;
-          window.scrollTo(0, 0);
+          scrollWindowInstant(0);
         } else if (
           a.classList.contains("session-name") ||
           a.closest("#sessionAccountMenu")
         ) {
-          window.scrollTo(0, 0);
+          scrollWindowInstant(0);
         }
         return;
       }
@@ -26731,7 +26731,7 @@ let CS77_FILTER_LOW_REP = 20;
     const was = document.body.classList.contains("has-welcome");
     document.body.classList.toggle("has-welcome", show);
     if (flyer) flyer.hidden = !show;
-    if (was && !show) window.scrollTo(0, 0);
+    if (was && !show) scrollWindowInstant(0);
   }
 
   function scrollToFeed() {
@@ -27197,7 +27197,7 @@ let CS77_FILTER_LOW_REP = 20;
         lastNonPublishPath = "/";
       }
       if (!currentViewKey) {
-        window.scrollTo(0, 0);
+        scrollWindowInstant(0);
         const sort = defaultFeedSort();
         setPageMeta(sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77");
         await renderFeed(sort, true);
@@ -27234,7 +27234,7 @@ let CS77_FILTER_LOW_REP = 20;
       !(fromCommunityNav && r.name === "community")
     ) {
       if (fromAccountMenu) settleAccountMenuSub();
-      else window.scrollTo(0, 0);
+      else scrollWindowInstant(0);
     }
     if (r.name === "welcome") {
       setPageMeta("CyberSpace77");
