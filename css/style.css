@@ -3193,6 +3193,30 @@ a.tag:hover {
   margin: 1.75rem 0;
 }
 
+.post-body .embed.embed-rumble,
+.comment-body .embed.embed-rumble,
+.post-body .embed.embed-tiktok,
+.comment-body .embed.embed-tiktok {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.post-body .embed.embed-portrait,
+.comment-body .embed.embed-portrait {
+  width: min(100%, 325px);
+  height: auto;
+  padding-bottom: 0;
+  margin-left: auto;
+  margin-right: auto;
+  aspect-ratio: 9 / 16;
+}
+
+.post-body .embed.embed-twitch,
+.comment-body .embed.embed-twitch {
+  padding-bottom: max(56.25%, 300px);
+}
+
 .post-stats-bar {
   display: flex;
   align-items: center;

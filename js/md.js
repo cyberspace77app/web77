@@ -1071,6 +1071,719 @@
     );
   }
 
+  function httpUrl(href) {
+    const raw = unescapeHtml(String(href || "")).trim();
+    if (!raw || raw.length > 2000) return null;
+    let url;
+    try {
+      url = new URL(raw);
+    } catch (err) {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.username || url.password) return null;
+    return url;
+  }
+
+  function bareHost(url) {
+    return String(url.hostname || "")
+      .toLowerCase()
+      .replace(/\.$/, "");
+  }
+
+  function trimmedPath(url) {
+    let path = url.pathname || "/";
+    if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
+    return path;
+  }
+
+  // The iframe src is one we built. Reject anything that is not that player.
+  function trustedPlayerSrc(src) {
+    let url;
+    try {
+      url = new URL(src);
+    } catch (err) {
+      return false;
+    }
+    if (url.protocol !== "https:" || url.username || url.password) return false;
+    const host = bareHost(url);
+    const path = url.pathname || "/";
+    if (host === "rumble.com") {
+      return (
+        /^\/embed\/[a-z0-9]{4,20}(?:\.[a-z0-9]{4,20})?\/?$/i.test(path) &&
+        !url.search &&
+        !url.hash
+      );
+    }
+    if (host === "peertube.tv") {
+      if (!/^\/videos\/embed\/(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9_-]{22})$/i.test(path)) {
+        return false;
+      }
+      const keys = Array.from(url.searchParams.keys());
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i] !== "start" && keys[i] !== "stop") return false;
+      }
+      return !url.hash;
+    }
+    if (host === "play.d.tube") {
+      if (path !== "/") return false;
+      if (!dtubeIdOk(url.searchParams.get("v"))) return false;
+      const keys = Array.from(url.searchParams.keys());
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i] !== "v" && keys[i] !== "t") return false;
+      }
+      return !url.hash;
+    }
+    if (host === "odysee.com") {
+      if (path.indexOf("/$/embed/") !== 0 || path.indexOf("..") !== -1) return false;
+      const keys = Array.from(url.searchParams.keys());
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i] !== "t") return false;
+      }
+      return !url.hash;
+    }
+    if (host === "www.skatehype.com") {
+      if (path !== "/ifplay.php") return false;
+      if (!/^\d{1,12}$/.test(url.searchParams.get("v") || "")) return false;
+      const keys = Array.from(url.searchParams.keys());
+      return keys.length === 1 && keys[0] === "v" && !url.hash;
+    }
+    if (host === "www.tiktok.com") {
+      return /^\/player\/v1\/[0-9]{8,22}$/.test(path) && !url.search && !url.hash;
+    }
+    if (host === "player.twitch.tv") {
+      if (path !== "/") return false;
+      const parent = pageEmbedHost();
+      if (!parent || url.searchParams.get("parent") !== parent) return false;
+      if (!/^v\d{5,16}$/.test(url.searchParams.get("video") || "")) return false;
+      if (url.searchParams.get("autoplay") !== "false") return false;
+      const time = url.searchParams.get("time");
+      if (time != null && (!time || time !== twitchTime(time))) return false;
+      const keys = Array.from(url.searchParams.keys());
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i] !== "video" && keys[i] !== "parent" && keys[i] !== "autoplay" && keys[i] !== "time") {
+          return false;
+        }
+      }
+      return !url.hash;
+    }
+    if (host === "clips.twitch.tv") {
+      if (path !== "/embed") return false;
+      const parent = pageEmbedHost();
+      if (!parent || url.searchParams.get("parent") !== parent) return false;
+      if (!twitchClipOk(url.searchParams.get("clip") || "")) return false;
+      if (url.searchParams.get("autoplay") !== "false") return false;
+      const keys = Array.from(url.searchParams.keys());
+      for (let i = 0; i < keys.length; i++) {
+        if (keys[i] !== "clip" && keys[i] !== "parent" && keys[i] !== "autoplay") return false;
+      }
+      return !url.hash;
+    }
+    if (host === "www.instagram.com") {
+      if (!/^\/reel\/[A-Za-z0-9_-]{5,30}\/embed$/.test(path)) return false;
+      if (url.searchParams.get("cr") !== "1") return false;
+      const keys = Array.from(url.searchParams.keys());
+      return keys.length === 1 && keys[0] === "cr" && !url.hash;
+    }
+    return false;
+  }
+
+  // Twitch refuses to play unless parent is the hostname of this page.
+  function pageEmbedHost() {
+    if (typeof location === "undefined" || !location.hostname) return "";
+    const host = String(location.hostname).toLowerCase().replace(/\.$/, "");
+    if (!/^[a-z0-9.-]{1,253}$/.test(host) || host.indexOf("..") !== -1) return "";
+    return host;
+  }
+
+  function twitchTime(value) {
+    const v = String(value || "");
+    if (/^(?:\d{1,5}h)?(?:\d{1,5}m)?(?:\d{1,5}s)$/.test(v) && /[hms]/.test(v)) return v;
+    if (/^\d{1,6}$/.test(v)) return v + "s";
+    return "";
+  }
+
+  function twitchClipOk(slug) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{4,99}$/.test(slug)) return false;
+    const blocked = { embed: 1, directory: 1, videos: 1, settings: 1, login: 1, signup: 1 };
+    return !blocked[slug.toLowerCase()];
+  }
+
+  function iframeEmbedHtml(src, title, kind) {
+    if (!trustedPlayerSrc(src)) return "";
+    let cls = "embed";
+    if (kind === "portrait") cls += " embed-portrait";
+    else if (kind === "twitch") cls += " embed-twitch";
+    return (
+      '<div class="' +
+      cls +
+      '">' +
+      '<iframe src="' +
+      escapeHtml(src) +
+      '" allow="fullscreen; picture-in-picture" allowfullscreen loading="lazy" title="' +
+      escapeHtml(title || "Video") +
+      '"></iframe>' +
+      "</div>"
+    );
+  }
+
+  // Rumble's /vXXXX-title.html id is not the /embed/ id. Using the page id
+  // loads a different video. Watch links stay a placeholder until
+  // rumble-embed.php resolves the player. An /embed/ link is already the player.
+  function rumbleFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    if (host !== "rumble.com" && host !== "www.rumble.com") return null;
+    const path = trimmedPath(url);
+    if (!path || path.length > 300 || path.indexOf("..") !== -1) return null;
+    if (/[<>"'\\\s]/.test(path)) return null;
+    const embed = /^\/embed\/([a-z0-9]{4,20}(?:\.[a-z0-9]{4,20})?)$/i.exec(path);
+    if (embed) {
+      const src = "https://rumble.com/embed/" + embed[1].toLowerCase() + "/";
+      return { src: src, plain: src, title: "Rumble" };
+    }
+    if (/^\/videos(?:[./-]|$)/i.test(path)) return null;
+    if (!/^\/v[0-9a-z]{4,16}(?:-[^/?#]+)?(?:\.html)?$/i.test(path)) return null;
+    const plain = "https://rumble.com" + path;
+    return { pending: plain, plain: plain, title: "Rumble" };
+  }
+
+  function rumblePendingHtml(url) {
+    const info = rumbleFromUrl(url);
+    if (!info || !info.pending) return "";
+    return '<div class="embed embed-rumble" data-rumble="' + escapeHtml(info.pending) + '"></div>';
+  }
+
+  const rumbleSrcCache = new Map();
+  const rumbleSrcWait = new Map();
+  let rumbleQueued = false;
+
+  function rumbleEmbedSrcOk(src) {
+    return trustedPlayerSrc(src) && bareHost(new URL(src)) === "rumble.com";
+  }
+
+  function lookupRumbleSrc(url) {
+    if (rumbleSrcCache.has(url)) return Promise.resolve(rumbleSrcCache.get(url));
+    if (rumbleSrcWait.has(url)) return rumbleSrcWait.get(url);
+    const pending = fetch("/rumble-embed.php?url=" + encodeURIComponent(url), {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
+      .then(function (res) {
+        if (!res.ok) return "";
+        return res.json();
+      })
+      .then(function (data) {
+        const src = data && typeof data.src === "string" ? data.src : "";
+        const safe = src && rumbleEmbedSrcOk(src) ? src : "";
+        rumbleSrcCache.set(url, safe);
+        return safe;
+      })
+      .catch(function () {
+        rumbleSrcCache.set(url, "");
+        return "";
+      })
+      .finally(function () {
+        rumbleSrcWait.delete(url);
+      });
+    rumbleSrcWait.set(url, pending);
+    return pending;
+  }
+
+  function mountRumblePlayer(node, src) {
+    node.classList.remove("embed-rumble");
+    node.removeAttribute("data-rumble");
+    node.removeAttribute("data-rumble-state");
+    const iframe = document.createElement("iframe");
+    iframe.src = src;
+    iframe.title = "Rumble";
+    iframe.loading = "lazy";
+    iframe.allowFullscreen = true;
+    iframe.setAttribute("allow", "fullscreen; picture-in-picture");
+    node.textContent = "";
+    node.appendChild(iframe);
+  }
+
+  function showRumbleLink(node, url) {
+    const p = document.createElement("p");
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = url;
+    p.appendChild(a);
+    if (node.parentNode) node.parentNode.replaceChild(p, node);
+  }
+
+  function resolveRumbleEmbeds() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return;
+    const nodes = document.querySelectorAll(".embed-rumble[data-rumble]");
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (node.getAttribute("data-rumble-state")) continue;
+      const raw = node.getAttribute("data-rumble") || "";
+      const info = rumbleFromUrl(raw);
+      if (!info || !info.pending) {
+        node.removeAttribute("data-rumble");
+        continue;
+      }
+      node.setAttribute("data-rumble-state", "loading");
+      const watch = info.pending;
+      lookupRumbleSrc(watch).then(function (src) {
+        if (!node.isConnected) return;
+        if (src) mountRumblePlayer(node, src);
+        else showRumbleLink(node, watch);
+      });
+    }
+  }
+
+  function queueRumbleEmbeds() {
+    if (rumbleQueued || typeof document === "undefined") return;
+    rumbleQueued = true;
+    const run = function () {
+      rumbleQueued = false;
+      resolveRumbleEmbeds();
+    };
+    if (typeof requestAnimationFrame === "function") {
+      if (typeof queueMicrotask === "function") {
+        queueMicrotask(function () {
+          requestAnimationFrame(run);
+        });
+      } else {
+        requestAnimationFrame(run);
+      }
+    } else {
+      setTimeout(run, 0);
+    }
+  }
+
+  const tiktokSrcCache = new Map();
+  const tiktokSrcWait = new Map();
+  let tiktokQueued = false;
+
+  function tiktokEmbedSrcOk(src) {
+    return trustedPlayerSrc(src) && bareHost(new URL(src)) === "www.tiktok.com";
+  }
+
+  function lookupTikTokSrc(url) {
+    if (tiktokSrcCache.has(url)) return Promise.resolve(tiktokSrcCache.get(url));
+    if (tiktokSrcWait.has(url)) return tiktokSrcWait.get(url);
+    const pending = fetch("/tiktok-embed.php?url=" + encodeURIComponent(url), {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
+      .then(function (res) {
+        if (!res.ok) return "";
+        return res.json();
+      })
+      .then(function (data) {
+        const src = data && typeof data.src === "string" ? data.src : "";
+        const safe = src && tiktokEmbedSrcOk(src) ? src : "";
+        tiktokSrcCache.set(url, safe);
+        return safe;
+      })
+      .catch(function () {
+        tiktokSrcCache.set(url, "");
+        return "";
+      })
+      .finally(function () {
+        tiktokSrcWait.delete(url);
+      });
+    tiktokSrcWait.set(url, pending);
+    return pending;
+  }
+
+  function mountTikTokPlayer(node, src) {
+    node.className = "embed embed-portrait";
+    node.removeAttribute("data-tiktok");
+    node.removeAttribute("data-tiktok-state");
+    const iframe = document.createElement("iframe");
+    iframe.src = src;
+    iframe.title = "TikTok";
+    iframe.loading = "lazy";
+    iframe.allowFullscreen = true;
+    iframe.setAttribute("allow", "fullscreen; picture-in-picture");
+    node.textContent = "";
+    node.appendChild(iframe);
+  }
+
+  function showTikTokLink(node, url) {
+    const p = document.createElement("p");
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = url;
+    p.appendChild(a);
+    if (node.parentNode) node.parentNode.replaceChild(p, node);
+  }
+
+  function resolveTikTokEmbeds() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return;
+    const nodes = document.querySelectorAll(".embed-tiktok[data-tiktok]");
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (node.getAttribute("data-tiktok-state")) continue;
+      const raw = node.getAttribute("data-tiktok") || "";
+      const info = tiktokFromUrl(raw);
+      if (!info || !info.pending) {
+        node.removeAttribute("data-tiktok");
+        continue;
+      }
+      node.setAttribute("data-tiktok-state", "loading");
+      const watch = info.pending;
+      lookupTikTokSrc(watch).then(function (src) {
+        if (!node.isConnected) return;
+        if (src) mountTikTokPlayer(node, src);
+        else showTikTokLink(node, watch);
+      });
+    }
+  }
+
+  function queueTikTokEmbeds() {
+    if (tiktokQueued || typeof document === "undefined") return;
+    tiktokQueued = true;
+    const run = function () {
+      tiktokQueued = false;
+      resolveTikTokEmbeds();
+    };
+    if (typeof requestAnimationFrame === "function") {
+      if (typeof queueMicrotask === "function") {
+        queueMicrotask(function () {
+          requestAnimationFrame(run);
+        });
+      } else {
+        requestAnimationFrame(run);
+      }
+    } else {
+      setTimeout(run, 0);
+    }
+  }
+
+  function peerTime(value) {
+    const v = String(value || "");
+    if (/^\d{1,6}$/.test(v)) return v;
+    if (/^(?:\d{1,4}h)?(?:\d{1,4}m)?(?:\d{1,4}s)$/.test(v) && /[hms]/.test(v)) return v;
+    return "";
+  }
+
+  function peerTubeIdOk(id) {
+    return (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ||
+      /^[A-Za-z0-9_-]{22}$/.test(id)
+    );
+  }
+
+  // peertube.tv only. A watch or embed URL becomes that instance's player.
+  function peerTubeFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    if (bareHost(url) !== "peertube.tv") return null;
+    const path = trimmedPath(url);
+    let id = "";
+    const watch = /^\/w\/([^/]+)$/.exec(path) || /^\/videos\/(?:watch|embed)\/([^/]+)$/.exec(path);
+    if (!watch) return null;
+    id = watch[1];
+    try {
+      id = decodeURIComponent(id);
+    } catch (err) {
+      return null;
+    }
+    if (!peerTubeIdOk(id)) return null;
+    const start = peerTime(url.searchParams.get("start"));
+    const stop = peerTime(url.searchParams.get("stop"));
+    let query = "";
+    if (start) query += "start=" + start;
+    if (stop) query += (query ? "&" : "") + "stop=" + stop;
+    const src = "https://peertube.tv/videos/embed/" + id + (query ? "?" + query : "");
+    const plain = "https://peertube.tv/w/" + id + (query ? "?" + query : "");
+    return { src: src, plain: plain, title: "PeerTube" };
+  }
+
+  // play.d.tube accepts a UUID or a 21–22 character base58 short id.
+  const DTUBE_B58 = /^[1-9A-HJ-NP-Za-km-z]{21,22}$/;
+
+  function dtubeIdOk(id) {
+    const value = String(id || "");
+    return (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ||
+      DTUBE_B58.test(value)
+    );
+  }
+
+  function dtubeIdFromParts(parts) {
+    if (!parts.length) return "";
+    if (parts[0] === "watch" && parts.length === 2 && dtubeIdOk(parts[1])) return parts[1];
+    if (parts[0] === "embed" && parts.length === 2 && dtubeIdOk(parts[1])) return parts[1];
+    if (parts[0] === "v" && parts.length >= 2 && dtubeIdOk(parts[parts.length - 1])) {
+      return parts[parts.length - 1];
+    }
+    if (parts.length === 1 && dtubeIdOk(parts[0])) return parts[0];
+    return "";
+  }
+
+  function dtubeFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    let id = "";
+    if (host === "play.d.tube") {
+      id = url.searchParams.get("v") || "";
+      if (!dtubeIdOk(id)) {
+        const parts = trimmedPath(url).split("/").filter(Boolean);
+        id = dtubeIdFromParts(parts);
+      }
+    } else if (host === "d.tube" || host === "www.d.tube") {
+      const parts = trimmedPath(url).split("/").filter(Boolean);
+      id = dtubeIdFromParts(parts);
+      if (!id) {
+        let hash = url.hash || "";
+        if (hash.charAt(0) === "#") hash = hash.slice(1);
+        if (hash.charAt(0) === "!") hash = hash.slice(1);
+        const hashPath = hash.split("?")[0];
+        const hashParts = hashPath.split("/").filter(Boolean);
+        id = dtubeIdFromParts(hashParts);
+      }
+    } else {
+      return null;
+    }
+    if (!dtubeIdOk(id)) return null;
+    const t = url.searchParams.get("t") || "";
+    const start = /^\d{1,6}$/.test(t) ? t : "";
+    const src = "https://play.d.tube/?v=" + encodeURIComponent(id) + (start ? "&t=" + start : "");
+    const plain = "https://d.tube/watch/" + id + (start ? "?t=" + start : "");
+    return { src: src, plain: plain, title: "DTube" };
+  }
+
+  function claimSegment(raw) {
+    let s = String(raw || "");
+    try {
+      s = decodeURIComponent(s);
+    } catch (err) {
+      return "";
+    }
+    if (!s || s.length > 180 || s === "." || s === "..") return "";
+    if (s.indexOf("/") !== -1) return "";
+    if (/[\u0000-\u001F\u007F<>"\\?#]/.test(s)) return "";
+    return s;
+  }
+
+  function claimPath(parts) {
+    const out = [];
+    for (let i = 0; i < parts.length; i++) {
+      const seg = claimSegment(parts[i]);
+      if (!seg) return "";
+      out.push(encodeURIComponent(seg).replace(/%40/g, "@").replace(/%3A/gi, ":"));
+    }
+    return out.join("/");
+  }
+
+  // A channel page is one @name segment. A video has a claim id or a second segment.
+  function odyseeFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    if (host !== "odysee.com" && host !== "www.odysee.com") return null;
+    let parts = (url.pathname || "").split("/").filter(Boolean);
+    if (!parts.length || parts.length > 6) return null;
+    if (parts[0] === "$") {
+      if (parts[1] !== "embed") return null;
+      parts = parts.slice(2);
+    }
+    if (!parts.length || parts.length > 3) return null;
+    if (parts.length === 1 && parts[0].charAt(0) === "@") return null;
+    if (parts.length === 1 && parts[0].indexOf(":") < 0) return null;
+    const path = claimPath(parts);
+    if (!path) return null;
+    const t = url.searchParams.get("t") || "";
+    const start = /^\d{1,6}$/.test(t) ? t : "";
+    const src = "https://odysee.com/$/embed/" + path + (start ? "?t=" + start : "");
+    const plain = "https://odysee.com/" + path + (start ? "?t=" + start : "");
+    return { src: src, plain: plain, title: "Odysee" };
+  }
+
+  function skatehypeId(parts) {
+    for (let i = 0; i < parts.length; i++) {
+      const m = /^(\d{1,12})(?:\.html?)?$/i.exec(parts[i]);
+      if (m) return m[1];
+    }
+    return "";
+  }
+
+  function skatehypeFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    if (host !== "skatehype.com" && host !== "www.skatehype.com") return null;
+    const parts = trimmedPath(url).split("/").filter(Boolean);
+    if (!parts.length) return null;
+    let id = "";
+    if (parts[0].toLowerCase() === "ifplay.php") {
+      const v = url.searchParams.get("v") || "";
+      if (/^\d{1,12}$/.test(v)) id = v;
+    } else if (parts[0].toLowerCase() === "v") {
+      id = skatehypeId(parts.slice(1));
+    }
+    if (!id) return null;
+    const plain = "https://www.skatehype.com/v/" + id;
+    const src = "https://www.skatehype.com/ifplay.php?v=" + id;
+    return { src: src, plain: plain, title: "Skate Hype" };
+  }
+
+  function tiktokIdOk(id) {
+    return /^[0-9]{8,22}$/.test(String(id || ""));
+  }
+
+  // vm/vt and /t/ links do not contain the video id. TikTok redirects those
+  // to /@user/video/id, and tiktok-embed.php reads that redirect.
+  function tiktokHostOk(host) {
+    return (
+      host === "tiktok.com" ||
+      host === "www.tiktok.com" ||
+      host === "m.tiktok.com" ||
+      host === "vm.tiktok.com" ||
+      host === "vt.tiktok.com"
+    );
+  }
+
+  function tiktokFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    if (!tiktokHostOk(host)) return null;
+    const path = trimmedPath(url);
+    if (!path || path.length > 300 || path.indexOf("..") !== -1) return null;
+    if (/[<>"'\\\s]/.test(path)) return null;
+    const player = /^\/player\/v1\/([0-9]{8,22})$/.exec(path);
+    const embed = /^\/embed(?:\/v2)?\/([0-9]{8,22})$/.exec(path);
+    const watch = /^\/@[^/]+\/video\/([0-9]{8,22})$/.exec(path);
+    const id = (player || embed || watch || [])[1] || "";
+    if (tiktokIdOk(id)) {
+      const src = "https://www.tiktok.com/player/v1/" + id;
+      return { src: src, plain: src, title: "TikTok", kind: "portrait" };
+    }
+    let shortHost = "";
+    if ((host === "vm.tiktok.com" || host === "vt.tiktok.com") && /^\/[A-Za-z0-9_-]{4,32}$/.test(path)) {
+      shortHost = host;
+    } else if (
+      (host === "tiktok.com" || host === "www.tiktok.com" || host === "m.tiktok.com") &&
+      /^\/t\/[A-Za-z0-9_-]{4,32}$/.test(path)
+    ) {
+      shortHost = host === "m.tiktok.com" ? "www.tiktok.com" : host;
+    } else {
+      return null;
+    }
+    const plain = "https://" + shortHost + path;
+    return { pending: plain, pendingKind: "tiktok", plain: plain, title: "TikTok", kind: "portrait" };
+  }
+
+  function tiktokPendingHtml(url) {
+    const info = tiktokFromUrl(url);
+    if (!info || !info.pending) return "";
+    return '<div class="embed embed-portrait embed-tiktok" data-tiktok="' + escapeHtml(info.pending) + '"></div>';
+  }
+
+  function twitchVideoSrc(id, time) {
+    const host = pageEmbedHost();
+    if (!host || !/^\d{5,16}$/.test(id)) return "";
+    let src = "https://player.twitch.tv/?video=v" + id + "&parent=" + host;
+    if (time) src += "&time=" + time;
+    return src + "&autoplay=false";
+  }
+
+  function twitchClipSrc(slug) {
+    const host = pageEmbedHost();
+    if (!host || !twitchClipOk(slug)) return "";
+    return "https://clips.twitch.tv/embed?clip=" + slug + "&parent=" + host + "&autoplay=false";
+  }
+
+  function twitchFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    const path = trimmedPath(url);
+    if (!path || path.length > 300 || path.indexOf("..") !== -1) return null;
+    if (/[<>"'\\\s]/.test(path)) return null;
+    if (!pageEmbedHost()) return null;
+    const time = twitchTime(url.searchParams.get("t") || url.searchParams.get("time") || "");
+    if (host === "player.twitch.tv") {
+      if (path !== "/") return null;
+      let video = url.searchParams.get("video") || "";
+      if (/^v\d{5,16}$/i.test(video)) video = video.slice(1);
+      const src = twitchVideoSrc(video, time);
+      if (!src) return null;
+      const plain = "https://www.twitch.tv/videos/" + video + (time ? "?t=" + time : "");
+      return { src: src, plain: plain, title: "Twitch", kind: "twitch" };
+    }
+    if (host === "clips.twitch.tv") {
+      const slug = path === "/embed" ? url.searchParams.get("clip") || "" : path.indexOf("/", 1) === -1 ? path.slice(1) : "";
+      const src = twitchClipSrc(slug);
+      if (!src) return null;
+      return { src: src, plain: "https://clips.twitch.tv/" + slug, title: "Twitch", kind: "twitch" };
+    }
+    if (host !== "twitch.tv" && host !== "www.twitch.tv" && host !== "m.twitch.tv") return null;
+    const vod = /^\/videos\/v?(\d{5,16})$/i.exec(path);
+    if (vod) {
+      const src = twitchVideoSrc(vod[1], time);
+      if (!src) return null;
+      const plain = "https://www.twitch.tv/videos/" + vod[1] + (time ? "?t=" + time : "");
+      return { src: src, plain: plain, title: "Twitch", kind: "twitch" };
+    }
+    const clip = /^\/(?:[^/]+\/)?clip\/([A-Za-z0-9][A-Za-z0-9-]{4,99})$/.exec(path);
+    if (!clip) return null;
+    const src = twitchClipSrc(clip[1]);
+    if (!src) return null;
+    return { src: src, plain: "https://clips.twitch.tv/" + clip[1], title: "Twitch", kind: "twitch" };
+  }
+
+  function instagramReelCode(path) {
+    const match = /^\/reels?\/([A-Za-z0-9_-]{5,30})(?:\/embed(?:\/captioned)?)?$/.exec(path);
+    if (!match) return "";
+    let code = match[1];
+    try {
+      code = decodeURIComponent(code);
+    } catch (err) {
+      return "";
+    }
+    if (!/^[A-Za-z0-9_-]{5,30}$/.test(code)) return "";
+    return code;
+  }
+
+  function instagramFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url);
+    if (
+      host !== "instagram.com" &&
+      host !== "www.instagram.com" &&
+      host !== "m.instagram.com" &&
+      host !== "instagr.am"
+    ) {
+      return null;
+    }
+    const path = trimmedPath(url);
+    if (!path || path.indexOf("..") !== -1) return null;
+    const code = instagramReelCode(path);
+    if (!code) return null;
+    const plain = "https://www.instagram.com/reel/" + code + "/";
+    const src = "https://www.instagram.com/reel/" + code + "/embed?cr=1";
+    return { src: src, plain: plain, title: "Instagram", kind: "portrait" };
+  }
+
+  function hostedVideoFromUrl(href) {
+    return (
+      rumbleFromUrl(href) ||
+      peerTubeFromUrl(href) ||
+      dtubeFromUrl(href) ||
+      odyseeFromUrl(href) ||
+      skatehypeFromUrl(href) ||
+      tiktokFromUrl(href) ||
+      twitchFromUrl(href) ||
+      instagramFromUrl(href)
+    );
+  }
+
   function tweetEmbedHtml(id) {
     if (!/^\d{1,22}$/.test(id)) return "";
     const href = "https://x.com/i/status/" + id;
@@ -1537,6 +2250,18 @@
       const vimeo = vimeoFromUrl(url);
       if (vimeo) {
         const embed = vimeoEmbedHtml(vimeo.id, vimeo.hash);
+        if (embed) return embed + parts.trail;
+      }
+      const hosted = hostedVideoFromUrl(url);
+      if (hosted) {
+        let embed = "";
+        if (hosted.pending) {
+          embed = hosted.pendingKind === "tiktok"
+            ? tiktokPendingHtml(hosted.pending)
+            : rumblePendingHtml(hosted.pending);
+        } else {
+          embed = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
+        }
         if (embed) return embed + parts.trail;
       }
       const tweet = tweetIdFromUrl(url);
@@ -2609,12 +3334,14 @@
         ? "https://vimeo.com/" + info.id + "/" + info.hash
         : "https://vimeo.com/" + info.id;
     }
+    const hosted = hostedVideoFromUrl(url.href);
+    if (hosted && hosted.plain) return hosted.plain;
     return "";
   }
 
   const RAW_SKIP_TAGS = new Set(["pre", "code", "script", "style", "textarea"]);
 
-  // Keep a YouTube, Vimeo, or 3Speak address that an author pasted as a player.
+  // Keep a known player address that an author pasted as an iframe.
   // Fences, inline code, and code blocks stay untouched.
   function rewriteKnownMediaPlayers(src) {
     const s = String(src || "");
@@ -2737,6 +3464,8 @@
     html = localizeHiveLinks(html);
     html = linkifyMentionsTags(html);
     html = wrapWideTables(html);
+    if (html.indexOf("embed-rumble") !== -1) queueRumbleEmbeds();
+    if (html.indexOf("embed-tiktok") !== -1) queueTikTokEmbeds();
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
     return html;
   }
