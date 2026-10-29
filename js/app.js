@@ -9931,18 +9931,26 @@ let CS77_FILTER_LOW_REP = 20;
       </article>
     `;
     } else {
-      const img = HiveMd.extractImage(shown);
+      // A poll takes the media slot. The picture or video preview stays off
+      // so the choices can be voted without opening the post.
+      const poll = pollShellHtml(shown);
+      const img = poll ? "" : HiveMd.extractImage(shown);
       const thumb = img
         ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
         : "";
+      const media = poll
+        ? poll
+        : thumb
+          ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
+          : "";
       card = `
-      <article class="post-card${img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
+      <article class="post-card${poll ? " has-poll" : img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
         ${meta}
         <a class="card-hit" href="${HiveMd.escapeHtml(postPath(shown))}">
           <h2>${HiveMd.escapeHtml(shown.title || "(untitled)")}</h2>
         </a>
         ${cardExcerptHtml(shown)}
-        ${thumb ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>` : ""}
+        ${media}
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
           ${commentCountHtml(shown.children, postPath(shown))}
@@ -13347,7 +13355,47 @@ let CS77_FILTER_LOW_REP = 20;
     '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
 
   const pollStates = new WeakMap();
+  // One poll state can paint the feed card and the open post together.
+  const pollByKey = new Map();
   let pollMountGen = 0;
+
+  function pollPostKey(author, permlink) {
+    return snapKey(author, permlink);
+  }
+
+  function pollSectionsOf(state) {
+    const list = [];
+    if (!state || !state.sections) return list;
+    state.sections.forEach((section) => {
+      if (section && pollStates.get(section) === state) list.push(section);
+      else state.sections.delete(section);
+    });
+    return list;
+  }
+
+  function pollStill(state, gen) {
+    if (!state || state.gen !== gen) return false;
+    if (state.key && pollByKey.get(state.key) !== state) return false;
+    return pollSectionsOf(state).length > 0;
+  }
+
+  function pollShellSignature(section) {
+    const labels = [];
+    section.querySelectorAll(".poll-choice-label").forEach((el) => {
+      labels.push(el.textContent || "");
+    });
+    const question = section.querySelector(".poll-question");
+    return [
+      section.dataset.mode || "",
+      section.dataset.end || "",
+      section.dataset.max || "",
+      section.dataset.changes || "",
+      section.dataset.age || "",
+      section.dataset.token || "",
+      question ? question.textContent : "",
+      labels.join("\n"),
+    ].join("\u0001");
+  }
 
   function pollEndMs(value) {
     if (value == null || value === "") return NaN;
@@ -13592,10 +13640,6 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
-  function pollGenOk(section, gen) {
-    return Boolean(section && section.isConnected && section.dataset.pollGen === gen && pollStates.get(section));
-  }
-
   function samePollChoices(a, b) {
     if (!a || !b || a.length !== b.length) return false;
     const left = a.slice().sort((x, y) => x - y);
@@ -13641,12 +13685,23 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function paintPollFooter(section, state) {
+    const resolved = state || (section && pollStates.get(section));
+    if (resolved && resolved.sections) {
+      pollSectionsOf(resolved).forEach((el) => paintPollFooterEl(el, resolved));
+      return;
+    }
+    paintPollFooterEl(section, resolved || state);
+  }
+
+  function paintPollFooterEl(section, state) {
     const meta = section.querySelector(".poll-meta");
     const restBits = [];
     const when = pollWhenLabel(state.endMs);
     if (when) restBits.push(when);
     const age = pollAgeNote(state.accountAge);
     if (age) restBits.push(age);
+    const unitNote = String(state.note || "").trim();
+    if (unitNote) restBits.push(unitNote);
     const rest = restBits.join(" · ");
     const showCount = Boolean(state.revealed && state.mode && state.pollId);
     if (meta) {
@@ -13677,10 +13732,19 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     const note = section.querySelector(".poll-note");
-    if (note) note.textContent = state.note || "";
+    if (note) note.textContent = "";
   }
 
   function paintPollBars(section, state) {
+    const resolved = state || (section && pollStates.get(section));
+    if (resolved && resolved.sections) {
+      pollSectionsOf(resolved).forEach((el) => paintPollBarsEl(el, resolved));
+      return;
+    }
+    paintPollBarsEl(section, resolved || state);
+  }
+
+  function paintPollBarsEl(section, state) {
     const list = section.querySelector(".poll-choices");
     if (!list) return;
     const buttons = [...list.querySelectorAll(".poll-choice")];
@@ -13714,6 +13778,15 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function syncPollControls(section, state) {
+    const resolved = state || (section && pollStates.get(section));
+    if (resolved && resolved.sections) {
+      pollSectionsOf(resolved).forEach((el) => syncPollControlsEl(el, resolved));
+      return;
+    }
+    syncPollControlsEl(section, resolved || state);
+  }
+
+  function syncPollControlsEl(section, state) {
     const can = pollCanVote(state);
     section.classList.toggle("is-pending", Boolean(state.pending));
     section.querySelectorAll(".poll-choice").forEach((btn) => {
@@ -13742,15 +13815,17 @@ let CS77_FILTER_LOW_REP = 20;
     paintPollFooter(section, state);
     const reduce =
       window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!animate || reduce) {
-      section.classList.add("is-results");
-      return;
-    }
-    section.classList.remove("is-results");
-    void section.offsetWidth;
-    requestAnimationFrame(() => {
-      if (!section.isConnected) return;
-      section.classList.add("is-results");
+    pollSectionsOf(state).forEach((el) => {
+      if (!animate || reduce || el.classList.contains("is-results")) {
+        el.classList.add("is-results");
+        return;
+      }
+      el.classList.remove("is-results");
+      void el.offsetWidth;
+      requestAnimationFrame(() => {
+        if (pollStates.get(el) !== state) return;
+        el.classList.add("is-results");
+      });
     });
   }
 
@@ -13798,7 +13873,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!state || !state.mode || !window.HiveApi) return;
     HiveApi.getPollTallies(state.author, state.permlink, state.mode)
       .then((rows) => {
-        if (!pollGenOk(section, gen)) return;
+        if (!pollStill(state, gen)) return;
         applyTallyRows(state, rows);
         paintPollBars(section, state);
         paintPollFooter(section, state);
@@ -13811,7 +13886,9 @@ let CS77_FILTER_LOW_REP = 20;
     state.picked = prevMine.slice();
     state.values = prevValues;
     state.revealed = Boolean(wasRevealed || prevMine.length);
-    section.classList.toggle("is-results", state.revealed);
+    pollSectionsOf(state).forEach((el) => {
+      el.classList.toggle("is-results", state.revealed);
+    });
     paintPollBars(section, state);
     syncPollControls(section, state);
     paintPollFooter(section, state);
@@ -13847,14 +13924,14 @@ let CS77_FILTER_LOW_REP = 20;
     } catch (err) {
       trx = "";
     }
-    if (!section.isConnected || pollStates.get(section) !== state) return;
+    if (pollByKey.get(state.key) !== state) return;
     if (!trx) {
       state.pending = false;
       syncPollControls(section, state);
       showError("Could not find this poll on the chain.");
       return;
     }
-    const gen = section.dataset.pollGen;
+    const gen = state.gen;
     const { promise } = ChainQueue.enqueue({
       username: user,
       key: "Posting",
@@ -13887,12 +13964,12 @@ let CS77_FILTER_LOW_REP = 20;
         }
       })
       .catch((err) => {
-        if (!section.isConnected || pollStates.get(section) !== state) return;
+        if (pollByKey.get(state.key) !== state) return;
         revertPollVote(section, state, prevMine, prevValues, wasRevealed);
         showError((err && err.message) || String(err));
       })
       .finally(() => {
-        if (!section.isConnected || pollStates.get(section) !== state) return;
+        if (pollByKey.get(state.key) !== state) return;
         state.pending = false;
         syncPollControls(section, state);
       });
@@ -13902,7 +13979,7 @@ let CS77_FILTER_LOW_REP = 20;
     const target = e.target;
     if (!target || !target.closest) return false;
     const section = target.closest("section.poll");
-    if (!section || !section.closest("article.article")) return false;
+    if (!section || !section.closest("article.article, article.post-card")) return false;
     const choice = target.closest(".poll-choice");
     const results = target.closest(".poll-results-link");
     const submit = target.closest(".poll-submit");
@@ -13959,13 +14036,13 @@ let CS77_FILTER_LOW_REP = 20;
     try {
       record = await HiveApi.getPollRecord(state.author, state.permlink);
     } catch (err) {
-      if (!pollGenOk(section, gen)) return;
+      if (!pollStill(state, gen)) return;
       state.note = "Poll results are unavailable.";
       paintPollFooter(section, state);
       syncPollControls(section, state);
       return;
     }
-    if (!pollGenOk(section, gen)) return;
+    if (!pollStill(state, gen)) return;
     if (!record) {
       state.indexed = false;
       state.note = "This poll is not in the index yet.";
@@ -13992,7 +14069,7 @@ let CS77_FILTER_LOW_REP = 20;
       );
       tasks.push(user ? HiveApi.getPollAccountVote(record.id, user) : Promise.resolve([]));
       const [choiceRows, tallyRows, mine] = await Promise.all(tasks);
-      if (!pollGenOk(section, gen)) return;
+      if (!pollStill(state, gen)) return;
       if (Array.isArray(choiceRows) && choiceRows.length) {
         const nextChoices = choiceRows
           .map((row) => ({
@@ -14008,7 +14085,7 @@ let CS77_FILTER_LOW_REP = 20;
       state.picked = state.mine.slice();
       state.resultsKnown = Boolean(state.mode);
     } catch (err) {
-      if (!pollGenOk(section, gen)) return;
+      if (!pollStill(state, gen)) return;
       state.note = "Poll results are unavailable.";
       paintPollFooter(section, state);
       syncPollControls(section, state);
@@ -14033,18 +14110,61 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function mountHivePoll(article) {
-    const section = article && article.querySelector(":scope > section.poll");
-    if (!section) return;
-    if (pollVotes.open) closePollVotes();
-    const gen = String(++pollMountGen);
-    section.dataset.pollGen = gen;
-    const state = readPollShell(section);
+  function bindPollSection(section, state) {
+    if (!state.sections) state.sections = new Set();
+    state.sections.add(section);
     pollStates.set(section, state);
+    section.dataset.pollGen = state.gen;
+    section.classList.toggle("is-results", Boolean(state.revealed));
+  }
+
+  function mountPollSection(section) {
+    if (!section) return;
+    const key = pollPostKey(section.dataset.author, section.dataset.permlink);
+    const signature = pollShellSignature(section);
+    const existing = pollByKey.get(key);
+    if (existing && existing.signature === signature) {
+      bindPollSection(section, existing);
+      paintPollBars(section, existing);
+      syncPollControls(section, existing);
+      paintPollFooter(section, existing);
+      return;
+    }
+    const votesSection = pollVotes.section;
+    const votesKey = votesSection
+      ? pollPostKey(votesSection.dataset.author, votesSection.dataset.permlink)
+      : "";
+    if (pollVotes.open && (!votesSection || !votesSection.isConnected || votesKey === key)) {
+      closePollVotes();
+    }
+    const gen = String(++pollMountGen);
+    const state = readPollShell(section);
+    state.key = key;
+    state.gen = gen;
+    state.signature = signature;
+    state.sections = new Set();
+    pollByKey.set(key, state);
+    bindPollSection(section, state);
     paintPollFooter(section, state);
     syncPollControls(section, state);
     if (observer() && state.mode && !pollIsExpired(state)) ensurePollTrx(state);
     hydratePoll(section, gen);
+  }
+
+  function mountHivePoll(root) {
+    if (!root) return;
+    const section =
+      root.matches && root.matches("section.poll")
+        ? root
+        : root.querySelector(":scope > section.poll");
+    mountPollSection(section);
+  }
+
+  function mountFeedPolls(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("article.post-card > section.poll").forEach((section) => {
+      if (!pollStates.has(section)) mountPollSection(section);
+    });
   }
 
   function ensureHivePoll(article, post) {
@@ -14088,10 +14208,8 @@ let CS77_FILTER_LOW_REP = 20;
     pollVotes.loading = false;
     const overlay = $("#pollVotesOverlay");
     if (overlay) overlay.hidden = true;
-    if (section && section.isConnected) {
-      const state = pollStates.get(section);
-      if (state) paintPollFooter(section, state);
-    }
+    const state = section && pollStates.get(section);
+    if (state) paintPollFooter(section, state);
   }
 
   function paintPollVoteTabs(state) {
@@ -14900,6 +15018,21 @@ let CS77_FILTER_LOW_REP = 20;
     return snapKey(author, permlink);
   }
 
+  function cardPollStamp(post) {
+    const meta = pollMetaOf(post);
+    if (!meta) return "";
+    return [
+      meta.question,
+      meta.choices.map((choice) => choice.num + ":" + choice.text).join("\n"),
+      meta.mode,
+      meta.token,
+      Number.isFinite(meta.endMs) ? String(meta.endMs) : "",
+      String(meta.maxChoices),
+      meta.allowChanges ? "1" : "0",
+      String(meta.accountAge),
+    ].join("\u0002");
+  }
+
   function cardContentStamp(post) {
     const tags = tagsOf(post)
       .map((t) => String(t).toLowerCase())
@@ -14910,6 +15043,7 @@ let CS77_FILTER_LOW_REP = 20;
       String(post.body || ""),
       HiveMd.extractImage(post) || "",
       tags,
+      cardPollStamp(post),
     ].join("\u0001");
   }
 
@@ -14955,12 +15089,15 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
       if (prefix) {
-        if (existing.length === visible.length) return;
-        list.insertAdjacentHTML("beforeend", visible.slice(existing.length).map(mapFn).join(""));
+        if (existing.length !== visible.length) {
+          list.insertAdjacentHTML("beforeend", visible.slice(existing.length).map(mapFn).join(""));
+        }
+        mountFeedPolls(list);
         return;
       }
     }
     list.innerHTML = visible.map(mapFn).join("");
+    mountFeedPolls(list);
   }
 
   function feedCardHrefMatches(href, author, permlink) {
@@ -15086,7 +15223,10 @@ let CS77_FILTER_LOW_REP = 20;
     wrap.innerHTML = String(html || "").trim();
     const next = wrap.firstElementChild;
     const root = (card && card.closest && card.closest(".feed-item")) || card;
-    if (next && root) root.replaceWith(next);
+    if (next && root) {
+      root.replaceWith(next);
+      mountFeedPolls(next);
+    }
   }
 
   function patchFeedCardStats(card, post, commentCount) {

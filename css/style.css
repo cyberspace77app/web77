@@ -2198,6 +2198,15 @@ a.community:hover {
   line-height: 0;
 }
 
+.post-card > .poll {
+  position: relative;
+  z-index: 1;
+}
+
+.post-card.has-poll > .card-excerpt:empty {
+  display: none;
+}
+
 .card-thumb-link:hover {
   text-shadow: none;
 }
