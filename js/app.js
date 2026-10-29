@@ -1353,6 +1353,10 @@ let CS77_FILTER_LOW_REP = 20;
       );
       if (contentMayDelete(name, children)) items.push(contentDeleteItemHtml());
     }
+    if (safeKind !== "comment") {
+      const profileOffer = profilePinMenuOffer(name, link);
+      if (profileOffer) items.push(pinMenuItemHtml(profileOffer));
+    }
     items.push(
       `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
       `<a class="content-more-item content-more-explorer" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerContentUrl(name, link))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
@@ -9739,7 +9743,7 @@ let CS77_FILTER_LOW_REP = 20;
   function shareLineHtml(post) {
     if (!post) return "";
     const lines = [];
-    if (isPinnedPost(post)) {
+    if (feedPinnedLine(post)) {
       lines.push(
         `<span class="feed-share-line">${shareIconHtml("pin")}pinned</span>`
       );
@@ -15710,6 +15714,439 @@ let CS77_FILTER_LOW_REP = 20;
     placeAnchoredMenu(anchor, menu, closeProfileMore);
   }
 
+  // One pinned post per account. PeakD stores it as posting_json_metadata.profile.pinned
+  // (the permlink, or "none" when cleared). Hivemind does not index that field.
+  const profilePin = { author: "", permlink: "", ready: false };
+  let contentPinBusy = false;
+
+  function clearProfilePin() {
+    profilePin.author = "";
+    profilePin.permlink = "";
+    profilePin.ready = false;
+  }
+
+  function accountLoginName(account) {
+    return normalizeLoginUser(account && account.name);
+  }
+
+  function readProfilePinnedPermlink(account, author) {
+    const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
+    const legacy = HiveMd.parseJsonMetadata(account && account.json_metadata);
+    const profiles = [];
+    if (posting && posting.profile) profiles.push(posting.profile);
+    if (legacy && legacy.profile) profiles.push(legacy.profile);
+    const owner = normalizeLoginUser(author);
+    for (let i = 0; i < profiles.length; i++) {
+      const profile = profiles[i];
+      if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+      const found = pinnedPermlinkValue(profile.pinned, owner);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  function pinnedPermlinkValue(raw, owner) {
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (let i = 0; i < values.length; i++) {
+      let text = String(values[i] == null ? "" : values[i]).trim().replace(/^@/, "");
+      if (!text) continue;
+      const lower = text.toLowerCase();
+      if (lower === "none" || lower === "null" || lower === "false") continue;
+      const slash = text.indexOf("/");
+      if (slash >= 0) {
+        const who = normalizeLoginUser(text.slice(0, slash));
+        const link = text.slice(slash + 1).trim();
+        if (!link || (owner && who && who !== owner)) continue;
+        return link;
+      }
+      return text;
+    }
+    return "";
+  }
+
+  function profilePinMatches(post) {
+    if (!profilePin.ready || !profilePin.permlink || !post) return false;
+    const link = profilePin.permlink.toLowerCase();
+    const owner = profilePin.author;
+    const shown = cardDisplayPost(post) || post;
+    if (
+      normalizeLoginUser(shown.author) === owner &&
+      String(shown.permlink || "").toLowerCase() === link
+    ) {
+      return true;
+    }
+    return (
+      normalizeLoginUser(post.author) === owner &&
+      String(post.permlink || "").toLowerCase() === link
+    );
+  }
+
+  function feedPinnedLine(post) {
+    if (feedState.kind === "profile" && feedState.sort === "posts") return profilePinMatches(post);
+    return isPinnedPost(post);
+  }
+
+  function rememberProfilePin(author, permlink) {
+    profilePin.author = normalizeLoginUser(author);
+    profilePin.permlink = String(permlink || "");
+    profilePin.ready = true;
+  }
+
+  function knownProfilePinnedPermlink(author) {
+    const name = normalizeLoginUser(author);
+    if (!name) return "";
+    if (profilePin.ready && profilePin.author === name) return profilePin.permlink;
+    if (ownAccountReady(name)) return readProfilePinnedPermlink(accountState.account, name);
+    return "";
+  }
+
+  function profilePinMenuOffer(author, permlink) {
+    const surface = pinSurface();
+    const name = normalizeLoginUser(author);
+    const link = String(permlink || "");
+    const user = observer();
+    if (!surface || surface.kind !== "profile" || surface.author !== user || !user || name !== user || !link) {
+      return null;
+    }
+    const pinned = knownProfilePinnedPermlink(user);
+    return {
+      action: pinned && pinned.toLowerCase() === link.toLowerCase() ? "unpin" : "pin",
+      target: "posts",
+      scope: "",
+      community: "",
+      author: name,
+      permlink: link,
+    };
+  }
+
+  async function placeProfilePinnedPost(author, gen) {
+    const name = normalizeLoginUser(author);
+    if (!name) return;
+    let permlink = "";
+    try {
+      const rows = await HiveApi.getAccounts([name]);
+      if (!feedStill(gen) || feedState.kind !== "profile" || feedState.scope !== name) return;
+      const account = rows && rows[0];
+      if (account && accountLoginName(account) === name) {
+        permlink = readProfilePinnedPermlink(account, name);
+      }
+    } catch {
+      return;
+    }
+    if (!feedStill(gen) || feedState.kind !== "profile" || feedState.scope !== name) return;
+    rememberProfilePin(name, permlink);
+    if (!permlink) return;
+    const items = feedState.items;
+    let index = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (profilePinMatches(items[i])) {
+        index = i;
+        break;
+      }
+    }
+    if (index > 0) {
+      items.unshift(items.splice(index, 1)[0]);
+      return;
+    }
+    if (index === 0) return;
+    let post = null;
+    try {
+      post = await HiveApi.getPost(name, permlink);
+    } catch {
+      post = null;
+    }
+    if (!feedStill(gen) || feedState.kind !== "profile" || feedState.scope !== name) return;
+    if (!post || !isRootPost(post) || isBlacklistedPost(post)) return;
+    if (normalizeLoginUser(post.author) !== name) return;
+    await resolveCrossPosts([post]);
+    if (!feedStill(gen) || feedState.kind !== "profile" || feedState.scope !== name) return;
+    if (!keepHydratedPost(post)) return;
+    const key = post.author + "/" + post.permlink;
+    if (!feedState.seen.has(key)) feedState.seen.add(key);
+    items.unshift(post);
+  }
+
+  function postingMetadataForPin(account, pinnedValue) {
+    const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
+    const base =
+      posting && typeof posting === "object" && !Array.isArray(posting)
+        ? JSON.parse(JSON.stringify(posting))
+        : {};
+    if (!base.profile || typeof base.profile !== "object" || Array.isArray(base.profile)) {
+      const merged = metadataFromAccount(account);
+      const src = merged && merged.profile;
+      base.profile =
+        src && typeof src === "object" && !Array.isArray(src) ? JSON.parse(JSON.stringify(src)) : {};
+    }
+    ["__proto__", "constructor", "prototype"].forEach((key) => {
+      delete base[key];
+      delete base.profile[key];
+    });
+    base.profile.pinned = pinnedValue;
+    return base;
+  }
+
+  function pinSurface() {
+    const route = parseRoute();
+    if (route.name === "community") {
+      return { kind: "subspace", community: normalizeCommunityName(route.community) };
+    }
+    if (route.name === "profile" && (!route.page || route.page === "posts")) {
+      return { kind: "profile", author: normalizeLoginUser(route.author) };
+    }
+    if (route.name !== "post") return null;
+    if (feedState.kind === "community" && feedState.scope) {
+      return { kind: "subspace", community: normalizeCommunityName(feedState.scope) };
+    }
+    if (feedState.kind === "profile" && feedState.sort === "posts" && feedState.scope) {
+      return { kind: "profile", author: normalizeLoginUser(feedState.scope) };
+    }
+    return null;
+  }
+
+  function morePostIds(root) {
+    return {
+      author: normalizeLoginUser(root && root.getAttribute("data-author")),
+      permlink: String((root && root.getAttribute("data-permlink")) || ""),
+    };
+  }
+
+  function subspacePinPost(root, community) {
+    const ids = morePostIds(root);
+    if (!ids.author || !ids.permlink || !community) return null;
+    const loaded = findLoadedPost(ids.author, ids.permlink);
+    if (loaded && isRootPost(loaded)) {
+      const where = communityNameOf(loaded);
+      if (where === community) return loaded;
+      if (!where && feedState.kind === "community" && feedState.scope === community) {
+        if (samePostId(loaded, ids.author, ids.permlink)) return loaded;
+        if (loaded.original_entry && samePostId(loaded.original_entry, ids.author, ids.permlink)) {
+          return loaded;
+        }
+      }
+    }
+    const current = currentPost && samePostId(currentPost, ids.author, ids.permlink) ? currentPost : null;
+    if (current && isRootPost(current) && communityNameOf(current) === community) return current;
+    return null;
+  }
+
+  function pinCommandLabel(action) {
+    return action === "unpin" ? "Unpin" : "Pin";
+  }
+
+  function pinMenuItemHtml(offer) {
+    const label = pinCommandLabel(offer.action);
+    return `<button type="button" class="content-more-item content-more-pin" role="menuitem" data-pin-action="${offer.action}" data-pin-target="${HiveMd.escapeHtml(offer.target)}" data-pin-community="${HiveMd.escapeHtml(offer.community || "")}" data-pin-author="${HiveMd.escapeHtml(offer.author)}" data-pin-permlink="${HiveMd.escapeHtml(offer.permlink)}">${label}</button>`;
+  }
+
+  function insertPinMenuItem(menu, html) {
+    const existing = menu.querySelector(".content-more-pin");
+    if (existing) existing.remove();
+    const copy = menu.querySelector(".content-more-copy");
+    if (copy) copy.insertAdjacentHTML("beforebegin", html);
+    else menu.insertAdjacentHTML("beforeend", html);
+  }
+
+  function cachedViewerCanPin(community, user) {
+    const name = normalizeCommunityName(community);
+    const who = normalizeLoginUser(user);
+    if (!name || !who || communityState.name !== name || !communityState.info) return false;
+    return communityRoleRank(communityViewerRole(communityState.info)) >= 4;
+  }
+
+  async function viewerCanPinCommunity(community, user) {
+    const name = normalizeCommunityName(community);
+    const who = normalizeLoginUser(user);
+    if (!name || !who) return false;
+    const info = await HiveApi.getCommunity(name, who);
+    return communityRoleRank(communityViewerRole(info)) >= 4;
+  }
+
+  function subspacePinOffer(root) {
+    const surface = pinSurface();
+    const user = observer();
+    if (!root || root.getAttribute("data-content-kind") === "comment") return null;
+    if (!surface || surface.kind !== "subspace" || !user) return null;
+    if (!cachedViewerCanPin(surface.community, user)) return null;
+    const post = subspacePinPost(root, surface.community);
+    if (!post || !isRootPost(post)) return null;
+    return {
+      action: isPinnedPost(post) ? "unpin" : "pin",
+      target: "subspace",
+      scope: "",
+      community: surface.community,
+      author: normalizeLoginUser(post.author),
+      permlink: String(post.permlink || ""),
+    };
+  }
+
+  function setPostPinnedFlag(post, pinned) {
+    if (!post) return;
+    if (!post.stats || typeof post.stats !== "object") post.stats = {};
+    post.stats.is_pinned = Boolean(pinned);
+    post.is_pinned = Boolean(pinned);
+  }
+
+  function refreshPostShareLine(post) {
+    if (!post) return;
+    const shown = cardDisplayPost(post) || post;
+    const card = findFeedCard(shown.author, shown.permlink);
+    const item = card && card.closest(".feed-item");
+    if (!item) return;
+    const html = shareLineHtml(post);
+    const share = item.querySelector(":scope > .feed-share");
+    if (!html) {
+      if (share) share.remove();
+      return;
+    }
+    if (share) share.outerHTML = html;
+    else item.insertAdjacentHTML("afterbegin", html);
+  }
+
+  function moveProfilePinFirst(author, permlink) {
+    const items = feedState.items || [];
+    let index = -1;
+    let row = null;
+    for (let i = 0; i < items.length; i++) {
+      if (profilePinMatches(items[i])) {
+        index = i;
+        row = items[i];
+        break;
+      }
+    }
+    if (index > 0 && row) items.unshift(items.splice(index, 1)[0]);
+    const shown = row ? cardDisplayPost(row) || row : null;
+    const card = shown ? findFeedCard(shown.author, shown.permlink) : findFeedCard(author, permlink);
+    const node = card && card.closest(".feed-item");
+    const list = document.getElementById("feedList");
+    if (node && list && node.parentNode === list && list.firstElementChild !== node) {
+      list.insertBefore(node, list.firstElementChild);
+    }
+  }
+
+  function refreshProfilePinMarks(previous) {
+    const items = feedState.items || [];
+    const prev = String(previous || "").toLowerCase();
+    const owner = profilePin.author;
+    for (let i = 0; i < items.length; i++) {
+      const post = items[i];
+      const shown = cardDisplayPost(post) || post;
+      const prevHit =
+        Boolean(prev) &&
+        ((normalizeLoginUser(shown.author) === owner &&
+          String(shown.permlink || "").toLowerCase() === prev) ||
+          (normalizeLoginUser(post.author) === owner &&
+            String(post.permlink || "").toLowerCase() === prev));
+      if (profilePinMatches(post) || prevHit) refreshPostShareLine(post);
+    }
+    syncProfilePinMenuItems();
+  }
+
+  function syncProfilePinMenuItems() {
+    const owner = profilePin.author;
+    const pinned = profilePin.ready ? String(profilePin.permlink || "") : "";
+    const buttons = document.querySelectorAll('.content-more-pin[data-pin-target="posts"]');
+    for (let i = 0; i < buttons.length; i++) {
+      const btn = buttons[i];
+      if (normalizeLoginUser(btn.getAttribute("data-pin-author")) !== owner) continue;
+      const link = String(btn.getAttribute("data-pin-permlink") || "");
+      const action = pinned && pinned.toLowerCase() === link.toLowerCase() ? "unpin" : "pin";
+      btn.setAttribute("data-pin-action", action);
+      btn.textContent = pinCommandLabel(action);
+    }
+  }
+
+  async function runContentPin(action, target, community, author, permlink) {
+    const user = observer();
+    const name = normalizeLoginUser(author);
+    const link = String(permlink || "");
+    const pin = action === "pin";
+    if (!name || !link) return;
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (contentPinBusy) return;
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
+    contentPinBusy = true;
+    try {
+      if (target === "subspace") {
+        const id = normalizeCommunityName(community);
+        if (!id) return;
+        const allowed = await viewerCanPinCommunity(id, user);
+        if (!allowed) {
+          showError("Only moderators can pin posts in this subspace.");
+          return;
+        }
+        const opName = pin ? "pinPost" : "unpinPost";
+        const { promise } = ChainQueue.enqueue({
+          username: user,
+          key: "Posting",
+          operations: [
+            communityCustomOp(user, opName, {
+              community: id,
+              account: name,
+              permlink: link,
+            }),
+          ],
+          meta: { type: "community", action: opName, community: id },
+        });
+        await promise;
+        const post = findLoadedPost(name, link);
+        if (post && normalizeLoginUser(post.author) === name) {
+          setPostPinnedFlag(post, pin);
+          refreshPostShareLine(post);
+        }
+        return;
+      }
+      if (target !== "posts" || user !== name) return;
+      const rows = await HiveApi.getAccounts([user]);
+      const account = rows && rows[0];
+      if (!account || accountLoginName(account) !== user) {
+        throw new Error("Could not load this account.");
+      }
+      const metadata = postingMetadataForPin(account, pin ? link : "none");
+      const json = JSON.stringify(metadata);
+      if (json.length > SETTINGS_METADATA_MAX) {
+        throw new Error("Profile settings are too long to save.");
+      }
+      const { promise } = ChainQueue.enqueue({
+        username: user,
+        key: "Posting",
+        operations: [
+          [
+            "account_update2",
+            {
+              account: user,
+              json_metadata: "",
+              posting_json_metadata: json,
+              extensions: [],
+            },
+          ],
+        ],
+        meta: { type: "profile", action: pin ? "pin" : "unpin" },
+      });
+      await promise;
+      if (ownAccountReady(user)) {
+        accountState.account.posting_json_metadata = json;
+        accountState.metadata = metadataFromAccount(accountState.account);
+      }
+      const previous = profilePin.author === user ? profilePin.permlink : "";
+      rememberProfilePin(user, pin ? link : "");
+      refreshProfilePinMarks(previous);
+      if (pin && feedState.kind === "profile" && feedState.sort === "posts" && feedState.scope === user) {
+        moveProfilePinFirst(name, link);
+      }
+    } catch (err) {
+      showError((err && err.message) || (pin ? "Couldn't pin this post." : "Couldn't unpin this post."));
+    } finally {
+      contentPinBusy = false;
+    }
+  }
+
   function closeContentMore() {
     const root = document.querySelector(".content-more.is-open");
     const menu =
@@ -15739,6 +16176,15 @@ let CS77_FILTER_LOW_REP = 20;
     if (!menu) return;
     root.classList.add("is-open");
     btn.setAttribute("aria-expanded", "true");
+    const surface = pinSurface();
+    if (!surface || surface.kind !== "profile") {
+      const oldPin = menu.querySelector(".content-more-pin");
+      if (oldPin) oldPin.remove();
+      if (surface && surface.kind === "subspace") {
+        const offer = subspacePinOffer(root);
+        if (offer) insertPinMenuItem(menu, pinMenuItemHtml(offer));
+      }
+    }
     document.body.appendChild(menu);
     menu.hidden = false;
     placeAnchoredMenu(btn, menu, closeContentMore);
@@ -20713,6 +21159,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function renderProfileFeed(author, page) {
     const sort = page === "comments" ? "comments" : page === "replies" ? "replies" : "posts";
     if (!profileRouteStill(author, sort)) return;
+    clearProfilePin();
     resetFeed(feedSpecForProfile(author, sort));
     const emptyTitle =
       page === "comments" ? "No comments" : page === "replies" ? "No replies" : "No posts";
@@ -20801,6 +21248,9 @@ let CS77_FILTER_LOW_REP = 20;
             feedState.done = true;
             break;
           }
+        }
+        if (sort === "posts" && startCount === 0 && feedStill(gen)) {
+          await placeProfilePinnedPost(author, gen);
         }
       } finally {
         if (feedStill(gen)) feedState.loading = false;
@@ -27782,6 +28232,18 @@ let CS77_FILTER_LOW_REP = 20;
           if (root && deleteItem) openContentDelete(deleteAuthor, deletePermlink, deleteKind);
           else if (root && editItem) editContentFromMore(root);
           else if (root) copyContentLink(root);
+          return;
+        }
+        const pinItem = profileMoreEl.closest(".content-more-pin");
+        if (pinItem) {
+          e.preventDefault();
+          const pinAction = pinItem.getAttribute("data-pin-action") || "";
+          const pinTarget = pinItem.getAttribute("data-pin-target") || "";
+          const pinCommunity = pinItem.getAttribute("data-pin-community") || "";
+          const pinAuthor = pinItem.getAttribute("data-pin-author") || "";
+          const pinPermlink = pinItem.getAttribute("data-pin-permlink") || "";
+          closeContentMore();
+          void runContentPin(pinAction, pinTarget, pinCommunity, pinAuthor, pinPermlink);
           return;
         }
         if (profileMoreEl.closest(".content-more-item")) closeContentMore();
