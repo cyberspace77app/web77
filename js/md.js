@@ -1227,9 +1227,8 @@
     );
   }
 
-  // Rumble's /vXXXX-title.html id is not the /embed/ id. Using the page id
-  // loads a different video. Watch links stay a placeholder until
-  // rumble-embed.php resolves the player. An /embed/ link is already the player.
+  // A watch slug is not the embed id, and the browser cannot ask Rumble
+  // which player it maps to. Only an /embed/ address becomes a player.
   function rumbleFromUrl(href) {
     const url = httpUrl(href);
     if (!url) return null;
@@ -1245,220 +1244,7 @@
     }
     if (/^\/videos(?:[./-]|$)/i.test(path)) return null;
     if (!/^\/v[0-9a-z]{4,16}(?:-[^/?#]+)?(?:\.html)?$/i.test(path)) return null;
-    const plain = "https://rumble.com" + path;
-    return { pending: plain, plain: plain, title: "Rumble" };
-  }
-
-  function rumblePendingHtml(url) {
-    const info = rumbleFromUrl(url);
-    if (!info || !info.pending) return "";
-    return '<div class="embed embed-rumble" data-rumble="' + escapeHtml(info.pending) + '"></div>';
-  }
-
-  const rumbleSrcCache = new Map();
-  const rumbleSrcWait = new Map();
-  let rumbleQueued = false;
-
-  function rumbleEmbedSrcOk(src) {
-    return trustedPlayerSrc(src) && bareHost(new URL(src)) === "rumble.com";
-  }
-
-  function lookupRumbleSrc(url) {
-    if (rumbleSrcCache.has(url)) return Promise.resolve(rumbleSrcCache.get(url));
-    if (rumbleSrcWait.has(url)) return rumbleSrcWait.get(url);
-    const pending = fetch("/rumble-embed.php?url=" + encodeURIComponent(url), {
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    })
-      .then(function (res) {
-        if (!res.ok) return "";
-        return res.json();
-      })
-      .then(function (data) {
-        const src = data && typeof data.src === "string" ? data.src : "";
-        const safe = src && rumbleEmbedSrcOk(src) ? src : "";
-        rumbleSrcCache.set(url, safe);
-        return safe;
-      })
-      .catch(function () {
-        rumbleSrcCache.set(url, "");
-        return "";
-      })
-      .finally(function () {
-        rumbleSrcWait.delete(url);
-      });
-    rumbleSrcWait.set(url, pending);
-    return pending;
-  }
-
-  function mountRumblePlayer(node, src) {
-    node.classList.remove("embed-rumble");
-    node.removeAttribute("data-rumble");
-    node.removeAttribute("data-rumble-state");
-    const iframe = document.createElement("iframe");
-    iframe.src = src;
-    iframe.title = "Rumble";
-    iframe.loading = "lazy";
-    iframe.allowFullscreen = true;
-    iframe.setAttribute("allow", "fullscreen; picture-in-picture");
-    node.textContent = "";
-    node.appendChild(iframe);
-  }
-
-  function showRumbleLink(node, url) {
-    const p = document.createElement("p");
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = url;
-    p.appendChild(a);
-    if (node.parentNode) node.parentNode.replaceChild(p, node);
-  }
-
-  function resolveRumbleEmbeds() {
-    if (typeof document === "undefined" || !document.querySelectorAll) return;
-    const nodes = document.querySelectorAll(".embed-rumble[data-rumble]");
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (node.getAttribute("data-rumble-state")) continue;
-      const raw = node.getAttribute("data-rumble") || "";
-      const info = rumbleFromUrl(raw);
-      if (!info || !info.pending) {
-        node.removeAttribute("data-rumble");
-        continue;
-      }
-      node.setAttribute("data-rumble-state", "loading");
-      const watch = info.pending;
-      lookupRumbleSrc(watch).then(function (src) {
-        if (!node.isConnected) return;
-        if (src) mountRumblePlayer(node, src);
-        else showRumbleLink(node, watch);
-      });
-    }
-  }
-
-  function queueRumbleEmbeds() {
-    if (rumbleQueued || typeof document === "undefined") return;
-    rumbleQueued = true;
-    const run = function () {
-      rumbleQueued = false;
-      resolveRumbleEmbeds();
-    };
-    if (typeof requestAnimationFrame === "function") {
-      if (typeof queueMicrotask === "function") {
-        queueMicrotask(function () {
-          requestAnimationFrame(run);
-        });
-      } else {
-        requestAnimationFrame(run);
-      }
-    } else {
-      setTimeout(run, 0);
-    }
-  }
-
-  const tiktokSrcCache = new Map();
-  const tiktokSrcWait = new Map();
-  let tiktokQueued = false;
-
-  function tiktokEmbedSrcOk(src) {
-    return trustedPlayerSrc(src) && bareHost(new URL(src)) === "www.tiktok.com";
-  }
-
-  function lookupTikTokSrc(url) {
-    if (tiktokSrcCache.has(url)) return Promise.resolve(tiktokSrcCache.get(url));
-    if (tiktokSrcWait.has(url)) return tiktokSrcWait.get(url);
-    const pending = fetch("/tiktok-embed.php?url=" + encodeURIComponent(url), {
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    })
-      .then(function (res) {
-        if (!res.ok) return "";
-        return res.json();
-      })
-      .then(function (data) {
-        const src = data && typeof data.src === "string" ? data.src : "";
-        const safe = src && tiktokEmbedSrcOk(src) ? src : "";
-        tiktokSrcCache.set(url, safe);
-        return safe;
-      })
-      .catch(function () {
-        tiktokSrcCache.set(url, "");
-        return "";
-      })
-      .finally(function () {
-        tiktokSrcWait.delete(url);
-      });
-    tiktokSrcWait.set(url, pending);
-    return pending;
-  }
-
-  function mountTikTokPlayer(node, src) {
-    node.className = "embed embed-portrait";
-    node.removeAttribute("data-tiktok");
-    node.removeAttribute("data-tiktok-state");
-    const iframe = document.createElement("iframe");
-    iframe.src = src;
-    iframe.title = "TikTok";
-    iframe.loading = "lazy";
-    iframe.allowFullscreen = true;
-    iframe.setAttribute("allow", "fullscreen; picture-in-picture");
-    node.textContent = "";
-    node.appendChild(iframe);
-  }
-
-  function showTikTokLink(node, url) {
-    const p = document.createElement("p");
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = url;
-    p.appendChild(a);
-    if (node.parentNode) node.parentNode.replaceChild(p, node);
-  }
-
-  function resolveTikTokEmbeds() {
-    if (typeof document === "undefined" || !document.querySelectorAll) return;
-    const nodes = document.querySelectorAll(".embed-tiktok[data-tiktok]");
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (node.getAttribute("data-tiktok-state")) continue;
-      const raw = node.getAttribute("data-tiktok") || "";
-      const info = tiktokFromUrl(raw);
-      if (!info || !info.pending) {
-        node.removeAttribute("data-tiktok");
-        continue;
-      }
-      node.setAttribute("data-tiktok-state", "loading");
-      const watch = info.pending;
-      lookupTikTokSrc(watch).then(function (src) {
-        if (!node.isConnected) return;
-        if (src) mountTikTokPlayer(node, src);
-        else showTikTokLink(node, watch);
-      });
-    }
-  }
-
-  function queueTikTokEmbeds() {
-    if (tiktokQueued || typeof document === "undefined") return;
-    tiktokQueued = true;
-    const run = function () {
-      tiktokQueued = false;
-      resolveTikTokEmbeds();
-    };
-    if (typeof requestAnimationFrame === "function") {
-      if (typeof queueMicrotask === "function") {
-        queueMicrotask(function () {
-          requestAnimationFrame(run);
-        });
-      } else {
-        requestAnimationFrame(run);
-      }
-    } else {
-      setTimeout(run, 0);
-    }
+    return { plain: "https://rumble.com" + path, title: "Rumble" };
   }
 
   function peerTime(value) {
@@ -1635,18 +1421,12 @@
     return /^[0-9]{8,22}$/.test(String(id || ""));
   }
 
-  // vm/vt and /t/ links do not contain the video id. TikTok redirects those
-  // to /@user/video/id, and tiktok-embed.php reads that redirect.
   function tiktokHostOk(host) {
-    return (
-      host === "tiktok.com" ||
-      host === "www.tiktok.com" ||
-      host === "m.tiktok.com" ||
-      host === "vm.tiktok.com" ||
-      host === "vt.tiktok.com"
-    );
+    return host === "tiktok.com" || host === "www.tiktok.com" || host === "m.tiktok.com";
   }
 
+  // A vm/vt or /t/ share link hides the video id behind a redirect the
+  // browser cannot read. Only an address that already contains the id plays.
   function tiktokFromUrl(href) {
     const url = httpUrl(href);
     if (!url) return null;
@@ -1659,29 +1439,9 @@
     const embed = /^\/embed(?:\/v2)?\/([0-9]{8,22})$/.exec(path);
     const watch = /^\/@[^/]+\/video\/([0-9]{8,22})$/.exec(path);
     const id = (player || embed || watch || [])[1] || "";
-    if (tiktokIdOk(id)) {
-      const src = "https://www.tiktok.com/player/v1/" + id;
-      return { src: src, plain: src, title: "TikTok", kind: "portrait" };
-    }
-    let shortHost = "";
-    if ((host === "vm.tiktok.com" || host === "vt.tiktok.com") && /^\/[A-Za-z0-9_-]{4,32}$/.test(path)) {
-      shortHost = host;
-    } else if (
-      (host === "tiktok.com" || host === "www.tiktok.com" || host === "m.tiktok.com") &&
-      /^\/t\/[A-Za-z0-9_-]{4,32}$/.test(path)
-    ) {
-      shortHost = host === "m.tiktok.com" ? "www.tiktok.com" : host;
-    } else {
-      return null;
-    }
-    const plain = "https://" + shortHost + path;
-    return { pending: plain, pendingKind: "tiktok", plain: plain, title: "TikTok", kind: "portrait" };
-  }
-
-  function tiktokPendingHtml(url) {
-    const info = tiktokFromUrl(url);
-    if (!info || !info.pending) return "";
-    return '<div class="embed embed-portrait embed-tiktok" data-tiktok="' + escapeHtml(info.pending) + '"></div>';
+    if (!tiktokIdOk(id)) return null;
+    const src = "https://www.tiktok.com/player/v1/" + id;
+    return { src: src, plain: src, title: "TikTok", kind: "portrait" };
   }
 
   function twitchVideoSrc(id, time) {
@@ -2253,15 +2013,8 @@
         if (embed) return embed + parts.trail;
       }
       const hosted = hostedVideoFromUrl(url);
-      if (hosted) {
-        let embed = "";
-        if (hosted.pending) {
-          embed = hosted.pendingKind === "tiktok"
-            ? tiktokPendingHtml(hosted.pending)
-            : rumblePendingHtml(hosted.pending);
-        } else {
-          embed = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
-        }
+      if (hosted && hosted.src) {
+        const embed = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
         if (embed) return embed + parts.trail;
       }
       const tweet = tweetIdFromUrl(url);
@@ -3464,8 +3217,6 @@
     html = localizeHiveLinks(html);
     html = linkifyMentionsTags(html);
     html = wrapWideTables(html);
-    if (html.indexOf("embed-rumble") !== -1) queueRumbleEmbeds();
-    if (html.indexOf("embed-tiktok") !== -1) queueTikTokEmbeds();
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
     return html;
   }
