@@ -1664,6 +1664,22 @@
     return rows[0].choices.map(Number).filter((n) => n > 0);
   }
 
+  // One page of accounts that included this choice. A short page is the end.
+  async function getPollChoiceVotes(pollId, choiceNum, offset) {
+    const choice = Math.floor(Number(choiceNum));
+    const start = Math.max(0, Math.floor(Number(offset) || 0));
+    if (!Number.isFinite(choice) || choice <= 0) return [];
+    const rows = await pollsFetch(
+      "/poll_votes?poll_id=eq." +
+        encodeURIComponent(String(pollId)) +
+        "&choices=cs.{" +
+        choice +
+        "}&select=account&order=account.asc&limit=48&offset=" +
+        start
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
   function hiveTimeMs(value) {
     const raw = String(value || "").trim();
     if (!raw) return NaN;
@@ -1834,6 +1850,7 @@
     getPollChoices,
     getPollTallies,
     getPollAccountVote,
+    getPollChoiceVotes,
     getCommentTrxId,
   };
 })(window);

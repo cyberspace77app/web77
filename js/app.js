@@ -4226,6 +4226,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function navigate(href, replace) {
+    if (pollVotes.open) closePollVotes();
     if (peopleList.open || peopleHistoryOn) {
       const hadHistory = peopleHistoryOn;
       closePeoplePanel({ skipHistory: true });
@@ -5780,6 +5781,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (nodeOverlayOpen()) {
       closeNodeOverlay();
+      return;
+    }
+    const pollVotesOv = $("#pollVotesOverlay");
+    if (pollVotesOv && !pollVotesOv.hidden) {
+      closePollVotes();
       return;
     }
     const peopleOv = $("#peopleOverlay");
@@ -13067,7 +13073,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const POLL_CHECK_SVG =
-    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5 9.2 17 19 7"/></svg>';
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
 
   const pollStates = new WeakMap();
   let pollMountGen = 0;
@@ -13129,29 +13135,28 @@ let CS77_FILTER_LOW_REP = 20;
 
   function pollWhenLabel(endMs) {
     if (!Number.isFinite(endMs)) return "";
-    const sec = Math.round((endMs - Date.now()) / 1000);
-    if (sec <= 0) return "Ended";
-    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-    const steps = [
-      [60, "second"],
-      [60, "minute"],
-      [24, "hour"],
-      [7, "day"],
-      [4.345, "week"],
-      [12, "month"],
-      [Infinity, "year"],
-    ];
-    let value = sec;
-    let unit = "second";
-    for (let i = 0; i < steps.length; i += 1) {
-      if (Math.abs(value) < steps[i][0]) {
-        unit = steps[i][1];
-        break;
-      }
-      value /= steps[i][0];
-      unit = steps[i][1];
+    const left = endMs - Date.now();
+    if (left <= 0) return "Final results";
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    const month = 30 * day;
+    let count = 1;
+    let unit = "minute";
+    if (left >= month) {
+      count = Math.max(1, Math.round(left / month));
+      unit = "month";
+    } else if (left >= day) {
+      count = Math.max(1, Math.round(left / day));
+      unit = "day";
+    } else if (left >= hour) {
+      count = Math.max(1, Math.round(left / hour));
+      unit = "hour";
+    } else {
+      count = Math.max(1, Math.round(left / minute));
+      unit = "minute";
     }
-    return "Ends " + rtf.format(Math.round(value), unit);
+    return count + " " + unit + (count === 1 ? "" : "s") + " left";
   }
 
   function formatPollHp(value) {
@@ -13238,7 +13243,7 @@ let CS77_FILTER_LOW_REP = 20;
     const supported = meta.mode === "accounts" || meta.mode === "hp";
     const note = supported ? "" : pollUnsupportedNote(meta.token, meta.interpretation);
     const question = meta.question
-      ? '<h2 class="poll-question">' + HiveMd.escapeHtml(meta.question) + "</h2>"
+      ? '<p class="poll-question">' + HiveMd.escapeHtml(meta.question) + "</p>"
       : "";
     return (
       '<section class="poll" aria-label="Poll"' +
@@ -13275,7 +13280,7 @@ let CS77_FILTER_LOW_REP = 20;
       "</div>" +
       '<button type="button" class="poll-submit" hidden>Vote</button>' +
       '<button type="button" class="poll-results-link" hidden>View results</button>' +
-      '<p class="poll-meta"></p>' +
+      '<p class="poll-meta"><button type="button" class="poll-count" hidden></button><span class="poll-meta-rest"></span></p>' +
       '<p class="poll-note">' +
       HiveMd.escapeHtml(note) +
       "</p>" +
@@ -13311,6 +13316,7 @@ let CS77_FILTER_LOW_REP = 20;
       indexed: null,
       resultsKnown: false,
       wantReveal: false,
+      pollId: 0,
       note: noteEl ? noteEl.textContent : "",
     };
   }
@@ -13365,13 +13371,40 @@ let CS77_FILTER_LOW_REP = 20;
 
   function paintPollFooter(section, state) {
     const meta = section.querySelector(".poll-meta");
-    const bits = [];
-    if (state.revealed && state.mode) bits.push(pollCountLabel(state));
+    const restBits = [];
     const when = pollWhenLabel(state.endMs);
-    if (when) bits.push(when);
+    if (when) restBits.push(when);
     const age = pollAgeNote(state.accountAge);
-    if (age) bits.push(age);
-    if (meta) meta.textContent = bits.join(" · ");
+    if (age) restBits.push(age);
+    const rest = restBits.join(" · ");
+    const showCount = Boolean(state.revealed && state.mode && state.pollId);
+    if (meta) {
+      let countBtn = meta.querySelector(".poll-count");
+      let restEl = meta.querySelector(".poll-meta-rest");
+      if (!countBtn || !restEl) {
+        meta.innerHTML =
+          '<button type="button" class="poll-count" hidden></button><span class="poll-meta-rest"></span>';
+        countBtn = meta.querySelector(".poll-count");
+        restEl = meta.querySelector(".poll-meta-rest");
+      }
+      if (showCount) {
+        countBtn.hidden = false;
+        countBtn.textContent = pollCountLabel(state);
+        const openHere = pollVotes.open && pollVotes.pollId === state.pollId;
+        countBtn.classList.toggle("is-active", openHere);
+        countBtn.setAttribute("aria-expanded", openHere ? "true" : "false");
+        restEl.textContent = rest ? " · " + rest : "";
+      } else {
+        countBtn.hidden = true;
+        countBtn.textContent = "";
+        countBtn.classList.remove("is-active");
+        countBtn.setAttribute("aria-expanded", "false");
+        const plain = [];
+        if (state.revealed && state.mode) plain.push(pollCountLabel(state));
+        if (rest) plain.push(rest);
+        restEl.textContent = plain.join(" · ");
+      }
+    }
     const note = section.querySelector(".poll-note");
     if (note) note.textContent = state.note || "";
   }
@@ -13392,9 +13425,17 @@ let CS77_FILTER_LOW_REP = 20;
       });
     if (!same) list.innerHTML = state.choices.map(pollChoiceHtml).join("");
     const percents = pollPercentMap(state);
+    let topValue = 0;
+    state.values.forEach((value) => {
+      if (value > topValue) topValue = value;
+    });
+    const ended = pollIsExpired(state);
     list.querySelectorAll(".poll-choice").forEach((btn) => {
       const num = Number(btn.getAttribute("data-choice"));
-      btn.classList.toggle("is-picked", state.picked.indexOf(num) !== -1);
+      const showPick = !ended && state.picked.indexOf(num) !== -1;
+      const value = state.values.get(num) || 0;
+      btn.classList.toggle("is-picked", showPick);
+      btn.classList.toggle("is-winner", Boolean(state.revealed && ended && topValue > 0 && value === topValue));
       btn.style.setProperty("--poll-pct", (percents.get(num) || 0) + "%");
       const stat = btn.querySelector(".poll-choice-stat");
       if (stat) stat.textContent = state.revealed ? (percents.get(num) || 0) + "%" : "";
@@ -13594,10 +13635,15 @@ let CS77_FILTER_LOW_REP = 20;
     const choice = target.closest(".poll-choice");
     const results = target.closest(".poll-results-link");
     const submit = target.closest(".poll-submit");
-    if (!choice && !results && !submit) return false;
+    const count = target.closest(".poll-count");
+    if (!choice && !results && !submit && !count) return false;
     e.preventDefault();
     const state = pollStates.get(section);
     if (!state) return true;
+    if (count) {
+      openPollVotes(section, state);
+      return true;
+    }
     if (results) {
       if (!state.resultsKnown) state.wantReveal = true;
       else if (!state.revealed) revealPoll(section, state, true);
@@ -13657,6 +13703,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     state.indexed = true;
+    state.pollId = Number(record.id) || 0;
     if (!state.created && record.created) state.created = String(record.created);
     state.mode = pollCountMode(record.preferred_interpretation, record.token);
     state.token = String(record.token || state.token || "");
@@ -13718,6 +13765,7 @@ let CS77_FILTER_LOW_REP = 20;
   function mountHivePoll(article) {
     const section = article && article.querySelector(":scope > section.poll");
     if (!section) return;
+    if (pollVotes.open) closePollVotes();
     const gen = String(++pollMountGen);
     section.dataset.pollGen = gen;
     const state = readPollShell(section);
@@ -13749,6 +13797,170 @@ let CS77_FILTER_LOW_REP = 20;
     if (stats) stats.insertAdjacentElement("beforebegin", section);
     else article.appendChild(section);
     mountHivePoll(article);
+  }
+
+  const pollVotes = {
+    open: false,
+    pollId: 0,
+    choice: 0,
+    gen: 0,
+    offset: 0,
+    loading: false,
+    done: false,
+    section: null,
+  };
+
+  function closePollVotes() {
+    const section = pollVotes.section;
+    pollVotes.open = false;
+    pollVotes.gen += 1;
+    pollVotes.loading = false;
+    const overlay = $("#pollVotesOverlay");
+    if (overlay) overlay.hidden = true;
+    if (section && section.isConnected) {
+      const state = pollStates.get(section);
+      if (state) paintPollFooter(section, state);
+    }
+  }
+
+  function paintPollVoteTabs(state) {
+    const tabs = document.getElementById("pollVoteTabs");
+    if (!tabs) return;
+    tabs.innerHTML = state.choices
+      .map((choice) => {
+        const on = choice.num === pollVotes.choice;
+        return (
+          '<button type="button" class="poll-vote-tab' +
+          (on ? " is-active" : "") +
+          '" role="tab" aria-selected="' +
+          (on ? "true" : "false") +
+          '" data-choice="' +
+          String(choice.num) +
+          '">' +
+          HiveMd.escapeHtml(choice.text) +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function paintPollVotesStatus(kind) {
+    const status = document.getElementById("pollVotesStatus");
+    if (!status) return;
+    if (!kind) {
+      status.hidden = true;
+      status.className = "loading-row";
+      status.innerHTML = "";
+      return;
+    }
+    if (kind === "loading") {
+      status.hidden = false;
+      status.className = "loading-row";
+      status.innerHTML = '<span class="btn-loader" aria-hidden="true"></span> Loading…';
+      return;
+    }
+    const list = document.getElementById("pollVotesList");
+    if (list && !list.querySelector(".follow-account")) {
+      status.hidden = true;
+      status.className = "loading-row";
+      status.innerHTML = "";
+      list.className = "";
+      list.innerHTML = '<p class="people-empty">' + HiveMd.escapeHtml(kind) + "</p>";
+      return;
+    }
+    status.hidden = false;
+    status.className = "";
+    status.innerHTML = '<p class="people-empty">' + HiveMd.escapeHtml(kind) + "</p>";
+  }
+
+  async function loadPollVotePage(section, reset) {
+    const state = pollStates.get(section);
+    if (!state || !pollVotes.open || pollVotes.pollId !== state.pollId) return;
+    if (pollVotes.loading || (!reset && pollVotes.done)) return;
+    if (!window.HiveApi || typeof HiveApi.getPollChoiceVotes !== "function") {
+      paintPollVotesStatus("Poll votes are unavailable.");
+      return;
+    }
+    const gen = pollVotes.gen;
+    const choice = pollVotes.choice;
+    if (reset) {
+      pollVotes.offset = 0;
+      pollVotes.done = false;
+      const list = document.getElementById("pollVotesList");
+      if (list) {
+        list.className = "follow-list";
+        list.innerHTML = "";
+      }
+    }
+    pollVotes.loading = true;
+    paintPollVotesStatus("loading");
+    let rows = [];
+    try {
+      rows = await HiveApi.getPollChoiceVotes(state.pollId, choice, pollVotes.offset);
+    } catch (err) {
+      if (gen !== pollVotes.gen || choice !== pollVotes.choice) return;
+      pollVotes.loading = false;
+      paintPollVotesStatus("Poll votes are unavailable.");
+      return;
+    }
+    if (gen !== pollVotes.gen || choice !== pollVotes.choice || !pollVotes.open) return;
+    const list = document.getElementById("pollVotesList");
+    const html = rows
+      .map((row) => String((row && row.account) || "").trim())
+      .filter(Boolean)
+      .map(followAccountHtml)
+      .join("");
+    if (list && html) {
+      list.className = "follow-list";
+      list.insertAdjacentHTML("beforeend", html);
+    }
+    pollVotes.offset += rows.length;
+    pollVotes.done = rows.length < 48;
+    pollVotes.loading = false;
+    paintPollVotesStatus(pollVotes.offset ? "" : "No votes yet.");
+  }
+
+  function openPollVotes(section, state) {
+    if (!state || !state.pollId || !state.choices.length) return;
+    if (pollVotes.open && pollVotes.pollId === state.pollId) {
+      closePollVotes();
+      return;
+    }
+    const overlay = $("#pollVotesOverlay");
+    if (!overlay) return;
+    if (pollVotes.open) closePollVotes();
+    pollVotes.open = true;
+    pollVotes.pollId = state.pollId;
+    pollVotes.section = section;
+    pollVotes.gen += 1;
+    pollVotes.choice = state.choices[0].num;
+    pollVotes.offset = 0;
+    pollVotes.done = false;
+    pollVotes.loading = false;
+    paintPollVoteTabs(state);
+    const scroller = document.getElementById("pollVotesScroll");
+    if (scroller) scroller.scrollTop = 0;
+    overlay.hidden = false;
+    paintPollFooter(section, state);
+    const opener = document.activeElement;
+    if (opener && opener.closest && opener.closest(".poll-count")) opener.blur();
+    loadPollVotePage(section, true);
+  }
+
+  function selectPollVoteTab(choiceNum) {
+    const num = Number(choiceNum);
+    if (!pollVotes.open || !num || pollVotes.choice === num) return;
+    const section = pollVotes.section;
+    const state = section && pollStates.get(section);
+    if (!state || !state.choices.some((choice) => choice.num === num)) return;
+    pollVotes.choice = num;
+    pollVotes.gen += 1;
+    pollVotes.loading = false;
+    pollVotes.done = false;
+    paintPollVoteTabs(state);
+    const scroller = document.getElementById("pollVotesScroll");
+    if (scroller) scroller.scrollTop = 0;
+    loadPollVotePage(section, true);
   }
 
   function articleHtml(root, opts) {
@@ -27556,6 +27768,31 @@ let CS77_FILTER_LOW_REP = 20;
     if (peopleOverlay) {
       peopleOverlay.addEventListener("click", (e) => {
         if (e.target === peopleOverlay) closePeoplePanel();
+      });
+    }
+
+    const pollVotesOverlay = $("#pollVotesOverlay");
+    const pollVotesClose = $("#pollVotesClose");
+    const pollVoteTabs = document.getElementById("pollVoteTabs");
+    const pollVotesScroll = document.getElementById("pollVotesScroll");
+    if (pollVotesClose) pollVotesClose.addEventListener("click", closePollVotes);
+    if (pollVotesOverlay) {
+      pollVotesOverlay.addEventListener("click", (e) => {
+        if (e.target === pollVotesOverlay) closePollVotes();
+      });
+    }
+    if (pollVoteTabs) {
+      pollVoteTabs.addEventListener("click", (e) => {
+        const tab = e.target.closest && e.target.closest(".poll-vote-tab");
+        if (!tab) return;
+        selectPollVoteTab(tab.getAttribute("data-choice"));
+      });
+    }
+    if (pollVotesScroll) {
+      pollVotesScroll.addEventListener("scroll", () => {
+        if (!pollVotes.open || pollVotes.loading || pollVotes.done) return;
+        if (pollVotesScroll.scrollTop + pollVotesScroll.clientHeight < pollVotesScroll.scrollHeight - 80) return;
+        if (pollVotes.section) loadPollVotePage(pollVotes.section, false);
       });
     }
 
