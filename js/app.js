@@ -4351,6 +4351,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
     }
+    if (onPollClick(e)) return;
     const peopleBtn = e.target.closest && e.target.closest("[data-people]");
     if (peopleBtn) {
       e.preventDefault();
@@ -13065,6 +13066,691 @@ let CS77_FILTER_LOW_REP = 20;
     tagsEl.innerHTML = html;
   }
 
+  const POLL_CHECK_SVG =
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5 9.2 17 19 7"/></svg>';
+
+  const pollStates = new WeakMap();
+  let pollMountGen = 0;
+
+  function pollEndMs(value) {
+    if (value == null || value === "") return NaN;
+    if (typeof value === "number" || /^\d+(\.\d+)?$/.test(String(value).trim())) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return NaN;
+      return n < 1e12 ? n * 1000 : n;
+    }
+    return parseCreatedTs(value);
+  }
+
+  function pollMaxChoices(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 1) return 1;
+    return Math.min(100, Math.floor(n));
+  }
+
+  function pollCountMode(interpretation, token) {
+    const mode = String(interpretation || "")
+      .trim()
+      .toLowerCase();
+    const name = String(token || "")
+      .trim()
+      .toUpperCase();
+    if (mode === "number_of_votes") return "accounts";
+    if (mode === "tokens" && (name === "HIVE:HP" || name === "HP" || name === "HIVE")) return "hp";
+    return "";
+  }
+
+  function pollUnsupportedNote(token, interpretation) {
+    const name = String(token || interpretation || "another unit").trim() || "another unit";
+    return (
+      "This poll is counted in " +
+      name +
+      ". CyberSpace77 shows account votes and Hive Power."
+    );
+  }
+
+  function pollQuestionText(question, title) {
+    let text = String(question || "");
+    text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+    text = text.replace(/<img\b[^>]*>/gi, " ");
+    text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+    text = text.replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    const heading = String(title || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (heading && text.toLowerCase() === heading.toLowerCase()) return "";
+    return text;
+  }
+
+  function pollIsExpired(state) {
+    return Boolean(state && Number.isFinite(state.endMs) && state.endMs <= Date.now());
+  }
+
+  function pollWhenLabel(endMs) {
+    if (!Number.isFinite(endMs)) return "";
+    const sec = Math.round((endMs - Date.now()) / 1000);
+    if (sec <= 0) return "Ended";
+    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+    const steps = [
+      [60, "second"],
+      [60, "minute"],
+      [24, "hour"],
+      [7, "day"],
+      [4.345, "week"],
+      [12, "month"],
+      [Infinity, "year"],
+    ];
+    let value = sec;
+    let unit = "second";
+    for (let i = 0; i < steps.length; i += 1) {
+      if (Math.abs(value) < steps[i][0]) {
+        unit = steps[i][1];
+        break;
+      }
+      value /= steps[i][0];
+      unit = steps[i][1];
+    }
+    return "Ends " + rtf.format(Math.round(value), unit);
+  }
+
+  function formatPollHp(value) {
+    const n = Number(value) || 0;
+    const digits = Math.abs(n) >= 10000 ? 1 : 3;
+    return n.toLocaleString("en-US", {
+      maximumFractionDigits: digits,
+      minimumFractionDigits: 0,
+    });
+  }
+
+  function pollTotal(state) {
+    let total = 0;
+    state.values.forEach((value) => {
+      total += Number(value) || 0;
+    });
+    return total;
+  }
+
+  function pollCountLabel(state) {
+    const total = pollTotal(state);
+    if (state.mode === "hp") return formatPollHp(total) + " HP";
+    const n = Math.round(total);
+    return n === 1 ? "1 vote" : n.toLocaleString("en-US") + " votes";
+  }
+
+  function pollAgeNote(days) {
+    const n = Number(days) || 0;
+    if (n <= 0) return "";
+    return n === 1
+      ? "Accounts younger than 1 day are not counted."
+      : "Accounts younger than " + n + " days are not counted.";
+  }
+
+  function pollMetaOf(post) {
+    if (!post || !window.HiveMd) return null;
+    const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+    if (String(meta.content_type || "").toLowerCase() !== "poll") return null;
+    const rawChoices = Array.isArray(meta.choices) ? meta.choices : [];
+    const choices = [];
+    rawChoices.forEach((item) => {
+      const text = String(item == null ? "" : item).trim();
+      if (!text) return;
+      choices.push({ num: choices.length + 1, text });
+    });
+    if (!choices.length || !post.author || !post.permlink) return null;
+    const token = String(meta.token || "").trim();
+    const interpretation = String(meta.preferred_interpretation || "").trim();
+    const ageRaw = meta.filters && Number(meta.filters.account_age);
+    return {
+      question: pollQuestionText(meta.question, post.title),
+      choices,
+      mode: pollCountMode(interpretation, token),
+      token,
+      interpretation,
+      endMs: pollEndMs(meta.end_time),
+      maxChoices: pollMaxChoices(meta.max_choices_voted),
+      allowChanges: meta.allow_vote_changes !== false,
+      accountAge: Number.isFinite(ageRaw) && ageRaw > 0 ? Math.floor(ageRaw) : 0,
+      created: String(post.created || ""),
+    };
+  }
+
+  function pollChoiceHtml(choice) {
+    return (
+      '<button type="button" class="poll-choice" data-choice="' +
+      String(choice.num) +
+      '">' +
+      '<span class="poll-choice-fill" aria-hidden="true"></span>' +
+      '<span class="poll-choice-mark">' +
+      POLL_CHECK_SVG +
+      "</span>" +
+      '<span class="poll-choice-label">' +
+      HiveMd.escapeHtml(choice.text) +
+      "</span>" +
+      '<span class="poll-choice-stat"></span>' +
+      "</button>"
+    );
+  }
+
+  function pollShellHtml(post) {
+    const meta = pollMetaOf(post);
+    if (!meta) return "";
+    const supported = meta.mode === "accounts" || meta.mode === "hp";
+    const note = supported ? "" : pollUnsupportedNote(meta.token, meta.interpretation);
+    const question = meta.question
+      ? '<h2 class="poll-question">' + HiveMd.escapeHtml(meta.question) + "</h2>"
+      : "";
+    return (
+      '<section class="poll" aria-label="Poll"' +
+      ' data-author="' +
+      HiveMd.escapeHtml(post.author) +
+      '"' +
+      ' data-permlink="' +
+      HiveMd.escapeHtml(post.permlink) +
+      '"' +
+      ' data-created="' +
+      HiveMd.escapeHtml(meta.created) +
+      '"' +
+      ' data-mode="' +
+      (supported ? meta.mode : "unsupported") +
+      '"' +
+      ' data-end="' +
+      (Number.isFinite(meta.endMs) ? String(Math.round(meta.endMs)) : "") +
+      '"' +
+      ' data-max="' +
+      String(meta.maxChoices) +
+      '"' +
+      ' data-changes="' +
+      (meta.allowChanges ? "1" : "0") +
+      '"' +
+      ' data-age="' +
+      String(meta.accountAge) +
+      '"' +
+      ' data-token="' +
+      HiveMd.escapeHtml(meta.token) +
+      '">' +
+      question +
+      '<div class="poll-choices">' +
+      meta.choices.map(pollChoiceHtml).join("") +
+      "</div>" +
+      '<button type="button" class="poll-submit" hidden>Vote</button>' +
+      '<button type="button" class="poll-results-link" hidden>View results</button>' +
+      '<p class="poll-meta"></p>' +
+      '<p class="poll-note">' +
+      HiveMd.escapeHtml(note) +
+      "</p>" +
+      "</section>"
+    );
+  }
+
+  function readPollShell(section) {
+    const mode = section.dataset.mode === "accounts" || section.dataset.mode === "hp" ? section.dataset.mode : "";
+    const noteEl = section.querySelector(".poll-note");
+    const choices = [...section.querySelectorAll(".poll-choice")].map((btn) => ({
+      num: Number(btn.getAttribute("data-choice")),
+      text: (btn.querySelector(".poll-choice-label") || {}).textContent || "",
+    }));
+    return {
+      author: section.dataset.author || "",
+      permlink: section.dataset.permlink || "",
+      created: section.dataset.created || "",
+      mode,
+      token: section.dataset.token || "",
+      endMs: Number(section.dataset.end) || NaN,
+      maxChoices: pollMaxChoices(section.dataset.max),
+      allowChanges: section.dataset.changes !== "0",
+      accountAge: Number(section.dataset.age) || 0,
+      choices,
+      values: new Map(),
+      mine: [],
+      picked: [],
+      trxId: "",
+      trxPromise: null,
+      revealed: section.classList.contains("is-results"),
+      pending: false,
+      indexed: null,
+      resultsKnown: false,
+      wantReveal: false,
+      note: noteEl ? noteEl.textContent : "",
+    };
+  }
+
+  function pollGenOk(section, gen) {
+    return Boolean(section && section.isConnected && section.dataset.pollGen === gen && pollStates.get(section));
+  }
+
+  function samePollChoices(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    const left = a.slice().sort((x, y) => x - y);
+    const right = b.slice().sort((x, y) => x - y);
+    for (let i = 0; i < left.length; i += 1) {
+      if (left[i] !== right[i]) return false;
+    }
+    return true;
+  }
+
+  function pollCanVote(state) {
+    if (!state || state.pending || !state.mode) return false;
+    if (!observer()) return false;
+    if (pollIsExpired(state)) return false;
+    if (!state.allowChanges && state.mine.length) return false;
+    return true;
+  }
+
+  function pollPercentMap(state) {
+    const map = new Map();
+    const rows = state.choices.map((choice) => ({
+      num: choice.num,
+      value: Math.max(0, Number(state.values.get(choice.num)) || 0),
+    }));
+    const total = rows.reduce((sum, row) => sum + row.value, 0);
+    if (total <= 0) {
+      rows.forEach((row) => map.set(row.num, 0));
+      return map;
+    }
+    const parts = rows.map((row) => {
+      const exact = (row.value / total) * 100;
+      const floor = Math.floor(exact);
+      return { num: row.num, pct: floor, frac: exact - floor };
+    });
+    let left = 100 - parts.reduce((sum, part) => sum + part.pct, 0);
+    const order = parts.slice().sort((a, b) => b.frac - a.frac || a.num - b.num);
+    for (let i = 0; i < order.length && left > 0; i += 1) {
+      order[i].pct += 1;
+      left -= 1;
+    }
+    parts.forEach((part) => map.set(part.num, part.pct));
+    return map;
+  }
+
+  function paintPollFooter(section, state) {
+    const meta = section.querySelector(".poll-meta");
+    const bits = [];
+    if (state.revealed && state.mode) bits.push(pollCountLabel(state));
+    const when = pollWhenLabel(state.endMs);
+    if (when) bits.push(when);
+    const age = pollAgeNote(state.accountAge);
+    if (age) bits.push(age);
+    if (meta) meta.textContent = bits.join(" · ");
+    const note = section.querySelector(".poll-note");
+    if (note) note.textContent = state.note || "";
+  }
+
+  function paintPollBars(section, state) {
+    const list = section.querySelector(".poll-choices");
+    if (!list) return;
+    const buttons = [...list.querySelectorAll(".poll-choice")];
+    const same =
+      buttons.length === state.choices.length &&
+      buttons.every((btn, i) => {
+        const label = btn.querySelector(".poll-choice-label");
+        return (
+          Number(btn.getAttribute("data-choice")) === state.choices[i].num &&
+          label &&
+          label.textContent === state.choices[i].text
+        );
+      });
+    if (!same) list.innerHTML = state.choices.map(pollChoiceHtml).join("");
+    const percents = pollPercentMap(state);
+    list.querySelectorAll(".poll-choice").forEach((btn) => {
+      const num = Number(btn.getAttribute("data-choice"));
+      btn.classList.toggle("is-picked", state.picked.indexOf(num) !== -1);
+      btn.style.setProperty("--poll-pct", (percents.get(num) || 0) + "%");
+      const stat = btn.querySelector(".poll-choice-stat");
+      if (stat) stat.textContent = state.revealed ? (percents.get(num) || 0) + "%" : "";
+    });
+  }
+
+  function syncPollControls(section, state) {
+    const can = pollCanVote(state);
+    section.classList.toggle("is-pending", Boolean(state.pending));
+    section.querySelectorAll(".poll-choice").forEach((btn) => {
+      btn.classList.toggle("is-locked", !can);
+      btn.setAttribute("aria-disabled", can ? "false" : "true");
+    });
+    const link = section.querySelector(".poll-results-link");
+    const showLink = Boolean(
+      observer() && state.mode && state.indexed !== false && !state.revealed && !pollIsExpired(state)
+    );
+    if (link) link.hidden = !showLink;
+    const submit = section.querySelector(".poll-submit");
+    const dirty =
+      state.maxChoices > 1 && can && state.picked.length > 0 && !samePollChoices(state.picked, state.mine);
+    if (submit) {
+      submit.hidden = !dirty;
+      submit.disabled = state.pending;
+      submit.textContent = state.mine.length ? "Update vote" : "Vote";
+    }
+  }
+
+  function revealPoll(section, state, animate) {
+    state.revealed = true;
+    paintPollBars(section, state);
+    syncPollControls(section, state);
+    paintPollFooter(section, state);
+    const reduce =
+      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!animate || reduce) {
+      section.classList.add("is-results");
+      return;
+    }
+    section.classList.remove("is-results");
+    void section.offsetWidth;
+    requestAnimationFrame(() => {
+      if (!section.isConnected) return;
+      section.classList.add("is-results");
+    });
+  }
+
+  function applyTallyRows(state, rows) {
+    const buckets = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const key = String(row && row.choice_text != null ? row.choice_text : "");
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(Number(row.voted) || 0);
+    });
+    state.values = new Map();
+    state.choices.forEach((choice) => {
+      const list = buckets.get(choice.text);
+      state.values.set(choice.num, list && list.length ? list.shift() : 0);
+    });
+  }
+
+  function shiftAccountVotes(state, prev, next) {
+    prev.forEach((num) => {
+      state.values.set(num, Math.max(0, (state.values.get(num) || 0) - 1));
+    });
+    next.forEach((num) => {
+      state.values.set(num, (state.values.get(num) || 0) + 1);
+    });
+  }
+
+  function ensurePollTrx(state) {
+    if (state.trxId) return Promise.resolve(state.trxId);
+    if (state.trxPromise) return state.trxPromise;
+    if (!state.created || !window.HiveApi || typeof HiveApi.getCommentTrxId !== "function") {
+      state.trxPromise = Promise.resolve("");
+      return state.trxPromise;
+    }
+    state.trxPromise = HiveApi.getCommentTrxId(state.author, state.permlink, state.created)
+      .then((id) => {
+        state.trxId = id || "";
+        return state.trxId;
+      })
+      .catch(() => "");
+    return state.trxPromise;
+  }
+
+  function refreshPollNumbers(section, gen) {
+    const state = pollStates.get(section);
+    if (!state || !state.mode || !window.HiveApi) return;
+    HiveApi.getPollTallies(state.author, state.permlink, state.mode)
+      .then((rows) => {
+        if (!pollGenOk(section, gen)) return;
+        applyTallyRows(state, rows);
+        paintPollBars(section, state);
+        paintPollFooter(section, state);
+      })
+      .catch(() => {});
+  }
+
+  function revertPollVote(section, state, prevMine, prevValues, wasRevealed) {
+    state.mine = prevMine;
+    state.picked = prevMine.slice();
+    state.values = prevValues;
+    state.revealed = Boolean(wasRevealed || prevMine.length);
+    section.classList.toggle("is-results", state.revealed);
+    paintPollBars(section, state);
+    syncPollControls(section, state);
+    paintPollFooter(section, state);
+  }
+
+  async function castPollVote(section, choices) {
+    const state = pollStates.get(section);
+    if (!state || state.pending || !state.mode) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (pollIsExpired(state) || (!state.allowChanges && state.mine.length)) return;
+    if (!choices.length) return;
+    if (samePollChoices(choices, state.mine)) return;
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
+    if (!window.ChainQueue || typeof ChainQueue.enqueue !== "function") {
+      showError("Could not send the poll vote.");
+      return;
+    }
+    const prevMine = state.mine.slice();
+    const prevValues = new Map(state.values);
+    const wasRevealed = state.revealed;
+    state.pending = true;
+    syncPollControls(section, state);
+    let trx = "";
+    try {
+      trx = await ensurePollTrx(state);
+    } catch (err) {
+      trx = "";
+    }
+    if (!section.isConnected || pollStates.get(section) !== state) return;
+    if (!trx) {
+      state.pending = false;
+      syncPollControls(section, state);
+      showError("Could not find this poll on the chain.");
+      return;
+    }
+    const gen = section.dataset.pollGen;
+    const { promise } = ChainQueue.enqueue({
+      username: user,
+      key: "Posting",
+      operations: [
+        [
+          "custom_json",
+          {
+            required_auths: [],
+            required_posting_auths: [user],
+            id: "polls",
+            json: JSON.stringify({
+              poll: trx,
+              action: "vote",
+              choices: choices.slice().sort((a, b) => a - b),
+            }),
+          },
+        ],
+      ],
+      meta: { type: "poll", action: "vote" },
+    });
+    state.picked = choices.slice();
+    state.mine = choices.slice();
+    if (state.mode === "accounts") shiftAccountVotes(state, prevMine, choices);
+    revealPoll(section, state, !wasRevealed);
+    promise
+      .then(() => {
+        if (state.mode === "hp") {
+          refreshPollNumbers(section, gen);
+          window.setTimeout(() => refreshPollNumbers(section, gen), 3000);
+        }
+      })
+      .catch((err) => {
+        if (!section.isConnected || pollStates.get(section) !== state) return;
+        revertPollVote(section, state, prevMine, prevValues, wasRevealed);
+        showError((err && err.message) || String(err));
+      })
+      .finally(() => {
+        if (!section.isConnected || pollStates.get(section) !== state) return;
+        state.pending = false;
+        syncPollControls(section, state);
+      });
+  }
+
+  function onPollClick(e) {
+    const target = e.target;
+    if (!target || !target.closest) return false;
+    const section = target.closest("section.poll");
+    if (!section || !section.closest("article.article")) return false;
+    const choice = target.closest(".poll-choice");
+    const results = target.closest(".poll-results-link");
+    const submit = target.closest(".poll-submit");
+    if (!choice && !results && !submit) return false;
+    e.preventDefault();
+    const state = pollStates.get(section);
+    if (!state) return true;
+    if (results) {
+      if (!state.resultsKnown) state.wantReveal = true;
+      else if (!state.revealed) revealPoll(section, state, true);
+      return true;
+    }
+    if (!pollCanVote(state)) return true;
+    if (submit) {
+      castPollVote(section, state.picked.slice());
+      return true;
+    }
+    const num = Number(choice.getAttribute("data-choice"));
+    if (!Number.isFinite(num) || num <= 0) return true;
+    if (state.maxChoices <= 1) {
+      castPollVote(section, [num]);
+      return true;
+    }
+    const next = state.picked.slice();
+    const at = next.indexOf(num);
+    if (at >= 0) next.splice(at, 1);
+    else if (next.length >= state.maxChoices) {
+      showError("You can choose up to " + state.maxChoices + " options.");
+      return true;
+    } else next.push(num);
+    next.sort((a, b) => a - b);
+    state.picked = next;
+    paintPollBars(section, state);
+    syncPollControls(section, state);
+    return true;
+  }
+
+  async function hydratePoll(section, gen) {
+    const state = pollStates.get(section);
+    if (!state || !window.HiveApi || typeof HiveApi.getPollRecord !== "function") {
+      if (state) {
+        state.note = state.note || "Poll results are unavailable.";
+        paintPollFooter(section, state);
+        syncPollControls(section, state);
+      }
+      return;
+    }
+    let record = null;
+    try {
+      record = await HiveApi.getPollRecord(state.author, state.permlink);
+    } catch (err) {
+      if (!pollGenOk(section, gen)) return;
+      state.note = "Poll results are unavailable.";
+      paintPollFooter(section, state);
+      syncPollControls(section, state);
+      return;
+    }
+    if (!pollGenOk(section, gen)) return;
+    if (!record) {
+      state.indexed = false;
+      state.note = "This poll is not in the index yet.";
+      paintPollFooter(section, state);
+      syncPollControls(section, state);
+      return;
+    }
+    state.indexed = true;
+    if (!state.created && record.created) state.created = String(record.created);
+    state.mode = pollCountMode(record.preferred_interpretation, record.token);
+    state.token = String(record.token || state.token || "");
+    const end = pollEndMs(record.end_time);
+    if (Number.isFinite(end)) state.endMs = end;
+    state.maxChoices = pollMaxChoices(record.max_choices_voted);
+    state.allowChanges = record.allow_vote_changes !== false;
+    const age = Number(record.filter_account_age_days);
+    if (Number.isFinite(age) && age > 0) state.accountAge = Math.floor(age);
+    const user = observer();
+    try {
+      const tasks = [HiveApi.getPollChoices(record.id)];
+      tasks.push(
+        state.mode ? HiveApi.getPollTallies(state.author, state.permlink, state.mode) : Promise.resolve([])
+      );
+      tasks.push(user ? HiveApi.getPollAccountVote(record.id, user) : Promise.resolve([]));
+      const [choiceRows, tallyRows, mine] = await Promise.all(tasks);
+      if (!pollGenOk(section, gen)) return;
+      if (Array.isArray(choiceRows) && choiceRows.length) {
+        const nextChoices = choiceRows
+          .map((row) => ({
+            num: Number(row.choice_num),
+            text: String(row.choice_text == null ? "" : row.choice_text),
+          }))
+          .filter((row) => row.num > 0);
+        if (nextChoices.length) state.choices = nextChoices;
+      }
+      applyTallyRows(state, tallyRows);
+      const known = new Set(state.choices.map((choice) => choice.num));
+      state.mine = (Array.isArray(mine) ? mine : []).map(Number).filter((num) => known.has(num));
+      state.picked = state.mine.slice();
+      state.resultsKnown = Boolean(state.mode);
+    } catch (err) {
+      if (!pollGenOk(section, gen)) return;
+      state.note = "Poll results are unavailable.";
+      paintPollFooter(section, state);
+      syncPollControls(section, state);
+      return;
+    }
+    if (!state.mode) {
+      state.note = pollUnsupportedNote(state.token, record.preferred_interpretation);
+      state.resultsKnown = false;
+      paintPollBars(section, state);
+      syncPollControls(section, state);
+      paintPollFooter(section, state);
+      return;
+    }
+    state.note = "";
+    const shouldReveal =
+      state.wantReveal || !observer() || pollIsExpired(state) || state.mine.length > 0;
+    if (shouldReveal) revealPoll(section, state, !section.classList.contains("is-results"));
+    else {
+      paintPollBars(section, state);
+      syncPollControls(section, state);
+      paintPollFooter(section, state);
+    }
+  }
+
+  function mountHivePoll(article) {
+    const section = article && article.querySelector(":scope > section.poll");
+    if (!section) return;
+    const gen = String(++pollMountGen);
+    section.dataset.pollGen = gen;
+    const state = readPollShell(section);
+    pollStates.set(section, state);
+    paintPollFooter(section, state);
+    syncPollControls(section, state);
+    if (observer() && state.mode && !pollIsExpired(state)) ensurePollTrx(state);
+    hydratePoll(section, gen);
+  }
+
+  function ensureHivePoll(article, post) {
+    if (!article || !post) return;
+    const existing = article.querySelector(":scope > section.poll");
+    if (!pollMetaOf(post)) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      if (!pollStates.has(existing)) mountHivePoll(article);
+      return;
+    }
+    const html = pollShellHtml(post);
+    if (!html) return;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    const section = wrap.firstElementChild;
+    if (!section) return;
+    const stats = article.querySelector(":scope > .post-stats-bar");
+    if (stats) stats.insertAdjacentElement("beforebegin", section);
+    else article.appendChild(section);
+    mountHivePoll(article);
+  }
+
   function articleHtml(root, opts) {
     const options = opts || {};
     const community = communityLabelHtml(root, "article-community");
@@ -13096,6 +13782,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         ${articleTagsHtml(root)}
         <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
+        ${pollShellHtml(root)}
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
           ${commentCountHtml(commentCount, "#comments")}
@@ -13563,6 +14250,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     refreshArticleCommunity(root);
     refreshArticleVotes(root);
+    ensureHivePoll(article, root);
     setPostTitle(root);
     return true;
   }
@@ -13575,6 +14263,7 @@ let CS77_FILTER_LOW_REP = 20;
     currentPost = root;
     rememberContent(root);
     pv.innerHTML = articleHtml(root, options);
+    mountHivePoll(pv.querySelector("article.article"));
     setPostTitle(root);
     restoreCommentDraft();
     return true;
@@ -13611,6 +14300,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!pv || !snap || !snap.html) return false;
     persistCommentDraftNow();
     pv.innerHTML = snap.html;
+    mountHivePoll(pv.querySelector("article.article"));
     if (snap.root) {
       currentPost = snap.root;
       rememberContent(snap.root);

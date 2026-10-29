@@ -1597,6 +1597,179 @@
     return { pending: pending, max: max };
   }
 
+  const POLLS_API = "https://polls.hivehub.dev";
+
+  function pollsQueryValue(value) {
+    return encodeURIComponent(String(value || ""));
+  }
+
+  async function pollsFetch(path) {
+    let response;
+    try {
+      response = await fetch(POLLS_API + path, {
+        headers: { Accept: "application/json" },
+      });
+    } catch (err) {
+      throw new Error("Poll results are unavailable.");
+    }
+    if (!response.ok) throw new Error("Poll results are unavailable.");
+    return response.json();
+  }
+
+  async function getPollRecord(author, permlink) {
+    const rows = await pollsFetch(
+      "/polls?author=eq." +
+        pollsQueryValue(author) +
+        "&permlink=eq." +
+        pollsQueryValue(permlink) +
+        "&select=id,question,preferred_interpretation,token,end_time,max_choices_voted,allow_vote_changes,trx_id,filter_account_age_days,created&limit=1"
+    );
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  }
+
+  async function getPollChoices(pollId) {
+    const rows = await pollsFetch(
+      "/poll_choices?poll_id=eq." +
+        encodeURIComponent(String(pollId)) +
+        "&select=choice_num,choice_text&order=choice_num.asc"
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  // Account counts and Hive Power are separate indexed calls. They do not
+  // download the voter list.
+  async function getPollTallies(author, permlink, mode) {
+    const fn = mode === "hp" ? "top_choices_by_hp" : "top_choices_by_num_votes";
+    const rows = await pollsFetch(
+      "/rpc/" +
+        fn +
+        "?v_author=" +
+        pollsQueryValue(author) +
+        "&v_permlink=" +
+        pollsQueryValue(permlink) +
+        "&v_limit=50"
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async function getPollAccountVote(pollId, account) {
+    const rows = await pollsFetch(
+      "/poll_votes?poll_id=eq." +
+        encodeURIComponent(String(pollId)) +
+        "&account=eq." +
+        pollsQueryValue(account) +
+        "&select=choices&limit=1"
+    );
+    if (!Array.isArray(rows) || !rows[0] || !Array.isArray(rows[0].choices)) return [];
+    return rows[0].choices.map(Number).filter((n) => n > 0);
+  }
+
+  function hiveTimeMs(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return NaN;
+    if (/Z$/i.test(raw) || /[+-]\d{2}:\d{2}$/.test(raw)) return Date.parse(raw);
+    return Date.parse(raw + "Z");
+  }
+
+  // polls.hivehub.dev stores trx_id with the first byte removed. A poll vote
+  // needs the 40-character chain id of the comment that created the poll.
+  // Head time can sit a couple of minutes off the block number, so the block
+  // is searched from the comment timestamp.
+  async function getCommentTrxId(author, permlink, created) {
+    const createdMs = hiveTimeMs(created);
+    const name = String(author || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    const link = String(permlink || "").trim();
+    if (!name || !link || !Number.isFinite(createdMs)) return "";
+    try {
+      const recent = await hiveRpc("account_history_api.get_account_history", {
+        account: name,
+        start: -1,
+        limit: 300,
+        operation_filter_low: 2,
+        operation_filter_high: 0,
+      });
+      const history = recent && Array.isArray(recent.history) ? recent.history : [];
+      for (let i = 0; i < history.length; i += 1) {
+        const row = Array.isArray(history[i]) ? history[i][1] : history[i];
+        if (!row) continue;
+        const op = row.op;
+        const body = op && !Array.isArray(op) ? op.value : Array.isArray(op) ? op[1] : null;
+        if (!body) continue;
+        if (String(body.author || "").toLowerCase() !== name) continue;
+        if (body.permlink !== link) continue;
+        const trx = String(row.trx_id || "");
+        if (/^[0-9a-fA-F]{40}$/.test(trx)) return trx;
+      }
+    } catch (err) {
+      /* Older nodes omit this filter. The block search below still finds the id. */
+    }
+    const props = await hiveRpc("condenser_api.get_dynamic_global_properties", []);
+    const head = Number(props && props.head_block_number);
+    const headMs = hiveTimeMs(props && props.time);
+    if (!Number.isFinite(head) || head < 1 || !Number.isFinite(headMs)) return "";
+    let lo = head - Math.round((headMs - createdMs) / 3000);
+    if (!Number.isFinite(lo)) return "";
+    if (lo < 1) lo = 1;
+    if (lo > head) lo = head;
+    const headerMs = async (blockNum) => {
+      const header = await hiveRpc("condenser_api.get_block_header", [blockNum]);
+      return hiveTimeMs(header && header.timestamp);
+    };
+    let hi = lo;
+    let loMs = await headerMs(lo);
+    let hiMs = loMs;
+    if (!Number.isFinite(loMs)) return "";
+    let step = 32;
+    let guard = 0;
+    while (loMs > createdMs && lo > 1 && guard < 8) {
+      hi = lo;
+      hiMs = loMs;
+      lo = Math.max(1, lo - step);
+      loMs = await headerMs(lo);
+      if (!Number.isFinite(loMs)) return "";
+      step *= 2;
+      guard += 1;
+    }
+    step = 32;
+    guard = 0;
+    while (hiMs < createdMs && hi < head && guard < 8) {
+      lo = hi;
+      loMs = hiMs;
+      hi = Math.min(head, hi + step);
+      hiMs = await headerMs(hi);
+      if (!Number.isFinite(hiMs)) return "";
+      step *= 2;
+      guard += 1;
+    }
+    let spins = 0;
+    while (lo < hi && spins < 20) {
+      const mid = Math.floor((lo + hi) / 2);
+      const midMs = await headerMs(mid);
+      if (!Number.isFinite(midMs) || midMs < createdMs) lo = mid + 1;
+      else hi = mid;
+      spins += 1;
+    }
+    for (let block = lo - 1; block <= lo + 1; block += 1) {
+      if (block < 1) continue;
+      const ops = await hiveRpc("condenser_api.get_ops_in_block", [block, false]);
+      if (!Array.isArray(ops)) continue;
+      for (let i = 0; i < ops.length; i += 1) {
+        const entry = ops[i] || {};
+        const op = entry.op;
+        if (!Array.isArray(op) || op[0] !== "comment" || !op[1]) continue;
+        const body = op[1];
+        if (String(body.author || "").toLowerCase() !== name) continue;
+        if (body.permlink !== link) continue;
+        const trx = String(entry.trx_id || "");
+        if (/^[0-9a-fA-F]{40}$/.test(trx)) return trx;
+      }
+    }
+    return "";
+  }
+
   global.HiveApi = {
     PAGE_SIZE,
     hiveRpc,
@@ -1657,5 +1830,10 @@
     hiveToVests,
     getActiveNode,
     getActiveHost,
+    getPollRecord,
+    getPollChoices,
+    getPollTallies,
+    getPollAccountVote,
+    getCommentTrxId,
   };
 })(window);
