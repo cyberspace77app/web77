@@ -1187,12 +1187,6 @@
       }
       return !url.hash;
     }
-    if (host === "www.instagram.com") {
-      if (!/^\/reel\/[A-Za-z0-9_-]{5,30}\/embed$/.test(path)) return false;
-      if (url.searchParams.get("cr") !== "1") return false;
-      const keys = Array.from(url.searchParams.keys());
-      return keys.length === 1 && keys[0] === "cr" && !url.hash;
-    }
     return false;
   }
 
@@ -1518,19 +1512,7 @@
     return { src: src, plain: "https://clips.twitch.tv/" + clip[1], title: "Twitch", kind: "twitch" };
   }
 
-  function instagramReelCode(path) {
-    const match = /^\/reels?\/([A-Za-z0-9_-]{5,30})(?:\/embed(?:\/captioned)?)?$/.exec(path);
-    if (!match) return "";
-    let code = match[1];
-    try {
-      code = decodeURIComponent(code);
-    } catch (err) {
-      return "";
-    }
-    if (!/^[A-Za-z0-9_-]{5,30}$/.test(code)) return "";
-    return code;
-  }
-
+  // The Reel player does not load reliably, so the page stays a link.
   function instagramFromUrl(href) {
     const url = httpUrl(href);
     if (!url) return null;
@@ -1545,11 +1527,16 @@
     }
     const path = trimmedPath(url);
     if (!path || path.indexOf("..") !== -1) return null;
-    const code = instagramReelCode(path);
-    if (!code) return null;
-    const plain = "https://www.instagram.com/reel/" + code + "/";
-    const src = "https://www.instagram.com/reel/" + code + "/embed?cr=1";
-    return { src: src, plain: plain, title: "Instagram", kind: "portrait" };
+    const match = /^\/reels?\/([A-Za-z0-9_-]{5,30})(?:\/embed(?:\/captioned)?)?$/.exec(path);
+    if (!match) return null;
+    let code = match[1];
+    try {
+      code = decodeURIComponent(code);
+    } catch (err) {
+      return null;
+    }
+    if (!/^[A-Za-z0-9_-]{5,30}$/.test(code)) return null;
+    return { plain: "https://www.instagram.com/reel/" + code + "/", title: "Instagram" };
   }
 
   function hostedVideoFromUrl(href) {
@@ -2014,9 +2001,10 @@
   }
 
   // The same player the post body builds. Empty when the address is not a video.
-  // Shorts, TikTok, Reels, and Skate Hype are portrait. A 3Speak frame stays
+  // Shorts, TikTok, and Skate Hype are portrait. A 3Speak frame stays
   // landscape until its thumbnail is taller than it is wide. The other hosted
   // players are landscape. A wider Skate Hype preview image drops the portrait frame.
+  // An Instagram Reel stays a link.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
