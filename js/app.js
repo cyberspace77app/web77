@@ -16703,12 +16703,20 @@ let CS77_FILTER_LOW_REP = 20;
     </div>`;
   }
 
-  // A Keychain login can decrypt memos sent to that account without typing the key.
+  // The signed-in account when Hive Keychain should sign without the
+  // sign dialog. A recorded Keychain login wins even if a posting key is
+  // also stored. Otherwise a stored posting key is a private-key login:
+  // it can sign Posting, and an active, owner, or memo operation opens
+  // the dialog. With neither a posting key nor a marker, an installed
+  // Keychain is still the signer, same as a vote or a comment.
   function keychainLoginActive() {
-    const user = observer();
-    if (!user || !window.hive_keychain) return "";
+    const user = normalizeLoginUser(observer());
+    if (!validLoginUser(user)) return "";
+    const kc = window.hive_keychain;
+    if (!kc || typeof kc.requestBroadcast !== "function") return "";
+    if (readKeychainUser() === user) return user;
     if (window.HiveAuth && HiveAuth.hasKey(user)) return "";
-    return readKeychainUser() === user ? user : "";
+    return user;
   }
 
   function walletMemoDialogAccount(to, from) {
@@ -23226,8 +23234,11 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // "posting" when the stored posting key can sign, "keychain" when this login
-  // is Keychain for the same account, otherwise "".
+  // "posting" when the stored posting key can sign this account.
+  // "keychain" when this login is Keychain for this same account, including
+  // active, owner, and memo. A different account stays "" so the dialog
+  // opens, for example a subspace role change signed by the owner account
+  // while someone else is logged in.
   function signSessionKind(account, authority) {
     const name = normalizeLoginUser(account);
     if (!name) return "";
@@ -23281,14 +23292,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // One signer for subspace owner settings, role changes, creating a subspace,
-  // wallet stake, unstake, send, convert, or claim, delegations, and encrypting or decrypting
-  // a transfer memo. Pass the account, operations, authority, and the dialog
-  // copy. A login that can already sign that authority does so without the
-  // dialog: a stored posting key for Posting, or Hive Keychain for the role
-  // this login can sign. Anything else opens the dialog with both Keychain
-  // and Password. A stored posting key starts that dialog on Password when
-  // the account is the signed-in user. The password field accepts that role
-  // key or the master password. Decrypt mode resolves with the plaintext.
+  // wallet stake, unstake, send, convert, claim, or account creation,
+  // delegations, and encrypting or decrypting a transfer memo. Pass the
+  // account, operations, authority, and the dialog copy. A stored posting
+  // key signs Posting with no dialog. A Keychain login signs Posting,
+  // Active, Owner, and Memo through Keychain with no dialog, when the
+  // account is the one that is logged in. A private-key login asked for
+  // an active, owner, or memo key opens the dialog. So does signing for
+  // a different account, such as a subspace owner who is not logged in.
+  // A stored posting key starts that dialog on Password when the account
+  // is the signed-in user. The password field accepts that role key or
+  // the master password. Decrypt mode resolves with the plaintext.
   // Encode mode resolves with the # base58 ciphertext.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
