@@ -10391,20 +10391,23 @@ let CS77_FILTER_LOW_REP = 20;
       </article>
     `;
     } else {
-      // A poll takes the media slot. The picture or video preview stays off
-      // so the choices can be voted without opening the post.
+      // A poll takes the media slot. Otherwise the first video plays here
+      // and the preview image stays off.
       const poll = pollShellHtml(shown);
-      const img = poll ? "" : HiveMd.extractImage(shown);
+      const video = poll ? "" : HiveMd.previewVideo(shown);
+      const img = poll || video ? "" : HiveMd.extractImage(shown);
       const thumb = img
         ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
         : "";
       const media = poll
         ? poll
-        : thumb
-          ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
-          : "";
+        : video
+          ? `<div class="card-video">${video}</div>`
+          : thumb
+            ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
+            : "";
       card = `
-      <article class="post-card${poll ? " has-poll" : img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
+      <article class="post-card${poll ? " has-poll" : video ? " has-video" : img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
         ${meta}
         <a class="card-hit" href="${HiveMd.escapeHtml(postPath(shown))}">
           <h2>${HiveMd.escapeHtml(shown.title || "(untitled)")}</h2>

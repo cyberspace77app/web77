@@ -1992,31 +1992,73 @@
     return { url: url, trail: trail };
   }
 
+  // The same player the post body builds. Empty when the address is not a video.
+  function playerHtmlFromUrl(href) {
+    const url = unescapeHtml(String(href || "")).trim();
+    if (!url) return "";
+    const yt = youtubeIdFromUrl(url);
+    if (yt) return youtubeEmbedHtml(yt);
+    const speak = threeSpeakFromUrl(url);
+    if (speak) return threeSpeakEmbedHtml(speak.id, speak.route);
+    const vimeo = vimeoFromUrl(url);
+    if (vimeo) return vimeoEmbedHtml(vimeo.id, vimeo.hash);
+    const hosted = hostedVideoFromUrl(url);
+    if (hosted && hosted.src) return iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
+    return "";
+  }
+
+  function fileVideoHtml(src, poster) {
+    if (!isSafePostUrl(src, "src")) return "";
+    let extra = "";
+    if (poster && isSafePostUrl(poster, "poster")) {
+      extra = ' poster="' + escapeHtml(poster) + '"';
+    }
+    return (
+      '<div class="embed">' +
+      '<video controls playsinline preload="metadata" src="' +
+      escapeHtml(src) +
+      '"' +
+      extra +
+      "></video>" +
+      "</div>"
+    );
+  }
+
+  // A <video> plays in the card. A player address in src uses that player.
+  function videoElementHtml(openRaw, inner) {
+    let src = htmlAttr(openRaw, "src");
+    if (!isSafePostUrl(src, "src")) src = "";
+    if (!src && inner) {
+      let i = 0;
+      while (i < inner.length) {
+        const at = inner.indexOf("<", i);
+        if (at < 0) break;
+        const tag = parseHtmlTagAt(inner, at);
+        if (!tag) {
+          i = at + 1;
+          continue;
+        }
+        if (!tag.closing && tag.name.toLowerCase() === "source") {
+          const candidate = htmlAttr(tag.raw, "src");
+          if (isSafePostUrl(candidate, "src")) {
+            src = candidate;
+            break;
+          }
+        }
+        i = tag.end;
+      }
+    }
+    if (!src) return "";
+    return playerHtmlFromUrl(src) || fileVideoHtml(src, htmlAttr(openRaw, "poster"));
+  }
+
   function embedPlainText(text) {
     return String(text || "").replace(/https?:\/\/[^\s<]+/gi, function (raw) {
       const parts = splitPlainUrl(raw);
       if (!parts.url) return raw;
       const url = unescapeHtml(parts.url);
-      const yt = youtubeIdFromUrl(url);
-      if (yt) {
-        const embed = youtubeEmbedHtml(yt);
-        if (embed) return embed + parts.trail;
-      }
-      const speak = threeSpeakFromUrl(url);
-      if (speak) {
-        const embed = threeSpeakEmbedHtml(speak.id, speak.route);
-        if (embed) return embed + parts.trail;
-      }
-      const vimeo = vimeoFromUrl(url);
-      if (vimeo) {
-        const embed = vimeoEmbedHtml(vimeo.id, vimeo.hash);
-        if (embed) return embed + parts.trail;
-      }
-      const hosted = hostedVideoFromUrl(url);
-      if (hosted && hosted.src) {
-        const embed = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
-        if (embed) return embed + parts.trail;
-      }
+      const player = playerHtmlFromUrl(url);
+      if (player) return player + parts.trail;
       const tweet = tweetIdFromUrl(url);
       if (tweet) {
         const embed = tweetEmbedHtml(tweet);
@@ -2058,6 +2100,128 @@
       }
       return pieces.join("");
     });
+  }
+
+  // First video in a post body, in reading order. Fences and inline code are
+  // skipped. A markdown link, an anchor, or a pasted player counts, because
+  // the card replaces the preview image with that video.
+  function firstPreviewVideoHtml(src) {
+    const s = String(src || "").replace(/\r\n/g, "\n");
+    let i = 0;
+    const fence = { inFence: false, fenceMark: "" };
+    while (i < s.length) {
+      const fenceEnd = skipFenceLine(s, i, fence);
+      if (fenceEnd >= 0) {
+        i = fenceEnd;
+        continue;
+      }
+      if (fence.inFence) {
+        i++;
+        continue;
+      }
+      if (s.charAt(i) === "`") {
+        const span = readCodeSpan(s, i);
+        if (span) {
+          i = span.end;
+          continue;
+        }
+      }
+      if (s.startsWith("<!--", i)) {
+        const end = s.indexOf("-->", i + 4);
+        i = end < 0 ? s.length : end + 3;
+        continue;
+      }
+      if (s.charAt(i) === "[") {
+        const linked = parseLinkedMarkdownImageAt(s, i);
+        if (linked) {
+          const player = playerHtmlFromUrl(linked.href);
+          if (player) return player;
+          i = linked.end;
+          continue;
+        }
+        const link = parseMarkdownLinkAt(s, i);
+        if (link) {
+          const player = playerHtmlFromUrl(link.url);
+          if (player) return player;
+          const inner = firstPreviewVideoHtml(link.text);
+          if (inner) return inner;
+          i = link.end;
+          continue;
+        }
+      }
+      if (s.charAt(i) === "!" && s.charAt(i + 1) === "[") {
+        const img = parseMarkdownImageAt(s, i);
+        if (img) {
+          i = img.end;
+          continue;
+        }
+      }
+      const head = s.slice(i, i + 8).toLowerCase();
+      if (head.startsWith("https://") || head.startsWith("http://")) {
+        const m = /^https?:\/\/[^\s<]+/i.exec(s.slice(i));
+        if (m) {
+          const parts = splitPlainUrl(m[0]);
+          const player = playerHtmlFromUrl(parts.url);
+          if (player) return player;
+          i += m[0].length;
+          continue;
+        }
+      }
+      if (s.charAt(i) === "<") {
+        const tag = parseHtmlTagAt(s, i);
+        if (tag && !tag.closing) {
+          const name = tag.name.toLowerCase();
+          if (/^https?$/.test(name) && /^<https?:\/\/[^>\s]+>$/i.test(tag.raw)) {
+            const player = playerHtmlFromUrl(tag.raw.slice(1, -1));
+            if (player) return player;
+            i = tag.end;
+            continue;
+          }
+          if (RAW_SKIP_TAGS.has(name)) {
+            const close = tag.selfClosing ? null : findCloseTag(s, tag.end, tag.name);
+            i = close ? close.end : tag.end;
+            continue;
+          }
+          if (name === "video") {
+            const close = findCloseTag(s, tag.end, "video");
+            const inner = close ? s.slice(tag.end, close.start) : "";
+            const player = videoElementHtml(tag.raw, inner);
+            if (player) return player;
+            i = close ? close.end : tag.end;
+            continue;
+          }
+          if (name === "iframe" || name === "object" || name === "embed") {
+            const media = plainMediaUrl(tag.raw);
+            const player = media ? playerHtmlFromUrl(media) : "";
+            if (player) return player;
+            const close = tag.selfClosing ? null : findCloseTag(s, tag.end, tag.name);
+            i = close ? close.end : tag.end;
+            continue;
+          }
+          if (name === "a") {
+            const player = playerHtmlFromUrl(htmlAttr(tag.raw, "href"));
+            const close = findCloseTag(s, tag.end, "a");
+            if (player) return player;
+            if (close) {
+              const inner = firstPreviewVideoHtml(s.slice(tag.end, close.start));
+              if (inner) return inner;
+              i = close.end;
+              continue;
+            }
+            i = tag.end;
+            continue;
+          }
+          i = tag.end;
+          continue;
+        }
+      }
+      i++;
+    }
+    return "";
+  }
+
+  function previewVideo(post) {
+    return firstPreviewVideoHtml(post && post.body);
   }
 
   function embedMedia(html) {
@@ -3226,6 +3390,7 @@
     displayReputation,
     parseJsonMetadata,
     extractImage,
+    previewVideo,
     proxyImage,
     avatarUrl,
     excerpt,
