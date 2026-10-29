@@ -3341,7 +3341,10 @@ let CS77_FILTER_LOW_REP = 20;
       const wrap = document.createElement("div");
       wrap.innerHTML = String(renderComment(node) || "").trim();
       const next = wrap.firstElementChild;
-      if (next) comment.replaceWith(next);
+      if (next) {
+        comment.replaceWith(next);
+        mountCommentPolls(next);
+      }
       restoreCommentDraft();
     };
     HiveMd.whenMarkdownReady().then(paint, paint);
@@ -12248,6 +12251,7 @@ let CS77_FILTER_LOW_REP = 20;
     `;
     }
     const body = HiveMd.renderMarkdown(node.body || "");
+    const poll = pollShellHtml(node);
     const replyBtn = user
       ? `<button type="button" class="comment-reply-btn" data-reply-author="${author}" data-reply-permlink="${permlink}">Reply</button>`
       : "";
@@ -12255,6 +12259,7 @@ let CS77_FILTER_LOW_REP = 20;
       <article class="comment" data-author="${author}" data-permlink="${permlink}" data-parent-author="${parentAuthor}" data-parent-permlink="${parentPermlink}" id="@${author}/${permlink}">
         ${head}
         <div class="comment-body">${body}</div>
+        ${poll}
         <div class="comment-actions">
           ${voteControlHtml(node, "pills")}
           ${payoutHtml(node, true)}
@@ -12349,6 +12354,7 @@ let CS77_FILTER_LOW_REP = 20;
       const hint = list.querySelector(":scope > .feed-hint");
       if (hint) hint.remove();
       list.insertAdjacentHTML("beforeend", html);
+      mountCommentPolls(list);
       return;
     }
     const parent = findCommentEl(parentAuthor, parentPermlink);
@@ -12360,6 +12366,7 @@ let CS77_FILTER_LOW_REP = 20;
       parent.appendChild(replies);
     }
     replies.insertAdjacentHTML("beforeend", html);
+    mountCommentPolls(replies);
     noteParentReply(parentAuthor, parentPermlink, 1);
   }
 
@@ -13979,7 +13986,7 @@ let CS77_FILTER_LOW_REP = 20;
     const target = e.target;
     if (!target || !target.closest) return false;
     const section = target.closest("section.poll");
-    if (!section || !section.closest("article.article, article.post-card")) return false;
+    if (!section || !section.closest("article.article, article.post-card, article.comment")) return false;
     const choice = target.closest(".poll-choice");
     const results = target.closest(".poll-results-link");
     const submit = target.closest(".poll-submit");
@@ -14163,6 +14170,13 @@ let CS77_FILTER_LOW_REP = 20;
   function mountFeedPolls(root) {
     if (!root || !root.querySelectorAll) return;
     root.querySelectorAll("article.post-card > section.poll").forEach((section) => {
+      if (!pollStates.has(section)) mountPollSection(section);
+    });
+  }
+
+  function mountCommentPolls(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("article.comment > section.poll").forEach((section) => {
       if (!pollStates.has(section)) mountPollSection(section);
     });
   }
@@ -14790,7 +14804,10 @@ let CS77_FILTER_LOW_REP = 20;
     const openMore = document.querySelector(".content-more.is-open");
     if (openMore && section.contains(openMore)) closeContentMore();
     const list = section.querySelector(".comment-list");
-    if (list) list.innerHTML = html;
+    if (list) {
+      list.innerHTML = html;
+      mountCommentPolls(list);
+    }
     restoreCommentDraft();
   }
 
@@ -14865,6 +14882,7 @@ let CS77_FILTER_LOW_REP = 20;
     rememberContent(root);
     pv.innerHTML = articleHtml(root, options);
     mountHivePoll(pv.querySelector("article.article"));
+    mountCommentPolls(pv);
     setPostTitle(root);
     restoreCommentDraft();
     return true;
@@ -14902,6 +14920,7 @@ let CS77_FILTER_LOW_REP = 20;
     persistCommentDraftNow();
     pv.innerHTML = snap.html;
     mountHivePoll(pv.querySelector("article.article"));
+    mountCommentPolls(pv);
     if (snap.root) {
       currentPost = snap.root;
       rememberContent(snap.root);

@@ -1690,8 +1690,9 @@
 
   // polls.hivehub.dev stores trx_id with the first byte removed. A poll vote
   // needs the 40-character chain id of the comment that created the poll.
-  // Head time can sit a couple of minutes off the block number, so the block
-  // is searched from the comment timestamp.
+  // Missed blocks make wall time run ahead of block_number * 3s, so the
+  // estimate can land hours early. The window doubles until the headers
+  // bracket the comment time, then the matching op is read from that block.
   async function getCommentTrxId(author, permlink, created) {
     const createdMs = hiveTimeMs(created);
     const name = String(author || "")
@@ -1741,7 +1742,7 @@
     if (!Number.isFinite(loMs)) return "";
     let step = 32;
     let guard = 0;
-    while (loMs > createdMs && lo > 1 && guard < 8) {
+    while (loMs > createdMs && lo > 1 && guard < 24) {
       hi = lo;
       hiMs = loMs;
       lo = Math.max(1, lo - step);
@@ -1752,7 +1753,7 @@
     }
     step = 32;
     guard = 0;
-    while (hiMs < createdMs && hi < head && guard < 8) {
+    while (hiMs < createdMs && hi < head && guard < 24) {
       lo = hi;
       loMs = hiMs;
       hi = Math.min(head, hi + step);
@@ -1762,7 +1763,7 @@
       guard += 1;
     }
     let spins = 0;
-    while (lo < hi && spins < 20) {
+    while (lo < hi && spins < 40) {
       const mid = Math.floor((lo + hi) / 2);
       const midMs = await headerMs(mid);
       if (!Number.isFinite(midMs) || midMs < createdMs) lo = mid + 1;
