@@ -155,6 +155,8 @@ let CS77_FILTER_LOW_REP = 20;
   // Users search while typing. Spaces and subspaces still search on submit.
   const SEARCH_USER_DEBOUNCE_MS = 200;
   let searchUserTimer = 0;
+  // Gboard writes a tapped suggestion after compositionend.
+  let searchComposeTimer = 0;
   const SEARCH_TAG_LIMIT = 100;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
@@ -11924,27 +11926,37 @@ let CS77_FILTER_LOW_REP = 20;
       clearTimeout(searchUserTimer);
       searchUserTimer = 0;
     }
-    if (searchPageName() !== "users") return;
     const input = $("#searchInput");
+    // The mobile spellchecker owns the word while it is underlined. The input
+    // event runs first, often with a stale value, and composition stays open
+    // until the suggestion is accepted. Read the field when the debounce fires.
+    if (input) searchBox = input.value;
+    if (searchPageName() !== "users") return;
     if (!input) return;
-    const raw = String(input.value || "").trim();
-    const next = userSearchQuery(raw);
-    const state = searchPages.users;
-    const current = userSearchQuery(state.query);
-    if (!next) {
-      if (state.looked || state.loading || state.query) runSearch();
-      return;
-    }
-    if ((state.looked || state.loading) && current === next) return;
     searchUserTimer = setTimeout(() => {
       searchUserTimer = 0;
       if (searchPageName() !== "users") return;
       const live = $("#searchInput");
-      if (!live || userSearchQuery(live.value) !== next) return;
+      if (!live) return;
+      searchBox = live.value;
+      const next = userSearchQuery(live.value);
       const now = searchPages.users;
+      if (!next) {
+        if (now.looked || now.loading || now.query) runSearch();
+        return;
+      }
       if ((now.looked || now.loading) && userSearchQuery(now.query) === next) return;
       runSearch();
     }, SEARCH_USER_DEBOUNCE_MS);
+  }
+
+  function finishSearchCompose(input) {
+    if (searchComposeTimer) clearTimeout(searchComposeTimer);
+    searchComposeTimer = setTimeout(() => {
+      searchComposeTimer = 0;
+      if (!input || !input.isConnected) return;
+      scheduleUserSearch();
+    }, 0);
   }
 
   async function runSearch() {
@@ -11997,7 +12009,7 @@ let CS77_FILTER_LOW_REP = 20;
           <a href="${subspacesHref}" class="${page === "subspaces" ? "is-active" : ""}">Subspaces</a>
         </nav>
         <form class="tags-add search-form" id="searchForm">
-          <input id="searchInput" type="text" maxlength="80" placeholder="Search" value="${value}" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="search" aria-label="Search">
+          <input id="searchInput" type="text" maxlength="80" placeholder="Search" value="${value}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search">
           ${searchGlassHtml()}
         </form>
         <p class="tags-status" id="searchStatus" hidden></p>
@@ -27965,8 +27977,7 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("input", (e) => {
       if (e.target && e.target.id === "searchInput") {
-        searchBox = e.target.value;
-        if (!e.isComposing) scheduleUserSearch();
+        scheduleUserSearch();
         return;
       }
       const slider = e.target.closest(".vote-slider");
@@ -28027,6 +28038,10 @@ let CS77_FILTER_LOW_REP = 20;
     // Gboard updates the underlined word through compositionupdate, and writes
     // the tapped suggestion after compositionend.
     document.addEventListener("compositionupdate", (e) => {
+      if (e.target && e.target.id === "searchInput") {
+        scheduleUserSearch();
+        return;
+      }
       if (!e.target || e.target.id !== "publishTitle") return;
       fitPublishTitle(e.target);
       savePublishDraft();
@@ -28035,8 +28050,8 @@ let CS77_FILTER_LOW_REP = 20;
     });
     document.addEventListener("compositionend", (e) => {
       if (e.target && e.target.id === "searchInput") {
-        searchBox = e.target.value;
         scheduleUserSearch();
+        finishSearchCompose(e.target);
         return;
       }
       if (!e.target || e.target.id !== "publishTitle") return;
