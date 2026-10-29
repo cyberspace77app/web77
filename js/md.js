@@ -2134,8 +2134,9 @@
   }
 
   // First video in a post body, in reading order. Fences and inline code are
-  // skipped. A markdown link, an anchor, or a pasted player counts, because
-  // the card replaces the preview image with that video.
+  // skipped. A markdown link and an HTML anchor are skipped too, including a
+  // linked thumbnail. The card plays a plain URL, an autolink, an iframe, an
+  // embed, or a video tag.
   function firstPreviewVideoHtml(src) {
     const s = String(src || "").replace(/\r\n/g, "\n");
     let i = 0;
@@ -2165,17 +2166,11 @@
       if (s.charAt(i) === "[") {
         const linked = parseLinkedMarkdownImageAt(s, i);
         if (linked) {
-          const player = playerHtmlFromUrl(linked.href);
-          if (player) return player;
           i = linked.end;
           continue;
         }
         const link = parseMarkdownLinkAt(s, i);
         if (link) {
-          const player = playerHtmlFromUrl(link.url);
-          if (player) return player;
-          const inner = firstPreviewVideoHtml(link.text);
-          if (inner) return inner;
           i = link.end;
           continue;
         }
@@ -2230,16 +2225,8 @@
             continue;
           }
           if (name === "a") {
-            const player = playerHtmlFromUrl(htmlAttr(tag.raw, "href"));
             const close = findCloseTag(s, tag.end, "a");
-            if (player) return player;
-            if (close) {
-              const inner = firstPreviewVideoHtml(s.slice(tag.end, close.start));
-              if (inner) return inner;
-              i = close.end;
-              continue;
-            }
-            i = tag.end;
+            i = close ? close.end : tag.end;
             continue;
           }
           i = tag.end;
