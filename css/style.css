@@ -3231,6 +3231,15 @@ a.tag:hover {
   aspect-ratio: 9 / 16;
 }
 
+/* A phone screen is short, so a vertical video stays within the viewport. */
+@media (max-width: 720px) {
+  .post-body .embed.embed-portrait,
+  .comment-body .embed.embed-portrait,
+  .post-card .embed.embed-portrait {
+    width: min(100%, calc(78dvh * 9 / 16));
+  }
+}
+
 .post-body .embed.embed-twitch,
 .comment-body .embed.embed-twitch,
 .post-card .embed.embed-twitch {
@@ -3259,13 +3268,22 @@ a.tag:hover {
 }
 
 .post-body .embed iframe,
-.comment-body .embed iframe {
+.comment-body .embed iframe,
+.post-body .embed video,
+.comment-body .embed video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   border: 1px solid var(--border);
   border-radius: 4px;
+}
+
+.post-body .embed video,
+.comment-body .embed video,
+.post-card .embed video {
+  object-fit: contain;
+  background: #12080c;
 }
 
 .comment-body .embed {

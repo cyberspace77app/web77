@@ -953,10 +953,18 @@
     return s;
   }
 
-  function youtubeEmbedHtml(id) {
+  // A Shorts page is a vertical video. A watch, live, or youtu.be link is landscape.
+  function youtubeIsShort(url) {
+    return /youtube(?:-nocookie)?\.com\/shorts\/[\w-]{11}/i.test(String(url || ""));
+  }
+
+  function youtubeEmbedHtml(id, kind) {
     if (!/^[\w-]{11}$/.test(id)) return "";
+    const cls = kind === "portrait" ? "embed embed-portrait" : "embed";
     return (
-      '<div class="embed">' +
+      '<div class="' +
+      cls +
+      '">' +
       '<iframe src="https://www.youtube.com/embed/' +
       id +
       '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen loading="lazy" title="YouTube"></iframe>' +
@@ -1414,7 +1422,20 @@
     if (!id) return null;
     const plain = "https://www.skatehype.com/v/" + id;
     const src = "https://www.skatehype.com/ifplay.php?v=" + id;
-    return { src: src, plain: plain, title: "Skate Hype" };
+    // Almost every Skate Hype clip is vertical. A wider preview image can
+    // switch this frame back to landscape after it loads.
+    return { src: src, plain: plain, title: "Skate Hype", kind: "portrait" };
+  }
+
+  function skatehypePosterUrl(body, id) {
+    const needle = "-" + id + "-hive.";
+    const re = /https?:\/\/(?:www\.)?skatehype\.com\/tempimg\/[^\s"'<>]+/gi;
+    let match;
+    while ((match = re.exec(String(body || "")))) {
+      const url = match[0].replace(/[),.;]+$/, "");
+      if (url.indexOf(needle) !== -1) return url;
+    }
+    return "";
   }
 
   function tiktokIdOk(id) {
@@ -1993,11 +2014,14 @@
   }
 
   // The same player the post body builds. Empty when the address is not a video.
+  // Shorts, TikTok, Reels, and Skate Hype are portrait. A 3Speak frame stays
+  // landscape until its thumbnail is taller than it is wide. The other hosted
+  // players are landscape. A wider Skate Hype preview image drops the portrait frame.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
     const yt = youtubeIdFromUrl(url);
-    if (yt) return youtubeEmbedHtml(yt);
+    if (yt) return youtubeEmbedHtml(yt, youtubeIsShort(url) ? "portrait" : "");
     const speak = threeSpeakFromUrl(url);
     if (speak) return threeSpeakEmbedHtml(speak.id, speak.route);
     const vimeo = vimeoFromUrl(url);
@@ -2220,8 +2244,196 @@
     return "";
   }
 
+  function withSkatehypePoster(html, body) {
+    const s = String(html || "");
+    const id = /skatehype\.com\/ifplay\.php\?v=(\d{1,12})/.exec(s);
+    if (!id) return s;
+    const poster = skatehypePosterUrl(body, id[1]);
+    if (!/^https?:\/\/(?:www\.)?skatehype\.com\/tempimg\/[^\s"'<>]+$/i.test(poster)) return s;
+    return s.replace(
+      '<div class="embed embed-portrait">',
+      '<div class="embed embed-portrait" data-orient="' + escapeHtml(poster) + '">'
+    );
+  }
+
   function previewVideo(post) {
-    return firstPreviewVideoHtml(post && post.body);
+    const body = post && post.body;
+    return withSkatehypePoster(firstPreviewVideoHtml(body), body);
+  }
+
+  // A taller file is portrait. A square or wider file stays landscape.
+  function fileVideoIsPortrait(width, height) {
+    const w = Number(width) || 0;
+    const h = Number(height) || 0;
+    return w > 0 && h > w;
+  }
+
+  function applyFileVideoFrame(video) {
+    if (!video || String(video.nodeName || "").toLowerCase() !== "video") return;
+    const box = typeof video.closest === "function" ? video.closest(".embed") : null;
+    if (!box) return;
+    box.classList.toggle("embed-portrait", fileVideoIsPortrait(video.videoWidth, video.videoHeight));
+  }
+
+  function skatehypeFrameId(box) {
+    const iframe = box.querySelector && box.querySelector("iframe");
+    const src = (iframe && iframe.getAttribute("src")) || "";
+    const match = /[?&]v=(\d{1,12})(?:&|$)/.exec(src);
+    return match ? match[1] : "";
+  }
+
+  function skatehypePosterOk(url) {
+    return /^https?:\/\/(?:www\.)?skatehype\.com\/tempimg\/[^\s"'<>]+$/i.test(String(url || ""));
+  }
+
+  // Wider than tall is the rare landscape clip. Anything else stays portrait.
+  function skatehypePreviewIsLandscape(width, height) {
+    const w = Number(width) || 0;
+    const h = Number(height) || 0;
+    return w > 0 && h > 0 && w > h;
+  }
+
+  function applySkatehypeOrient(box, width, height) {
+    if (!box || box.getAttribute("data-orient-set")) return;
+    box.setAttribute("data-orient-set", "1");
+    if (skatehypePreviewIsLandscape(width, height)) box.classList.remove("embed-portrait");
+  }
+
+  function skatehypePosterElement(box, id) {
+    const root = box.closest(".post-body, .comment-body, .post-card, article") || box.parentNode;
+    if (!root || !root.querySelectorAll) return null;
+    const imgs = root.querySelectorAll("img");
+    const needle = "-" + id + "-hive.";
+    for (let i = 0; i < imgs.length; i++) {
+      const src = imgs[i].getAttribute("src") || "";
+      if (src.indexOf("skatehype.com/tempimg/") !== -1 && src.indexOf(needle) !== -1) return imgs[i];
+    }
+    return null;
+  }
+
+  function watchSkatehypeBox(box) {
+    if (!box || box.getAttribute("data-orient-watch") || box.getAttribute("data-orient-set")) return;
+    const id = skatehypeFrameId(box);
+    if (!id) return;
+    box.setAttribute("data-orient-watch", "1");
+    const posted = box.getAttribute("data-orient") || "";
+    const img = skatehypePosterElement(box, id);
+    let src = "";
+    if (img && img.complete && img.naturalWidth) {
+      applySkatehypeOrient(box, img.naturalWidth, img.naturalHeight);
+      return;
+    }
+    if (img) src = img.currentSrc || img.getAttribute("src") || "";
+    if (!src && skatehypePosterOk(posted)) src = posted;
+    if (!skatehypePosterOk(src)) return;
+    const probe = new Image();
+    probe.onload = function () {
+      applySkatehypeOrient(box, probe.naturalWidth, probe.naturalHeight);
+    };
+    probe.onerror = function () {
+      box.setAttribute("data-orient-set", "1");
+    };
+    probe.src = src;
+  }
+
+  function watchSkatehypeFrames(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const frames = scope.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      const src = frames[i].getAttribute("src") || "";
+      if (src.indexOf("skatehype.com/ifplay.php") === -1) continue;
+      const box = frames[i].closest && frames[i].closest(".embed");
+      if (box) watchSkatehypeBox(box);
+    }
+  }
+
+  function threeSpeakFrameId(box) {
+    const iframe = box.querySelector && box.querySelector("iframe");
+    const src = (iframe && iframe.getAttribute("src")) || "";
+    let url;
+    try {
+      url = new URL(src);
+    } catch (err) {
+      return "";
+    }
+    if (url.hostname !== "play.3speak.tv") return "";
+    const id = url.searchParams.get("v") || "";
+    if (!/^[\w./-]{1,160}$/.test(id) || id.indexOf("..") !== -1) return "";
+    return id;
+  }
+
+  // The watch API publishes the thumbnail. A taller image is a portrait clip.
+  function watchThreeSpeakBox(box) {
+    if (!box || box.getAttribute("data-speak-watch")) return;
+    const id = threeSpeakFrameId(box);
+    if (!id || typeof fetch !== "function") return;
+    box.setAttribute("data-speak-watch", "1");
+    fetch("https://play.3speak.tv/api/watch?v=" + id, { credentials: "omit" })
+      .then(function (res) {
+        return res && res.ok ? res.json() : null;
+      })
+      .then(function (data) {
+        if (!box.isConnected) return;
+        const thumb = data && data.thumbnail;
+        if (!isSafePostUrl(thumb, "src")) return;
+        const probe = new Image();
+        probe.onload = function () {
+          if (!box.isConnected) return;
+          if (probe.naturalHeight > probe.naturalWidth) box.classList.add("embed-portrait");
+        };
+        probe.src = thumb;
+      })
+      .catch(function () {});
+  }
+
+  function watchThreeSpeakFrames(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const frames = scope.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      const src = frames[i].getAttribute("src") || "";
+      if (src.indexOf("play.3speak.tv/") === -1) continue;
+      const box = frames[i].closest && frames[i].closest(".embed");
+      if (box) watchThreeSpeakBox(box);
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    document.addEventListener(
+      "loadedmetadata",
+      function (e) {
+        applyFileVideoFrame(e.target);
+      },
+      true
+    );
+    if (typeof MutationObserver === "function") {
+      let skateOrientQueued = false;
+      const runSkateOrient = function () {
+        skateOrientQueued = false;
+        watchSkatehypeFrames(document);
+        watchThreeSpeakFrames(document);
+      };
+      const queueSkateOrient = function () {
+        if (skateOrientQueued) return;
+        skateOrientQueued = true;
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(runSkateOrient);
+        else setTimeout(runSkateOrient, 0);
+      };
+      const skateObserver = new MutationObserver(queueSkateOrient);
+      const startSkateObserver = function () {
+        skateObserver.observe(document.documentElement, { childList: true, subtree: true });
+        queueSkateOrient();
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startSkateObserver);
+      else startSkateObserver();
+    }
+  }
+
+  // An author <video> uses the same frame as a hosted player. Its own
+  // dimensions pick portrait once the file header has loaded.
+  function frameAuthorVideos(html) {
+    return String(html || "").replace(/<video\b[\s\S]*?<\/video>/gi, function (tag) {
+      return '<div class="embed">' + tag + "</div>";
+    });
   }
 
   function embedMedia(html) {
@@ -2229,6 +2441,8 @@
     // Only text nodes. Markdown links and raw HTML links are already <a>,
     // and this walk does not read their contents.
     html = walkHtmlText(html, embedPlainText);
+    html = liftBlockEmbeds(html);
+    html = frameAuthorVideos(html);
     html = liftBlockEmbeds(html);
     return html;
   }
@@ -3238,7 +3452,9 @@
       host === "youtu.be"
     ) {
       const id = youtubeIdFromUrl(src);
-      return id ? "https://www.youtube.com/watch?v=" + id : "";
+      if (!id) return "";
+      if (youtubeIsShort(src)) return "https://www.youtube.com/shorts/" + id;
+      return "https://www.youtube.com/watch?v=" + id;
     }
     if (host === "3speak.tv" || host === "play.3speak.tv") {
       const info = threeSpeakFromUrl(url.href);
