@@ -973,7 +973,17 @@
   }
 
   // watch stays on /watch (legacy videos). embed stays on /embed (direct uploads).
-  // Both play from play.3speak.tv; the old 3speak.tv iframe host does not.
+  // A /shorts page is a direct upload, so it plays on /embed and starts portrait.
+  // /@author/permlink is the public video page. It plays on /watch, which also
+  // opens older videos. The old 3speak.tv iframe host does not.
+  function threeSpeakPageId(path) {
+    const match = /^\/@([a-z][a-z0-9.-]{1,14}[a-z0-9])\/([a-z0-9](?:[a-z0-9-]{0,254}[a-z0-9])?)$/.exec(path);
+    if (!match) return "";
+    const id = match[1] + "/" + match[2];
+    if (id.length > 160 || id.indexOf("..") !== -1) return "";
+    return id;
+  }
+
   function threeSpeakFromUrl(href) {
     const raw = unescapeHtml(String(href || "")).trim();
     if (!raw) return null;
@@ -988,18 +998,27 @@
     if (host !== "3speak.tv" && host !== "play.3speak.tv") return null;
     let path = url.pathname.toLowerCase();
     if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
-    if (path !== "/watch" && path !== "/embed") return null;
-    const id = url.searchParams.get("v") || "";
-    if (!/^[\w./-]{1,160}$/.test(id) || id.indexOf("..") !== -1) return null;
-    return { id: id, route: path.slice(1) };
+    if (path === "/watch" || path === "/embed" || path === "/shorts") {
+      const id = url.searchParams.get("v") || "";
+      if (!/^[\w./-]{1,160}$/.test(id) || id.indexOf("..") !== -1) return null;
+      return { id: id, route: path.slice(1) };
+    }
+    const pageId = threeSpeakPageId(path);
+    if (!pageId) return null;
+    return { id: pageId, route: "page" };
   }
 
   function threeSpeakEmbedHtml(id, route) {
     const safe = String(id || "");
     if (!/^[\w./-]{1,160}$/.test(safe) || safe.indexOf("..") !== -1) return "";
-    const kind = route === "watch" ? "watch" : "embed";
+    const kind = route === "watch" || route === "page" ? "watch" : "embed";
+    const short = route === "shorts";
     return (
-      '<div class="embed">' +
+      '<div class="embed' +
+      (short ? " embed-portrait" : "") +
+      '"' +
+      (short ? ' data-speak-kind="short"' : "") +
+      ">" +
       '<iframe src="https://play.3speak.tv/' +
       kind +
       "?v=" +
@@ -2001,10 +2020,10 @@
   }
 
   // The same player the post body builds. Empty when the address is not a video.
-  // Shorts, TikTok, and Skate Hype are portrait. A 3Speak frame stays
-  // landscape until its thumbnail is taller than it is wide. The other hosted
-  // players are landscape. A wider Skate Hype preview image drops the portrait frame.
-  // An Instagram Reel stays a link.
+  // YouTube Shorts, TikTok, and Skate Hype are portrait. A 3Speak short starts
+  // portrait. Any other 3Speak frame stays landscape until its thumbnail is
+  // taller than it is wide. The other hosted players are landscape. A wider
+  // Skate Hype preview image drops the portrait frame. An Instagram Reel stays a link.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
@@ -2351,10 +2370,13 @@
   }
 
   // The watch API publishes the thumbnail. A taller image is a portrait clip.
+  // A short already starts portrait, and a wider thumbnail puts that one back
+  // in the landscape frame.
   function watchThreeSpeakBox(box) {
     if (!box || box.getAttribute("data-speak-watch")) return;
     const id = threeSpeakFrameId(box);
     if (!id || typeof fetch !== "function") return;
+    const short = box.getAttribute("data-speak-kind") === "short";
     box.setAttribute("data-speak-watch", "1");
     fetch("https://play.3speak.tv/api/watch?v=" + id, { credentials: "omit" })
       .then(function (res) {
@@ -2367,7 +2389,13 @@
         const probe = new Image();
         probe.onload = function () {
           if (!box.isConnected) return;
-          if (probe.naturalHeight > probe.naturalWidth) box.classList.add("embed-portrait");
+          const tall = probe.naturalHeight > probe.naturalWidth;
+          const wide = probe.naturalWidth > probe.naturalHeight;
+          if (short) {
+            if (wide) box.classList.remove("embed-portrait");
+          } else if (tall) {
+            box.classList.add("embed-portrait");
+          }
         };
         probe.src = thumb;
       })
@@ -3446,7 +3474,10 @@
     }
     if (host === "3speak.tv" || host === "play.3speak.tv") {
       const info = threeSpeakFromUrl(url.href);
-      return info ? "https://play.3speak.tv/" + info.route + "?v=" + info.id : "";
+      if (!info) return "";
+      if (info.route === "shorts") return "https://3speak.tv/shorts?v=" + info.id;
+      if (info.route === "page") return "https://3speak.tv/@" + info.id;
+      return "https://play.3speak.tv/" + info.route + "?v=" + info.id;
     }
     if (host === "vimeo.com" || host === "player.vimeo.com") {
       const info = vimeoFromUrl(url.href);
