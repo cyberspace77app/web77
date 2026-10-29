@@ -16136,6 +16136,7 @@ let CS77_FILTER_LOW_REP = 20;
     fill_vesting_withdraw: "unstake paid",
     transfer_to_savings: "staked",
     transfer_from_savings: "unstake requested",
+    cancel_transfer_from_savings: "cancel unstake",
     fill_transfer_from_savings: "unstake paid",
     claim_reward_balance: "claimed rewards",
     delegate_vesting_shares: "delegation",
@@ -16158,7 +16159,56 @@ let CS77_FILTER_LOW_REP = 20;
     limit_order_cancelled: ["seller", "orderid", "amount_back"],
   };
 
-  function walletTxAmounts(type, payload, props) {
+  // withdraw_vesting of 0 is how a power down is stopped. PeakD calls that "Stopped power down".
+  function walletZeroVests(val) {
+    const s = String(val || "").trim();
+    if (!/vests/i.test(s)) return false;
+    const m = s.match(/-?\d+(?:\.\d+)?/);
+    return Boolean(m) && Number(m[0]) === 0;
+  }
+
+  function walletSavingsUnit(amount) {
+    const s = String(amount || "");
+    if (/hbd|tbd/i.test(s)) return "hbd";
+    if (/hive|tests/i.test(s)) return "hive";
+    return "";
+  }
+
+  // The cancel op stores only from and request_id. The amount lives on the earlier transfer_from_savings.
+  function walletSavingsCancelSource(items, cancelIdx, payload) {
+    const id = Number(payload && payload.request_id);
+    if (!Number.isFinite(id) || !Number.isFinite(cancelIdx)) return null;
+    const from = walletHiveName(payload.from);
+    let best = null;
+    let bestIdx = -1;
+    const list = items || [];
+    for (let i = 0; i < list.length; i++) {
+      const idx = historyRowIndex(list[i]);
+      if (!Number.isFinite(idx) || idx >= cancelIdx || idx <= bestIdx) continue;
+      const op = list[i][1] && list[i][1].op;
+      if (!Array.isArray(op) || op[0] !== "transfer_from_savings") continue;
+      const body = op[1] || {};
+      if (Number(body.request_id) !== id) continue;
+      const bodyFrom = walletHiveName(body.from);
+      if (from && bodyFrom && bodyFrom !== from) continue;
+      best = body;
+      bestIdx = idx;
+    }
+    return best;
+  }
+
+  function walletTxTypeLabel(type, payload, source) {
+    if (type === "withdraw_vesting" && walletZeroVests(payload && payload.vesting_shares)) {
+      return "cancel unstake hive";
+    }
+    if (type === "cancel_transfer_from_savings") {
+      const unit = walletSavingsUnit(source && source.amount);
+      return unit ? "cancel unstake " + unit : WALLET_TX_TYPES[type];
+    }
+    return WALLET_TX_TYPES[type] || "";
+  }
+
+  function walletTxAmounts(type, payload, props, source) {
     if (!payload) return "";
     const parts = [];
     function push(val) {
@@ -16167,6 +16217,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (type === "transfer" || type === "transfer_to_vesting" || type === "transfer_to_savings" || type === "transfer_from_savings" || type === "fill_transfer_from_savings") {
       push(payload.amount);
+    } else if (type === "cancel_transfer_from_savings") {
+      if (source) push(source.amount);
     } else if (type === "withdraw_vesting") {
       push(payload.vesting_shares);
     } else if (type === "fill_vesting_withdraw") {
@@ -16327,14 +16379,21 @@ let CS77_FILTER_LOW_REP = 20;
     return out;
   }
 
-  function walletTxDetail(type, payload) {
+  function walletTxDetail(type, payload, source) {
     if (!payload) return "";
     if (type === "transfer") return walletAccountPair(payload.from, payload.to);
     if (type === "transfer_to_vesting") {
       const who = walletOtherAccount(payload);
       return who ? "staked hive for " + who : "staked hive";
     }
-    if (type === "withdraw_vesting") return "power down";
+    if (type === "withdraw_vesting") {
+      return walletZeroVests(payload.vesting_shares) ? "stopped power down" : "power down";
+    }
+    if (type === "cancel_transfer_from_savings") {
+      if (source) return walletTxDetail("transfer_from_savings", source);
+      const id = payload.request_id;
+      return id == null || id === "" ? "" : "request " + id;
+    }
     if (type === "fill_vesting_withdraw") {
       return walletAccountPair(payload.from_account, payload.to_account);
     }
@@ -16521,7 +16580,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function walletHistoryHtml(tx, props) {
     const state = tx || blankWalletTx();
-    const rows = (state.items || []).map((row) => walletTxHtml(row, props)).filter(Boolean);
+    const rows = (state.items || []).map((row) => walletTxHtml(row, props, state.items)).filter(Boolean);
     let body = "";
     if (rows.length) {
       body = `<div class="wallet-tx-list">${rows.join("")}</div>`;
@@ -16602,7 +16661,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!tx.holdAuto) maybeLoadMoreWallet();
   }
 
-  function walletTxHtml(entry, props) {
+  function walletTxHtml(entry, props, items) {
     if (!Array.isArray(entry) || !entry[1]) return "";
     const rec = entry[1];
     const op = rec.op;
@@ -16610,8 +16669,13 @@ let CS77_FILTER_LOW_REP = 20;
     const type = String(op[0] || "");
     if (!WALLET_TX_TYPES[type]) return "";
     const payload = op[1] || {};
-    const amount = walletTxAmounts(type, payload, props);
-    const detail = walletTxDetail(type, payload);
+    const source =
+      type === "cancel_transfer_from_savings"
+        ? walletSavingsCancelSource(items, historyRowIndex(entry), payload)
+        : null;
+    const label = walletTxTypeLabel(type, payload, source);
+    const amount = walletTxAmounts(type, payload, props, source);
+    const detail = walletTxDetail(type, payload, source);
     const fields = walletTxFieldsHtml(type, payload, props);
     const memo = walletTxMemoHtml(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
@@ -16627,7 +16691,7 @@ let CS77_FILTER_LOW_REP = 20;
       : "";
     return `<div class="wallet-tx">
       <div class="wallet-tx-main">
-        <span class="wallet-tx-type">${HiveMd.escapeHtml(WALLET_TX_TYPES[type])}</span>
+        <span class="wallet-tx-type">${HiveMd.escapeHtml(label)}</span>
         ${detail ? `<span class="wallet-tx-detail">${detail}</span>` : ""}
         ${fields || ""}
         ${memo || ""}

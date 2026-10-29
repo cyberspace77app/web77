@@ -1052,6 +1052,7 @@
     21, // limit_order_create2
     32, // transfer_to_savings
     33, // transfer_from_savings
+    34, // cancel_transfer_from_savings
     39, // claim_reward_balance
     40, // delegate_vesting_shares
     55, // interest
