@@ -14609,8 +14609,12 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (pollIsExpired(state) || (!state.allowChanges && state.mine.length)) return;
-    if (!choices.length) return;
-    if (samePollChoices(choices, state.mine)) return;
+    // Hive Open Polls drops the vote when choices is [] (or 0). A repeat of the current choice does nothing.
+    const next = (Array.isArray(choices) ? choices : [])
+      .map(Number)
+      .filter((num) => Number.isFinite(num) && num > 0);
+    if (!next.length && !state.mine.length) return;
+    if (samePollChoices(next, state.mine)) return;
     if (!hasSigner(user)) {
       showError(signerNeededMessage());
       return;
@@ -14651,17 +14655,31 @@ let CS77_FILTER_LOW_REP = 20;
             json: JSON.stringify({
               poll: trx,
               action: "vote",
-              choices: choices.slice().sort((a, b) => a - b),
+              choices: next.slice().sort((a, b) => a - b),
             }),
           },
         ],
       ],
       meta: { type: "poll", action: "vote" },
     });
-    state.picked = choices.slice();
-    state.mine = choices.slice();
-    if (state.mode === "accounts") shiftAccountVotes(state, prevMine, choices);
-    revealPoll(section, state, !wasRevealed);
+    state.picked = next.slice();
+    state.mine = next.slice();
+    if (state.mode === "accounts") shiftAccountVotes(state, prevMine, next);
+    // Results stay open when the visitor asked to see them. A vote was the other way they opened.
+    const keepResults =
+      next.length > 0 ||
+      state.openedResults ||
+      state.wantReveal ||
+      pollIsExpired(state) ||
+      !observer();
+    if (keepResults) revealPoll(section, state, !wasRevealed && next.length > 0);
+    else {
+      state.revealed = false;
+      pollSectionsOf(state).forEach((el) => el.classList.remove("is-results"));
+      paintPollBars(section, state);
+      syncPollControls(section, state);
+      paintPollFooter(section, state);
+    }
     promise
       .then(() => {
         if (state.mode === "hp") {
@@ -14699,6 +14717,7 @@ let CS77_FILTER_LOW_REP = 20;
       return true;
     }
     if (results) {
+      state.openedResults = true;
       if (!state.resultsKnown) state.wantReveal = true;
       else if (!state.revealed) revealPoll(section, state, true);
       return true;
@@ -14711,7 +14730,7 @@ let CS77_FILTER_LOW_REP = 20;
     const num = Number(choice.getAttribute("data-choice"));
     if (!Number.isFinite(num) || num <= 0) return true;
     if (state.maxChoices <= 1) {
-      castPollVote(section, [num]);
+      castPollVote(section, state.mine.indexOf(num) !== -1 ? [] : [num]);
       return true;
     }
     const next = state.picked.slice();
