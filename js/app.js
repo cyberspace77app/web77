@@ -14050,6 +14050,29 @@ let CS77_FILTER_LOW_REP = 20;
     return pollSectionsOf(state).length > 0;
   }
 
+  // HiveHub usually indexes a poll a few seconds after the post is readable.
+  // Publish opens the post as soon as Hive has it, so the first lookup can miss.
+  const POLL_INDEX_RETRY_MS = [2000, 4000, 8000, 16000, 30000];
+
+  function clearPollIndexWait(state) {
+    if (!state || !state.indexTimer) return;
+    clearTimeout(state.indexTimer);
+    state.indexTimer = 0;
+  }
+
+  function schedulePollIndexRetry(state, gen) {
+    const attempt = state.indexAttempt || 0;
+    if (attempt >= POLL_INDEX_RETRY_MS.length || state.indexTimer) return attempt < POLL_INDEX_RETRY_MS.length;
+    state.indexTimer = setTimeout(() => {
+      state.indexTimer = 0;
+      if (!pollStill(state, gen)) return;
+      const section = pollSectionsOf(state)[0];
+      if (section) hydratePoll(section, gen);
+    }, POLL_INDEX_RETRY_MS[attempt]);
+    state.indexAttempt = attempt + 1;
+    return true;
+  }
+
   function pollShellSignature(section) {
     const labels = [];
     section.querySelectorAll(".poll-choice-label").forEach((el) => {
@@ -14523,6 +14546,17 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // PeakD and Ecency put polls.hivehub.dev poll_trx_id in the vote. That value
+  // is the comment transaction id with the first byte removed. The full
+  // 40-character id does not match the poll, so the index drops the vote.
+  function pollVoteRef(trx) {
+    const id = String(trx || "")
+      .trim()
+      .toLowerCase();
+    if (/^[0-9a-f]{40}$/.test(id)) return id.slice(2);
+    return id;
+  }
+
   function ensurePollTrx(state) {
     if (state.trxId) return Promise.resolve(state.trxId);
     if (state.trxPromise) return state.trxPromise;
@@ -14532,8 +14566,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
     state.trxPromise = HiveApi.getCommentTrxId(state.author, state.permlink, state.created)
       .then((id) => {
-        state.trxId = id || "";
-        return state.trxId;
+        const voteId = pollVoteRef(id);
+        if (!state.trxId) state.trxId = voteId;
+        return state.trxId || voteId;
       })
       .catch(() => "");
     return state.trxPromise;
@@ -14591,7 +14626,7 @@ let CS77_FILTER_LOW_REP = 20;
     syncPollControls(section, state);
     let trx = "";
     try {
-      trx = await ensurePollTrx(state);
+      trx = pollVoteRef(await ensurePollTrx(state));
     } catch (err) {
       trx = "";
     }
@@ -14703,26 +14738,43 @@ let CS77_FILTER_LOW_REP = 20;
       }
       return;
     }
+    if (state.fetching) return;
+    state.fetching = true;
     let record = null;
     try {
       record = await HiveApi.getPollRecord(state.author, state.permlink);
     } catch (err) {
+      state.fetching = false;
       if (!pollStill(state, gen)) return;
       state.note = "Poll results are unavailable.";
       paintPollFooter(section, state);
       syncPollControls(section, state);
       return;
     }
+    state.fetching = false;
     if (!pollStill(state, gen)) return;
     if (!record) {
       state.indexed = false;
-      state.note = "This poll is not in the index yet.";
+      state.indexCheckedAt = Date.now();
+      const waiting = schedulePollIndexRetry(state, gen);
+      // The first miss stays quiet. The post is often only a few seconds old.
+      if (!waiting || (state.indexAttempt || 0) > 1) {
+        state.note = "This poll is not in the index yet.";
+      }
       paintPollFooter(section, state);
       syncPollControls(section, state);
       return;
     }
+    clearPollIndexWait(state);
+    state.indexAttempt = 0;
+    state.indexCheckedAt = 0;
     state.indexed = true;
     state.pollId = Number(record.id) || 0;
+    const indexedTrx = pollVoteRef(record.trx_id);
+    if (indexedTrx) {
+      state.trxId = indexedTrx;
+      state.trxPromise = Promise.resolve(indexedTrx);
+    }
     if (!state.created && record.created) state.created = String(record.created);
     state.mode = pollCountMode(record.preferred_interpretation, record.token);
     state.token = String(record.token || state.token || "");
@@ -14799,8 +14851,19 @@ let CS77_FILTER_LOW_REP = 20;
       paintPollBars(section, existing);
       syncPollControls(section, existing);
       paintPollFooter(section, existing);
+      // A miss used to stay on screen for the whole visit, including after HiveHub caught up.
+      const retryDue =
+        existing.indexed === false &&
+        !existing.fetching &&
+        !existing.indexTimer &&
+        (!existing.indexCheckedAt || Date.now() - existing.indexCheckedAt >= 15000);
+      if (retryDue) {
+        existing.indexAttempt = 0;
+        hydratePoll(section, existing.gen);
+      }
       return;
     }
+    if (existing) clearPollIndexWait(existing);
     const votesSection = pollVotes.section;
     const votesKey = votesSection
       ? pollPostKey(votesSection.dataset.author, votesSection.dataset.permlink)

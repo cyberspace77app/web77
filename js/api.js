@@ -1688,11 +1688,12 @@
     return Date.parse(raw + "Z");
   }
 
-  // polls.hivehub.dev stores trx_id with the first byte removed. A poll vote
-  // needs the 40-character chain id of the comment that created the poll.
-  // Missed blocks make wall time run ahead of block_number * 3s, so the
-  // estimate can land hours early. The window doubles until the headers
-  // bracket the comment time, then the matching op is read from that block.
+  // Returns the 40-character chain id of the comment that created the poll.
+  // polls.hivehub.dev stores that id with the first byte removed, and a vote
+  // has to send the shortened id. Missed blocks make wall time run ahead of
+  // block_number * 3s, so the estimate can land hours early. The window
+  // doubles until the headers bracket the comment time, then the matching
+  // op is read from that block.
   async function getCommentTrxId(author, permlink, created) {
     const createdMs = hiveTimeMs(created);
     const name = String(author || "")
