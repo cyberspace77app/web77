@@ -37,6 +37,7 @@ let CS77_FILTER_LOW_REP = 20;
     post: "cs77_downvote_weight_post",
     comment: "cs77_downvote_weight_comment",
   };
+  const SHOW_NSFW_KEY = "cs77_show_nsfw";
   const VOTERS_PAGE = 40;
   const VOTERS_SCROLL_PX = 72;
   const IMAGE_HOST = "https://images.hive.blog";
@@ -4377,6 +4378,21 @@ let CS77_FILTER_LOW_REP = 20;
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
+    const nsfwBtn = eventElement(e.target);
+    if (nsfwBtn && nsfwBtn.closest(".nsfw-reveal, .nsfw-always")) {
+      e.preventDefault();
+      const pressed = nsfwBtn.closest(".nsfw-reveal, .nsfw-always");
+      if (pressed.classList.contains("nsfw-always")) {
+        storeShowNsfw(true);
+        const toggle = document.getElementById("settingsShowNsfw");
+        if (toggle) toggle.checked = true;
+        revealAllNsfwHolds();
+      } else {
+        const hold = pressed.closest(".nsfw-hold");
+        if (hold) revealNsfwHold(hold);
+      }
       return;
     }
     if (onPollClick(e)) return;
@@ -8972,7 +8988,7 @@ let CS77_FILTER_LOW_REP = 20;
     const bodyEl = article.querySelector(":scope > .post-body");
     const paintBody = () => {
       if (!bodyEl || !bodyEl.isConnected) return;
-      bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
+      bodyEl.innerHTML = markdownForNsfw(body || "", currentPost && postHasNsfw(currentPost));
     };
     if (bodyEl && !HiveMd.markdownReady()) HiveMd.whenMarkdownReady().then(paintBody, paintBody);
     else paintBody();
@@ -10377,6 +10393,306 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function showNsfwContent() {
+    try {
+      return localStorage.getItem(SHOW_NSFW_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function storeShowNsfw(on) {
+    try {
+      localStorage.setItem(SHOW_NSFW_KEY, on ? "1" : "0");
+    } catch (err) {
+      // The preference stays off when storage is blocked.
+    }
+  }
+
+  function postHasNsfw(post) {
+    if (!post) return false;
+    const tags = tagsOf(post);
+    for (let i = 0; i < tags.length; i++) {
+      if (String(tags[i]).toLowerCase() === "nsfw") return true;
+    }
+    const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+    const raw = meta && meta.tags;
+    const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[\s,]+/) : [];
+    for (let i = 0; i < list.length; i++) {
+      if (String(list[i]).replace(/^#/, "").trim().toLowerCase() === "nsfw") return true;
+    }
+    return false;
+  }
+
+  function positiveDim(value) {
+    const match = /^(\d{1,5})(?:\.\d+)?(?:px)?$/.exec(String(value || "").trim());
+    if (!match) return 0;
+    const n = Math.round(Number(match[1]));
+    return n > 0 && n < 20000 ? n : 0;
+  }
+
+  function dimensionsFromUrl(url, depth) {
+    const s = String(url || "");
+    if (!s || depth > 3) return { w: 0, h: 0 };
+    const hive = /images\.hive\.blog\/(\d{1,5})x(\d{1,5})\//i.exec(s);
+    if (hive) {
+      const w = positiveDim(hive[1]);
+      const h = positiveDim(hive[2]);
+      if (w && h) return { w, h };
+      const inner = s.slice(hive.index + hive[0].length);
+      let decoded = inner;
+      try {
+        decoded = decodeURIComponent(inner);
+      } catch (err) {
+        decoded = inner;
+      }
+      return dimensionsFromUrl(decoded, (depth || 0) + 1);
+    }
+    let match = /\/(\d{2,5})x(\d{2,5})(?:\/|[.?#]|$)/.exec(s);
+    if (!match) match = /[_-](\d{2,5})x(\d{2,5})\./.exec(s);
+    if (match) {
+      const w = positiveDim(match[1]);
+      const h = positiveDim(match[2]);
+      if (w && h) return { w, h };
+    }
+    try {
+      const parsed = new URL(s, "https://cyberspace77.local");
+      const w = positiveDim(parsed.searchParams.get("w") || parsed.searchParams.get("width"));
+      const h = positiveDim(parsed.searchParams.get("h") || parsed.searchParams.get("height"));
+      if (w || h) return { w, h };
+    } catch (err) {
+      // A bare path has no query size.
+    }
+    return { w: 0, h: 0 };
+  }
+
+  function dimsNearUrl(body, url) {
+    const src = String(url || "");
+    const text = String(body || "");
+    if (!src || !text) return { w: 0, h: 0 };
+    const at = text.indexOf(src);
+    if (at < 0) return { w: 0, h: 0 };
+    const slice = text.slice(Math.max(0, at - 240), at + src.length + 240);
+    const w = /\bwidth\s*=\s*["']?(\d{1,5})/i.exec(slice);
+    const h = /\bheight\s*=\s*["']?(\d{1,5})/i.exec(slice);
+    return {
+      w: w ? positiveDim(w[1]) : 0,
+      h: h ? positiveDim(h[1]) : 0,
+    };
+  }
+
+  // Unknown media uses a 640×360 box. A portrait player uses the 325×578 frame.
+  function nsfwBox(w, h, portrait) {
+    if (w > 0 && h > 0) return { w, h, portrait: portrait || h > w };
+    if (portrait) return { w: 325, h: 578, portrait: true };
+    if (w > 0) return { w, h: Math.round((w * 9) / 16), portrait: false };
+    if (h > 0) return { w: Math.round((h * 16) / 9), h, portrait: h > w };
+    return { w: 640, h: 360, portrait: false };
+  }
+
+  function nsfwHoldStyle(box) {
+    const w = box.w > 0 ? box.w : 640;
+    const h = box.h > 0 ? box.h : 360;
+    const max = Math.max(w, 288);
+    return "aspect-ratio:" + w + " / " + h + ";max-width:min(100%," + max + "px)";
+  }
+
+  function nsfwHoldHtml(sourceHtml, box) {
+    const portrait = box && box.portrait ? " is-portrait" : "";
+    return `<div class="nsfw-hold${portrait}" style="${nsfwHoldStyle(box || nsfwBox(0, 0))}">
+      <div class="nsfw-hold-label">nsfw</div>
+      <div class="nsfw-hold-actions">
+        <button type="button" class="nsfw-reveal">Reveal content</button>
+        <button type="button" class="nsfw-always">Always show nsfw</button>
+      </div>
+      <template>${sourceHtml}</template>
+    </div>`;
+  }
+
+  function imageBox(url, body) {
+    const fromUrl = dimensionsFromUrl(url);
+    let w = fromUrl.w;
+    let h = fromUrl.h;
+    if (!(w && h)) {
+      const near = dimsNearUrl(body, url);
+      if (!w) w = near.w;
+      if (!h) h = near.h;
+    }
+    return nsfwBox(w, h, false);
+  }
+
+  function videoBox(html, body) {
+    const portrait = /embed-portrait/.test(String(html || ""));
+    const width =
+      /<video\b[^>]*\bwidth=["']?(\d{1,5})/i.exec(html || "") ||
+      /<video\b[^>]*\bwidth=["']?(\d{1,5})/i.exec(body || "");
+    const height =
+      /<video\b[^>]*\bheight=["']?(\d{1,5})/i.exec(html || "") ||
+      /<video\b[^>]*\bheight=["']?(\d{1,5})/i.exec(body || "");
+    const w = width ? positiveDim(width[1]) : 0;
+    const h = height ? positiveDim(height[1]) : 0;
+    return nsfwBox(w, h, portrait);
+  }
+
+  function isImageLink(anchor) {
+    if (!anchor || anchor.tagName !== "A") return false;
+    if (anchor.querySelector("iframe, video, .embed")) return false;
+    const imgs = anchor.querySelectorAll("img");
+    if (imgs.length !== 1) return false;
+    for (let i = 0; i < anchor.childNodes.length; i++) {
+      const child = anchor.childNodes[i];
+      if (child === imgs[0]) continue;
+      if (child.nodeType === 3 && !String(child.textContent || "").trim()) continue;
+      if (child.nodeType === 8) continue;
+      return false;
+    }
+    return true;
+  }
+
+  function isSoleMediaBlock(block, node) {
+    if (!block || block.tagName !== "P") return false;
+    const kids = block.childNodes;
+    for (let i = 0; i < kids.length; i++) {
+      const child = kids[i];
+      if (child === node) continue;
+      if (child.nodeType === 3 && !String(child.textContent || "").trim()) continue;
+      if (child.nodeType === 8) continue;
+      return false;
+    }
+    return true;
+  }
+
+  function measureNsfwNode(node) {
+    const embed =
+      node.classList && node.classList.contains("embed")
+        ? node
+        : node.querySelector
+          ? node.querySelector(".embed")
+          : null;
+    if (embed && embed.querySelector("iframe, video")) {
+      const video = embed.querySelector("video");
+      return nsfwBox(
+        positiveDim(video && video.getAttribute("width")),
+        positiveDim(video && video.getAttribute("height")),
+        embed.classList.contains("embed-portrait")
+      );
+    }
+    const video = node.tagName === "VIDEO" ? node : node.querySelector && node.querySelector("video");
+    if (video) {
+      return nsfwBox(
+        positiveDim(video.getAttribute("width")),
+        positiveDim(video.getAttribute("height")),
+        false
+      );
+    }
+    const img = node.tagName === "IMG" ? node : node.querySelector && node.querySelector("img");
+    if (img) {
+      const fromUrl = dimensionsFromUrl(img.getAttribute("src") || "");
+      const w = positiveDim(img.getAttribute("width")) || fromUrl.w;
+      const h = positiveDim(img.getAttribute("height")) || fromUrl.h;
+      return nsfwBox(w, h, false);
+    }
+    return nsfwBox(0, 0, false);
+  }
+
+  function nsfwMediaTargets(root) {
+    const targets = [];
+    root.querySelectorAll("iframe, video").forEach((el) => {
+      if (el.closest(".embed-map, .tweet-embed, .nsfw-hold")) return;
+      const box = el.closest(".embed") || el;
+      if (targets.indexOf(box) === -1) targets.push(box);
+    });
+    root.querySelectorAll("img").forEach((img) => {
+      if (img.closest(".embed, .tweet-embed, .nsfw-hold")) return;
+      let node = img;
+      if (isImageLink(img.parentElement)) node = img.parentElement;
+      if (isSoleMediaBlock(node.parentElement, node)) node = node.parentElement;
+      if (targets.indexOf(node) === -1) targets.push(node);
+    });
+    return targets.filter((node) => !targets.some((other) => other !== node && other.contains(node)));
+  }
+
+  function replaceWithNsfwHold(node) {
+    const doc = node.ownerDocument;
+    const box = measureNsfwNode(node);
+    const hold = doc.createElement("div");
+    hold.className = "nsfw-hold" + (box.portrait ? " is-portrait" : "");
+    hold.setAttribute("style", nsfwHoldStyle(box));
+    const label = doc.createElement("div");
+    label.className = "nsfw-hold-label";
+    label.textContent = "nsfw";
+    const actions = doc.createElement("div");
+    actions.className = "nsfw-hold-actions";
+    const reveal = doc.createElement("button");
+    reveal.type = "button";
+    reveal.className = "nsfw-reveal";
+    reveal.textContent = "Reveal content";
+    const always = doc.createElement("button");
+    always.type = "button";
+    always.className = "nsfw-always";
+    always.textContent = "Always show nsfw";
+    actions.append(reveal, always);
+    const stored = doc.createElement("template");
+    node.replaceWith(hold);
+    stored.content.appendChild(node);
+    hold.append(label, actions, stored);
+  }
+
+  // The real image or player stays in a template so the browser does not
+  // download it until Reveal content puts that markup back in the page.
+  function gateNsfwMediaHtml(html) {
+    const raw = String(html || "");
+    if (!raw || !/<img\b|<video\b|<iframe\b|class="embed/i.test(raw)) return raw;
+    const doc = new DOMParser().parseFromString('<div id="cs77-nsfw-root">' + raw + "</div>", "text/html");
+    const root = doc.getElementById("cs77-nsfw-root");
+    if (!root) return raw;
+    const targets = nsfwMediaTargets(root);
+    if (!targets.length) return raw;
+    targets.forEach((node) => {
+      if (node.isConnected) replaceWithNsfwHold(node);
+    });
+    return root.innerHTML;
+  }
+
+  function markdownForNsfw(body, nsfw) {
+    const html = HiveMd.renderMarkdown(body || "");
+    if (!nsfw || showNsfwContent()) return html;
+    return gateNsfwMediaHtml(html);
+  }
+
+  function revealNsfwHold(hold) {
+    if (!hold || !hold.querySelector) return;
+    const stored = hold.querySelector("template");
+    if (!stored) {
+      hold.remove();
+      return;
+    }
+    const frag = stored.content.cloneNode(true);
+    if (!frag.childNodes.length) {
+      hold.remove();
+      return;
+    }
+    hold.replaceWith(frag);
+  }
+
+  function revealAllNsfwHolds() {
+    const roots = [document];
+    feedParks.forEach((park) => {
+      if (park && park.holder) roots.push(park.holder);
+    });
+    roots.forEach((root) => {
+      const holds = Array.from(root.querySelectorAll(".nsfw-hold"));
+      holds.forEach(revealNsfwHold);
+    });
+  }
+
+  // The resize proxy answers 413 for a large GIF and drops the animation.
+  function cardThumbSrc(url) {
+    const raw = String(url || "").trim();
+    if (/\.gif(?:$|[?#])/i.test(raw)) return raw;
+    return HiveMd.proxyImage(raw, 480);
+  }
+
   function cardHtml(post) {
     const shown = cardDisplayPost(post) || post;
     const share = shareLineHtml(post);
@@ -10409,15 +10725,24 @@ let CS77_FILTER_LOW_REP = 20;
       const poll = pollShellHtml(shown);
       const video = poll ? "" : HiveMd.previewVideo(shown);
       const img = poll || video ? "" : HiveMd.extractImage(shown);
+      const hideNsfw = !showNsfwContent() && (postHasNsfw(shown) || postHasNsfw(post));
       const thumb = img
-        ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
+        ? `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="">`
         : "";
+      const thumbLink = thumb
+        ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
+        : "";
+      const videoHtml = video ? `<div class="card-video">${video}</div>` : "";
       const media = poll
         ? poll
         : video
-          ? `<div class="card-video">${video}</div>`
-          : thumb
-            ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
+          ? hideNsfw
+            ? nsfwHoldHtml(videoHtml, videoBox(video, shown.body))
+            : videoHtml
+          : thumbLink
+            ? hideNsfw
+              ? nsfwHoldHtml(thumbLink, imageBox(img, shown.body))
+              : thumbLink
             : "";
       card = `
       <article class="post-card${poll ? " has-poll" : video ? " has-video" : img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
@@ -12890,11 +13215,15 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
-  function renderComment(node) {
+  function renderComment(node, rootNsfw) {
     if (!node) return "";
     if (isBlacklistedPost(node)) return "";
     rememberContent(node);
-    const replies = (node._replies || []).map(renderComment).join("");
+    const nsfw =
+      rootNsfw === true ||
+      postHasNsfw(node) ||
+      (rootNsfw == null && Boolean(currentPost && postHasNsfw(currentPost)));
+    const replies = (node._replies || []).map((child) => renderComment(child, nsfw)).join("");
     const user = observer();
     const author = HiveMd.escapeHtml(node.author);
     const permlink = HiveMd.escapeHtml(node.permlink);
@@ -12914,7 +13243,7 @@ let CS77_FILTER_LOW_REP = 20;
       </article>
     `;
     }
-    const body = HiveMd.renderMarkdown(node.body || "");
+    const body = markdownForNsfw(node.body || "", nsfw);
     const poll = pollShellHtml(node);
     const replyBtn = user
       ? `<button type="button" class="comment-reply-btn" data-reply-author="${author}" data-reply-permlink="${permlink}">Reply</button>`
@@ -13846,7 +14175,11 @@ let CS77_FILTER_LOW_REP = 20;
         } catch {
           // renderMarkdown escapes the source when the CDN scripts fail.
         }
-        bodyEl.innerHTML = HiveMd.renderMarkdown(body);
+        bodyEl.innerHTML = markdownForNsfw(
+          body,
+          postHasNsfw({ json_metadata: jsonMetadata, category: parentPermlink }) ||
+            Boolean(currentPost && postHasNsfw(currentPost))
+        );
       }
       closeCommentEditor(comment);
     } catch (err) {
@@ -15230,7 +15563,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
         </div>
         ${articleTagsHtml(root)}
-        <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
+        <div class="post-body">${markdownForNsfw(root.body || "", postHasNsfw(root))}</div>
         ${pollShellHtml(root)}
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
@@ -15250,7 +15583,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function renderedCommentsHtml(root) {
-    const comments = (root._replies || []).map(renderComment).join("");
+    const nsfw = postHasNsfw(root);
+    const comments = (root._replies || []).map((node) => renderComment(node, nsfw)).join("");
     return comments || `<p class="feed-hint">No comments yet.</p>`;
   }
 
@@ -15691,7 +16025,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintArticleTitle(article, root);
     if (String((prev && prev.body) || "") !== String(root.body || "")) {
       const bodyEl = article.querySelector(":scope > .post-body");
-      if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
+      if (bodyEl) bodyEl.innerHTML = markdownForNsfw(root.body || "", postHasNsfw(root));
     }
     if (
       !isRootPost(root) ||
@@ -26547,7 +26881,19 @@ let CS77_FILTER_LOW_REP = 20;
             <span class="settings-weight-unit">%</span>
           </div>
         </div>
-        <p class="settings-note" id="settingsWeightNote">Saved in this browser. Empty or 0 uses the last vote weight.</p>
+        <p class="settings-note" id="settingsWeightNote">Empty or 0 uses the last vote weight.</p>
+        <div class="settings-field settings-nsfw-field">
+          <label class="settings-label" for="settingsShowNsfw">NSFW</label>
+          <label class="cyber-toggle">
+            <input id="settingsShowNsfw" type="checkbox">
+            <span class="cyber-toggle-track" aria-hidden="true"></span>
+            <span class="cyber-toggle-copy">
+              <span class="cyber-toggle-title">Show NSFW content</span>
+              <span class="cyber-toggle-sub">not safe for work</span>
+            </span>
+          </label>
+        </div>
+        <p class="settings-note">Saved in this browser.</p>
       </form>
     `;
   }
@@ -26582,6 +26928,14 @@ let CS77_FILTER_LOW_REP = 20;
       commitSettingsWeightInput($("#settingsVoteComment"));
     });
     fillSettingsWeights();
+    const nsfw = $("#settingsShowNsfw");
+    if (nsfw) {
+      nsfw.checked = showNsfwContent();
+      nsfw.addEventListener("change", () => {
+        storeShowNsfw(nsfw.checked);
+        if (nsfw.checked) revealAllNsfwHolds();
+      });
+    }
   }
 
   function profileObject(metadata) {

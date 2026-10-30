@@ -2455,6 +2455,91 @@ a.community:hover {
   display: block;
 }
 
+.nsfw-hold {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 1.75rem auto;
+  padding: 1.35rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #12080c;
+  text-align: center;
+  min-height: 11.5rem;
+}
+
+.comment-body .nsfw-hold {
+  margin: 1rem auto;
+}
+
+.post-card > .nsfw-hold {
+  margin: 0;
+}
+
+.nsfw-hold.is-portrait {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.post-card > .nsfw-hold.is-portrait {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.nsfw-hold-label {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.85rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--gray);
+}
+
+.nsfw-hold-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.55rem 0.85rem;
+}
+
+.nsfw-reveal,
+.nsfw-always {
+  appearance: none;
+  margin: 0;
+  padding: 0.42rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gray);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.nsfw-reveal:hover,
+.nsfw-always:hover {
+  color: var(--yellow);
+  border-color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.nsfw-reveal:focus-visible,
+.nsfw-always:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
 .feed-actions {
   display: flex;
   justify-content: center;
@@ -7999,6 +8084,10 @@ min-height: 0;
   line-height: 1.45;
   color: var(--gray-dim);
   margin: 0 0 0.7rem;
+}
+
+.settings-nsfw-field {
+  margin-top: 1.15rem;
 }
 
 .settings-field .settings-note {
