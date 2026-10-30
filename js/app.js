@@ -14047,7 +14047,7 @@ let CS77_FILTER_LOW_REP = 20;
   function pollStill(state, gen) {
     if (!state || state.gen !== gen) return false;
     if (state.key && pollByKey.get(state.key) !== state) return false;
-    return pollSectionsOf(state).length > 0;
+    return pollSectionsOf(state).some((el) => el.isConnected);
   }
 
   // HiveHub usually indexes a poll a few seconds after the post is readable.
@@ -14058,6 +14058,87 @@ let CS77_FILTER_LOW_REP = 20;
     if (!state || !state.indexTimer) return;
     clearTimeout(state.indexTimer);
     state.indexTimer = 0;
+  }
+
+  // HiveHub applies a vote after the custom_json is already on chain.
+  const POLL_VOTE_INDEX_MS = 30000;
+
+  function clearPollVoteIndexWait(state) {
+    if (!state || !state.voteIndexTimer) return;
+    clearTimeout(state.voteIndexTimer);
+    state.voteIndexTimer = 0;
+  }
+
+  function armPollVoteIndexTimer(state, gen, token) {
+    if (!state || state.voteIndexGen !== token) return;
+    clearPollVoteIndexWait(state);
+    state.voteIndexTimer = setTimeout(() => {
+      state.voteIndexTimer = 0;
+      pollVoteIndexTick(state, gen, token);
+    }, POLL_VOTE_INDEX_MS);
+  }
+
+  function beginPollVoteIndexWait(state, gen, expect, priorAt, user) {
+    state.voteIndexGen = (state.voteIndexGen || 0) + 1;
+    state.indexingVote = true;
+    state.voteIndexExpect = expect.slice();
+    state.voteIndexPriorAt = Number.isFinite(priorAt) && priorAt > 0 ? priorAt : 0;
+    state.voteIndexUser = user || state.voteIndexUser || "";
+    const section = pollSectionsOf(state)[0];
+    if (section) paintPollFooter(section, state);
+    armPollVoteIndexTimer(state, gen, state.voteIndexGen);
+  }
+
+  function pollVoteCaughtUp(stamp, expect, priorAt) {
+    if (!stamp || !Number.isFinite(stamp.votedAt)) return false;
+    const got = Array.isArray(stamp.choices) ? stamp.choices : [];
+    if (!samePollChoices(got, expect)) return false;
+    if (priorAt > 0 && stamp.votedAt <= priorAt) return false;
+    return true;
+  }
+
+  async function pollVoteIndexTick(state, gen, token) {
+    if (!state || state.voteIndexGen !== token || !state.indexingVote) return;
+    if (!pollStill(state, gen)) return;
+    const expect = (state.voteIndexExpect || []).slice();
+    const priorAt = state.voteIndexPriorAt || 0;
+    const user = state.voteIndexUser;
+    if (!user || !state.pollId || !window.HiveApi || typeof HiveApi.getPollVoteStamp !== "function") {
+      armPollVoteIndexTimer(state, gen, token);
+      return;
+    }
+    let stamp = null;
+    try {
+      stamp = await HiveApi.getPollVoteStamp(state.pollId, user);
+    } catch (err) {
+      if (state.voteIndexGen !== token) return;
+      armPollVoteIndexTimer(state, gen, token);
+      return;
+    }
+    if (state.voteIndexGen !== token || !state.indexingVote || !pollStill(state, gen)) return;
+    if (!samePollChoices(expect, state.voteIndexExpect || [])) return;
+    if (!pollVoteCaughtUp(stamp, expect, priorAt)) {
+      armPollVoteIndexTimer(state, gen, token);
+      return;
+    }
+    let rows = null;
+    try {
+      rows = await HiveApi.getPollTallies(state.author, state.permlink, state.mode);
+    } catch (err) {
+      if (state.voteIndexGen !== token) return;
+      armPollVoteIndexTimer(state, gen, token);
+      return;
+    }
+    if (state.voteIndexGen !== token || !state.indexingVote || !pollStill(state, gen)) return;
+    if (!samePollChoices(expect, state.voteIndexExpect || [])) return;
+    applyTallyRows(state, rows);
+    state.indexingVote = false;
+    state.voteIndexExpect = null;
+    const section = pollSectionsOf(state)[0];
+    if (!section) return;
+    paintPollBars(section, state);
+    syncPollControls(section, state);
+    paintPollFooter(section, state);
   }
 
   function schedulePollIndexRetry(state, gen) {
@@ -14426,7 +14507,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     const note = section.querySelector(".poll-note");
-    if (note) note.textContent = "";
+    if (note) note.textContent = state.indexingVote ? "Indexing vote..." : "";
   }
 
   function paintPollBars(section, state) {
@@ -14574,19 +14655,6 @@ let CS77_FILTER_LOW_REP = 20;
     return state.trxPromise;
   }
 
-  function refreshPollNumbers(section, gen) {
-    const state = pollStates.get(section);
-    if (!state || !state.mode || !window.HiveApi) return;
-    HiveApi.getPollTallies(state.author, state.permlink, state.mode)
-      .then((rows) => {
-        if (!pollStill(state, gen)) return;
-        applyTallyRows(state, rows);
-        paintPollBars(section, state);
-        paintPollFooter(section, state);
-      })
-      .catch(() => {});
-  }
-
   function revertPollVote(section, state, prevMine, prevValues, wasRevealed) {
     state.mine = prevMine;
     state.picked = prevMine.slice();
@@ -14629,8 +14697,20 @@ let CS77_FILTER_LOW_REP = 20;
     state.pending = true;
     syncPollControls(section, state);
     let trx = "";
+    let priorAt = 0;
     try {
-      trx = pollVoteRef(await ensurePollTrx(state));
+      const stampPromise =
+        state.pollId && window.HiveApi && typeof HiveApi.getPollVoteStamp === "function"
+          ? HiveApi.getPollVoteStamp(state.pollId, user).catch(() => null)
+          : Promise.resolve(null);
+      const [id, stamp] = await Promise.all([
+        ensurePollTrx(state)
+          .then((value) => pollVoteRef(value))
+          .catch(() => ""),
+        stampPromise,
+      ]);
+      trx = id || "";
+      if (stamp && Number.isFinite(stamp.votedAt) && stamp.votedAt > 0) priorAt = stamp.votedAt;
     } catch (err) {
       trx = "";
     }
@@ -14642,6 +14722,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const gen = state.gen;
+    const voteUser = user;
+    const votePriorAt = priorAt;
     const { promise } = ChainQueue.enqueue({
       username: user,
       key: "Posting",
@@ -14682,13 +14764,13 @@ let CS77_FILTER_LOW_REP = 20;
     }
     promise
       .then(() => {
-        if (state.mode === "hp") {
-          refreshPollNumbers(section, gen);
-          window.setTimeout(() => refreshPollNumbers(section, gen), 3000);
-        }
+        if (pollByKey.get(state.key) !== state) return;
+        if (!samePollChoices(state.mine, next)) return;
+        beginPollVoteIndexWait(state, gen, next, votePriorAt, voteUser);
       })
       .catch((err) => {
         if (pollByKey.get(state.key) !== state) return;
+        if (!samePollChoices(state.mine, next)) return;
         revertPollVote(section, state, prevMine, prevValues, wasRevealed);
         showError((err && err.message) || String(err));
       })
@@ -14880,9 +14962,15 @@ let CS77_FILTER_LOW_REP = 20;
         existing.indexAttempt = 0;
         hydratePoll(section, existing.gen);
       }
+      if (existing.indexingVote && !existing.voteIndexTimer && existing.voteIndexGen) {
+        armPollVoteIndexTimer(existing, existing.gen, existing.voteIndexGen);
+      }
       return;
     }
-    if (existing) clearPollIndexWait(existing);
+    if (existing) {
+      clearPollIndexWait(existing);
+      clearPollVoteIndexWait(existing);
+    }
     const votesSection = pollVotes.section;
     const votesKey = votesSection
       ? pollPostKey(votesSection.dataset.author, votesSection.dataset.permlink)

@@ -1665,6 +1665,23 @@
     return rows[0].choices.map(Number).filter((n) => n > 0);
   }
 
+  // choices plus the index time of this account's current vote. Null when they have no row.
+  async function getPollVoteStamp(pollId, account) {
+    const rows = await pollsFetch(
+      "/poll_votes?poll_id=eq." +
+        encodeURIComponent(String(pollId)) +
+        "&account=eq." +
+        pollsQueryValue(account) +
+        "&select=choices,voted_at&limit=1"
+    );
+    if (!Array.isArray(rows) || !rows[0]) return null;
+    const row = rows[0];
+    const choices = Array.isArray(row.choices)
+      ? row.choices.map(Number).filter((n) => n > 0)
+      : [];
+    return { choices, votedAt: hiveTimeMs(row.voted_at) };
+  }
+
   // One page of accounts that included this choice. A short page is the end.
   async function getPollChoiceVotes(pollId, choiceNum, offset) {
     const choice = Math.floor(Number(choiceNum));
@@ -1853,6 +1870,7 @@
     getPollChoices,
     getPollTallies,
     getPollAccountVote,
+    getPollVoteStamp,
     getPollChoiceVotes,
     getCommentTrxId,
   };
