@@ -161,7 +161,7 @@ let CS77_FILTER_LOW_REP = 20;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
   let searchBox = "";
-  // Spaces directory search. Same tag lookup as /search/spaces, then ++ saves a favorite.
+  // Spaces directory search. Same state shape and fill path as /search/spaces.
   const spaceTagSearch = {
     box: "",
     query: "",
@@ -10752,7 +10752,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteTags();
     paintLogoMenu();
     paintSearchResults();
-    paintSpaceTagSearch();
+    paintSpaceSearch("directory");
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
     return true;
   }
@@ -10765,141 +10765,8 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteTags();
     paintLogoMenu();
     paintSearchResults();
-    paintSpaceTagSearch();
+    paintSpaceSearch("directory");
     if (!$(".tags-suggest-loading")) paintSuggestedTags();
-  }
-
-  function resetSpaceTagSearch() {
-    spaceTagSearch.query = "";
-    spaceTagSearch.looked = false;
-    spaceTagSearch.loading = false;
-    spaceTagSearch.loadingMore = false;
-    spaceTagSearch.error = "";
-    spaceTagSearch.results = [];
-    spaceTagSearch.done = false;
-    spaceTagSearch.cursor = "";
-  }
-
-  function setSpaceTagSearchMore(on) {
-    const more = $("#spaceTagSearchMore");
-    if (!more) return;
-    if (!on) {
-      more.hidden = true;
-      more.innerHTML = "";
-      return;
-    }
-    more.hidden = false;
-    more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Searching…`;
-  }
-
-  function spaceTagSearchListNearEnd() {
-    const list = $("#spaceTagSearchResults");
-    if (!list || list.hidden || !spaceTagSearch.looked) return false;
-    const rect = list.getBoundingClientRect();
-    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
-  }
-
-  function paintSpaceTagSearch() {
-    const block = $("#suggestTagsBlock");
-    if (block) block.hidden = Boolean(spaceTagSearch.looked);
-    const list = $("#spaceTagSearchResults");
-    if (!list) return;
-    const state = spaceTagSearch;
-    if (state.loading && !state.results.length) {
-      list.hidden = false;
-      list.className = "community-list";
-      list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
-      return;
-    }
-    if (!state.looked) {
-      list.className = "";
-      list.innerHTML = "";
-      list.hidden = true;
-      return;
-    }
-    if (state.error && !state.results.length) {
-      list.hidden = false;
-      list.className = "community-list";
-      list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(state.error)}</p>`;
-      return;
-    }
-    if (!state.results.length) {
-      list.hidden = false;
-      list.className = "community-list";
-      if (!state.done) {
-        list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
-        return;
-      }
-      list.innerHTML = `<p class="feed-hint tags-empty">No spaces matched that search.</p>`;
-      return;
-    }
-    list.hidden = false;
-    list.className = "tags-fav-list";
-    list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
-  }
-
-  function appendSpaceTagSearch(items) {
-    const list = $("#spaceTagSearchResults");
-    if (!list || !items || !items.length) return;
-    list.hidden = false;
-    list.className = "tags-fav-list";
-    const html = items.map((tag) => searchTagChipHtml(tag)).join("");
-    if (!list.querySelector(".fav-tag-chip")) list.innerHTML = html;
-    else list.insertAdjacentHTML("beforeend", html);
-  }
-
-  function maybeLoadMoreSpaceTagSearch() {
-    const state = spaceTagSearch;
-    if (parseRoute().name !== "tags") return;
-    if (!state.looked || state.loading || state.loadingMore || state.done) return;
-    if (!$("#spaceTagSearchResults")) return;
-    if (spaceTagSearchListNearEnd()) fillSpaceTagSearch(spaceTagSearchGen, false);
-  }
-
-  async function fillSpaceTagSearch(gen, first) {
-    const state = spaceTagSearch;
-    if (gen !== spaceTagSearchGen) return;
-    if (state.done || state.loadingMore) return;
-    if (!first && state.loading) return;
-    if (first) state.loading = true;
-    else state.loadingMore = true;
-    if (!first) setSpaceTagSearchMore(true);
-    try {
-      let added = [];
-      let loops = 0;
-      while (loops < 4 && !state.done) {
-        loops += 1;
-        const seen = state.results.concat(added);
-        const batch = await fetchSpaceSearchPage(state.query, state.cursor, seen);
-        if (gen !== spaceTagSearchGen) return;
-        state.cursor = batch.cursor || "";
-        state.done = Boolean(batch.done);
-        const fresh = takeNewSearchItems("spaces", seen, batch.items || []);
-        added = added.concat(fresh);
-        if (added.length || state.done) break;
-      }
-      if (gen !== spaceTagSearchGen) return;
-      const hadRows = state.results.length > 0;
-      if (added.length) state.results = state.results.concat(added);
-      state.error = "";
-      state.loading = false;
-      state.loadingMore = false;
-      setSpaceTagSearchMore(false);
-      if (parseRoute().name !== "tags") return;
-      if (!hadRows || !added.length) paintSpaceTagSearch();
-      else appendSpaceTagSearch(added);
-      maybeLoadMoreSpaceTagSearch();
-    } catch (err) {
-      if (gen !== spaceTagSearchGen) return;
-      state.loading = false;
-      state.loadingMore = false;
-      state.done = true;
-      setSpaceTagSearchMore(false);
-      if (!state.results.length) state.error = err.message || String(err);
-      else setTagsStatus(err.message || String(err), true);
-      if (parseRoute().name === "tags") paintSpaceTagSearch();
-    }
   }
 
   async function runSpaceTagSearch() {
@@ -10912,21 +10779,21 @@ let CS77_FILTER_LOW_REP = 20;
     if (!raw) {
       spaceTagSearch.box = "";
       input.value = "";
-      resetSpaceTagSearch();
+      resetSearchPageState(spaceTagSearch);
       setTagsStatus("");
-      setSpaceTagSearchMore(false);
-      paintSpaceTagSearch();
+      setSearchMoreEl($("#spaceTagSearchMore"), false);
+      paintSpaceSearch("directory");
       return;
     }
-    resetSpaceTagSearch();
+    resetSearchPageState(spaceTagSearch);
     spaceTagSearch.box = input.value;
     spaceTagSearch.query = raw;
     spaceTagSearch.looked = true;
     spaceTagSearch.loading = true;
     setTagsStatus("");
-    setSpaceTagSearchMore(false);
-    paintSpaceTagSearch();
-    await fillSpaceTagSearch(gen, true);
+    setSearchMoreEl($("#spaceTagSearchMore"), false);
+    paintSpaceSearch("directory");
+    await fillSpaceSearch("directory", gen, true);
   }
 
   async function renderTagsPage() {
@@ -10953,8 +10820,8 @@ let CS77_FILTER_LOW_REP = 20;
       </section>
     `;
     paintFavoriteTags();
-    paintSpaceTagSearch();
-    maybeLoadMoreSpaceTagSearch();
+    paintSpaceSearch("directory");
+    maybeLoadMoreSpaceSearch("directory");
     const needFeed = !feedState.items.length;
     paintSuggestedTags(needFeed);
     const input = $("#spaceTagSearchInput");
@@ -12286,10 +12153,14 @@ let CS77_FILTER_LOW_REP = 20;
     const list = $("#searchResults");
     const page = searchPageName();
     if (!list || !page) return;
+    if (page === "spaces") {
+      paintSpaceSearch("page");
+      return;
+    }
     const state = searchPages[page];
     if (state.loading) {
       list.className = "community-list";
-      list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+      list.innerHTML = searchLoadingRowHtml();
       return;
     }
     if (!state.looked) {
@@ -12304,21 +12175,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (!state.results.length) {
       list.className = "community-list";
       if (!state.done) {
-        list.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+        list.innerHTML = searchLoadingRowHtml();
         return;
       }
-      const empty =
-        page === "users"
-          ? "No users matched that search."
-          : page === "spaces"
-            ? "No spaces matched that search."
-            : "No subspaces matched that search.";
+      const empty = page === "users" ? "No users matched that search." : "No subspaces matched that search.";
       list.innerHTML = `<p class="feed-hint tags-empty">${empty}</p>`;
-      return;
-    }
-    if (page === "spaces") {
-      list.className = "tags-fav-list";
-      list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
       return;
     }
     list.className = "community-list";
@@ -12341,7 +12202,6 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function searchResultHtml(page, item) {
-    if (page === "spaces") return searchTagChipHtml(item);
     if (page === "users") return searchUserRowHtml(item);
     return communityDirRowHtml(item, "toggle");
   }
@@ -12349,15 +12209,18 @@ let CS77_FILTER_LOW_REP = 20;
   function appendSearchResults(page, items) {
     const list = $("#searchResults");
     if (!list || !items || !items.length) return;
-    list.className = page === "spaces" ? "tags-fav-list" : "community-list";
+    list.className = "community-list";
     const html = items.map((item) => searchResultHtml(page, item)).join("");
     const hasRows = list.querySelector(".community-row, .fav-tag-chip");
     if (!hasRows) list.innerHTML = html;
     else list.insertAdjacentHTML("beforeend", html);
   }
 
-  function setSearchMore(on) {
-    const more = $("#searchMore");
+  function searchLoadingRowHtml() {
+    return `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Searching…</div>`;
+  }
+
+  function setSearchMoreEl(more, on) {
     if (!more) return;
     if (!on) {
       more.hidden = true;
@@ -12368,12 +12231,172 @@ let CS77_FILTER_LOW_REP = 20;
     more.innerHTML = `<span class="btn-loader" aria-hidden="true"></span> Searching…`;
   }
 
-  function searchListNearEnd() {
-    const list = $("#searchResults");
+  function setSearchMore(on) {
+    setSearchMoreEl($("#searchMore"), on);
+  }
+
+  function searchElNearEnd(list) {
     if (!list) return false;
     const rect = list.getBoundingClientRect();
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
     return rect.bottom - vh <= COMMUNITY_BROWSE_SCROLL_PX;
+  }
+
+  function searchListNearEnd() {
+    return searchElNearEnd($("#searchResults"));
+  }
+
+  // One tag search for /search/spaces ("page") and /spaces ("directory").
+  // The directory keeps favorites in their own list and hides suggestions
+  // while results are open. The search page shows favorites in the same list.
+  function spaceSearchHost(kind) {
+    if (kind === "directory") {
+      return {
+        state: spaceTagSearch,
+        generation: function () {
+          return spaceTagSearchGen;
+        },
+        isCurrent: function () {
+          return parseRoute().name === "tags";
+        },
+        resultsEl: function () {
+          return $("#spaceTagSearchResults");
+        },
+        moreEl: function () {
+          return $("#spaceTagSearchMore");
+        },
+        setStatus: setTagsStatus,
+      };
+    }
+    return {
+      state: searchPages.spaces,
+      generation: function () {
+        return searchGen;
+      },
+      isCurrent: function () {
+        return searchPageName() === "spaces";
+      },
+      resultsEl: function () {
+        return $("#searchResults");
+      },
+      moreEl: function () {
+        return $("#searchMore");
+      },
+      setStatus: setSearchStatus,
+    };
+  }
+
+  function paintSpaceSearch(kind) {
+    const host = spaceSearchHost(kind);
+    const state = host.state;
+    if (kind === "directory") {
+      const block = $("#suggestTagsBlock");
+      if (block) block.hidden = Boolean(state.looked);
+    }
+    const list = host.resultsEl();
+    if (!list) return;
+    if (kind === "page" && !host.isCurrent()) return;
+    if (state.loading) {
+      list.hidden = false;
+      list.className = "community-list";
+      list.innerHTML = searchLoadingRowHtml();
+      return;
+    }
+    if (!state.looked) {
+      if (kind === "directory") {
+        list.className = "";
+        list.innerHTML = "";
+        list.hidden = true;
+        return;
+      }
+      paintSearchFavorites(list, "spaces");
+      return;
+    }
+    if (state.error && !state.results.length) {
+      list.hidden = false;
+      list.className = "community-list";
+      list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(state.error)}</p>`;
+      return;
+    }
+    if (!state.results.length) {
+      list.hidden = false;
+      list.className = "community-list";
+      if (!state.done) {
+        list.innerHTML = searchLoadingRowHtml();
+        return;
+      }
+      list.innerHTML = `<p class="feed-hint tags-empty">No spaces matched that search.</p>`;
+      return;
+    }
+    list.hidden = false;
+    list.className = "tags-fav-list";
+    list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
+  }
+
+  function appendSpaceSearch(kind, items) {
+    const list = spaceSearchHost(kind).resultsEl();
+    if (!list || !items || !items.length) return;
+    list.hidden = false;
+    list.className = "tags-fav-list";
+    const html = items.map((tag) => searchTagChipHtml(tag)).join("");
+    if (!list.querySelector(".fav-tag-chip")) list.innerHTML = html;
+    else list.insertAdjacentHTML("beforeend", html);
+  }
+
+  function maybeLoadMoreSpaceSearch(kind) {
+    const host = spaceSearchHost(kind);
+    const state = host.state;
+    if (!host.isCurrent()) return;
+    if (!state.looked || state.loading || state.loadingMore || state.done) return;
+    const list = host.resultsEl();
+    if (!list || list.hidden) return;
+    if (searchElNearEnd(list)) fillSpaceSearch(kind, host.generation(), false);
+  }
+
+  async function fillSpaceSearch(kind, gen, first) {
+    const host = spaceSearchHost(kind);
+    const state = host.state;
+    if (!state || gen !== host.generation()) return;
+    if (state.done || state.loadingMore) return;
+    if (!first && state.loading) return;
+    if (first) state.loading = true;
+    else state.loadingMore = true;
+    if (!first) setSearchMoreEl(host.moreEl(), true);
+    try {
+      let added = [];
+      let loops = 0;
+      while (loops < 4 && !state.done) {
+        loops += 1;
+        const seen = state.results.concat(added);
+        const batch = await fetchSpaceSearchPage(state.query, state.cursor, seen);
+        if (gen !== host.generation()) return;
+        state.cursor = batch.cursor || "";
+        state.done = Boolean(batch.done);
+        const fresh = takeNewSearchItems("spaces", seen, batch.items || []);
+        added = added.concat(fresh);
+        if (added.length || state.done) break;
+      }
+      if (gen !== host.generation()) return;
+      const hadRows = state.results.length > 0;
+      if (added.length) state.results = state.results.concat(added);
+      state.error = "";
+      state.loading = false;
+      state.loadingMore = false;
+      setSearchMoreEl(host.moreEl(), false);
+      if (!host.isCurrent()) return;
+      if (!hadRows || !added.length) paintSpaceSearch(kind);
+      else appendSpaceSearch(kind, added);
+      maybeLoadMoreSpaceSearch(kind);
+    } catch (err) {
+      if (gen !== host.generation()) return;
+      state.loading = false;
+      state.loadingMore = false;
+      state.done = true;
+      setSearchMoreEl(host.moreEl(), false);
+      if (!state.results.length) state.error = err.message || String(err);
+      else host.setStatus(err.message || String(err), true);
+      if (host.isCurrent()) paintSpaceSearch(kind);
+    }
   }
 
   function userSearchQuery(raw) {
@@ -12492,7 +12515,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeLoadMoreSearch() {
+    maybeLoadMoreSpaceSearch("directory");
     const page = searchPageName();
+    if (page === "spaces") {
+      maybeLoadMoreSpaceSearch("page");
+      return;
+    }
     if (!page) return;
     const state = searchPages[page];
     if (!state.looked || state.loading || state.loadingMore || state.done) return;
@@ -12501,6 +12529,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function fillSearchPage(page, gen, first) {
+    if (page === "spaces") return fillSpaceSearch("page", gen, first);
     const state = searchPages[page];
     if (!state || gen !== searchGen) return;
     if (state.done || state.loadingMore) return;
@@ -12509,36 +12538,24 @@ let CS77_FILTER_LOW_REP = 20;
     else state.loadingMore = true;
     if (!first) setSearchMore(true);
     try {
-      let added = [];
-      let loops = 0;
-      const maxLoops = page === "spaces" ? 4 : 1;
-      while (loops < maxLoops && !state.done) {
-        loops += 1;
-        const seen = state.results.concat(added);
-        const batch =
-          page === "users"
-            ? await fetchUserSearchPage(state.query, state.cursor)
-            : page === "spaces"
-              ? await fetchSpaceSearchPage(state.query, state.cursor, seen)
-              : await fetchSubspaceSearchPage(state.query, state.cursor);
-        if (gen !== searchGen) return;
-        state.cursor = batch.cursor || "";
-        state.done = Boolean(batch.done);
-        const fresh = takeNewSearchItems(page, seen, batch.items || []);
-        if (!fresh.length && page !== "spaces") state.done = true;
-        added = added.concat(fresh);
-        if (added.length || state.done || page !== "spaces") break;
-      }
+      const batch =
+        page === "users"
+          ? await fetchUserSearchPage(state.query, state.cursor)
+          : await fetchSubspaceSearchPage(state.query, state.cursor);
       if (gen !== searchGen) return;
+      state.cursor = batch.cursor || "";
+      state.done = Boolean(batch.done);
+      const fresh = takeNewSearchItems(page, state.results, batch.items || []);
+      if (!fresh.length) state.done = true;
       const hadRows = state.results.length > 0;
-      if (added.length) state.results = state.results.concat(added);
+      if (fresh.length) state.results = state.results.concat(fresh);
       state.error = "";
       state.loading = false;
       state.loadingMore = false;
       setSearchMore(false);
       if (searchPageName() !== page) return;
-      if (!hadRows || !added.length) paintSearchResults();
-      else appendSearchResults(page, added);
+      if (!hadRows || !fresh.length) paintSearchResults();
+      else appendSearchResults(page, fresh);
       maybeLoadMoreSearch();
     } catch (err) {
       if (gen !== searchGen) return;
@@ -28589,8 +28606,6 @@ let CS77_FILTER_LOW_REP = 20;
     }
     window.addEventListener("scroll", maybeLoadMoreSearch, { passive: true });
     window.addEventListener("resize", maybeLoadMoreSearch);
-    window.addEventListener("scroll", maybeLoadMoreSpaceTagSearch, { passive: true });
-    window.addEventListener("resize", maybeLoadMoreSpaceTagSearch);
     bindSmartHeader();
     bindFeedKeys();
     bindWelcome();
