@@ -2133,13 +2133,64 @@
     });
   }
 
-  // First video in a post body, in reading order. Fences and inline code are
-  // skipped. A markdown link and an HTML anchor are skipped too, including a
-  // linked thumbnail. The card plays a plain URL, an autolink, an iframe, an
-  // embed, or a video tag.
+  function isPreviewImageUrl(url) {
+    return isImageUrl(unescapeHtml(String(url || "")).trim());
+  }
+
+  // An <img> with an http(s) src is a card image even without a file extension.
+  function imgTagIsPreview(raw) {
+    const src = htmlAttr(raw, "src");
+    return /^https?:\/\//i.test(src);
+  }
+
+  // 3Speak and Skate Hype stay the card even when a poster image comes first.
+  function previewHostLeads(href) {
+    return !!(threeSpeakFromUrl(href) || skatehypeFromUrl(href));
+  }
+
+  // A linked thumbnail is still a preview image. The link address is not a video.
+  function fragmentHasPreviewImage(fragment) {
+    const s = String(fragment || "");
+    let i = 0;
+    while (i < s.length) {
+      if (s.charAt(i) === "!" && s.charAt(i + 1) === "[") {
+        const img = parseMarkdownImageAt(s, i);
+        if (img && img.url) return true;
+        i += 2;
+        continue;
+      }
+      if (s.charAt(i) === "<") {
+        const tag = parseHtmlTagAt(s, i);
+        if (tag) {
+          if (!tag.closing && tag.name.toLowerCase() === "img" && imgTagIsPreview(tag.raw)) return true;
+          i = tag.end;
+          continue;
+        }
+      }
+      const head = s.slice(i, i + 8).toLowerCase();
+      if (head.startsWith("https://") || head.startsWith("http://")) {
+        const m = /^https?:\/\/[^\s<]+/i.exec(s.slice(i));
+        if (m) {
+          const parts = splitPlainUrl(m[0]);
+          if (isPreviewImageUrl(parts.url)) return true;
+          i += m[0].length;
+          continue;
+        }
+      }
+      i++;
+    }
+    return false;
+  }
+
+  // The card embeds one video: the first plain URL, autolink, iframe, embed,
+  // or video tag in reading order. Fences, inline code, comments, and markdown
+  // links are skipped, including a linked thumbnail. That video takes the card
+  // when it appears before a preview image, or when it is 3Speak or Skate Hype.
+  // A later video is left in the post. An earlier image keeps the card.
   function firstPreviewVideoHtml(src) {
     const s = String(src || "").replace(/\r\n/g, "\n");
     let i = 0;
+    let imageBefore = false;
     const fence = { inFence: false, fenceMark: "" };
     while (i < s.length) {
       const fenceEnd = skipFenceLine(s, i, fence);
@@ -2166,11 +2217,15 @@
       if (s.charAt(i) === "[") {
         const linked = parseLinkedMarkdownImageAt(s, i);
         if (linked) {
+          if (linked.url) imageBefore = true;
           i = linked.end;
           continue;
         }
         const link = parseMarkdownLinkAt(s, i);
         if (link) {
+          if (!imageBefore && (fragmentHasPreviewImage(link.text) || isPreviewImageUrl(link.url))) {
+            imageBefore = true;
+          }
           i = link.end;
           continue;
         }
@@ -2178,6 +2233,7 @@
       if (s.charAt(i) === "!" && s.charAt(i + 1) === "[") {
         const img = parseMarkdownImageAt(s, i);
         if (img) {
+          if (img.url) imageBefore = true;
           i = img.end;
           continue;
         }
@@ -2188,7 +2244,11 @@
         if (m) {
           const parts = splitPlainUrl(m[0]);
           const player = playerHtmlFromUrl(parts.url);
-          if (player) return player;
+          if (player) {
+            if (imageBefore && !previewHostLeads(parts.url)) return "";
+            return player;
+          }
+          if (isPreviewImageUrl(parts.url)) imageBefore = true;
           i += m[0].length;
           continue;
         }
@@ -2198,8 +2258,13 @@
         if (tag && !tag.closing) {
           const name = tag.name.toLowerCase();
           if (/^https?$/.test(name) && /^<https?:\/\/[^>\s]+>$/i.test(tag.raw)) {
-            const player = playerHtmlFromUrl(tag.raw.slice(1, -1));
-            if (player) return player;
+            const href = tag.raw.slice(1, -1);
+            const player = playerHtmlFromUrl(href);
+            if (player) {
+              if (imageBefore && !previewHostLeads(href)) return "";
+              return player;
+            }
+            if (isPreviewImageUrl(href)) imageBefore = true;
             i = tag.end;
             continue;
           }
@@ -2208,24 +2273,46 @@
             i = close ? close.end : tag.end;
             continue;
           }
+          if (name === "img") {
+            if (imgTagIsPreview(tag.raw)) imageBefore = true;
+            i = tag.end;
+            continue;
+          }
           if (name === "video") {
             const close = findCloseTag(s, tag.end, "video");
             const inner = close ? s.slice(tag.end, close.start) : "";
             const player = videoElementHtml(tag.raw, inner);
-            if (player) return player;
+            if (player) {
+              let srcUrl = htmlAttr(tag.raw, "src");
+              if (!previewHostLeads(srcUrl)) {
+                const source = /<source\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i.exec(inner);
+                if (source) srcUrl = source[1];
+              }
+              if (imageBefore && !previewHostLeads(srcUrl)) return "";
+              return player;
+            }
             i = close ? close.end : tag.end;
             continue;
           }
           if (name === "iframe" || name === "object" || name === "embed") {
             const media = plainMediaUrl(tag.raw);
+            const rawSrc = htmlAttr(tag.raw, "src") || htmlAttr(tag.raw, "data");
             const player = media ? playerHtmlFromUrl(media) : "";
-            if (player) return player;
+            if (player) {
+              if (imageBefore && !previewHostLeads(rawSrc) && !previewHostLeads(media)) return "";
+              return player;
+            }
             const close = tag.selfClosing ? null : findCloseTag(s, tag.end, tag.name);
             i = close ? close.end : tag.end;
             continue;
           }
           if (name === "a") {
             const close = findCloseTag(s, tag.end, "a");
+            if (!imageBefore) {
+              const inner = close ? s.slice(tag.end, close.start) : "";
+              const href = htmlAttr(tag.raw, "href");
+              if (fragmentHasPreviewImage(inner) || isPreviewImageUrl(href)) imageBefore = true;
+            }
             i = close ? close.end : tag.end;
             continue;
           }

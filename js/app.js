@@ -10678,8 +10678,9 @@ let CS77_FILTER_LOW_REP = 20;
       </article>
     `;
     } else {
-      // A poll takes the media slot. Otherwise the first video plays here
-      // and the preview image stays off.
+      // A poll takes the media slot. One video plays here when that video
+      // comes before a preview image, or when it is 3Speak or Skate Hype.
+      // Otherwise the preview image keeps the slot.
       const poll = pollShellHtml(shown);
       const video = poll ? "" : HiveMd.previewVideo(shown);
       const img = poll || video ? "" : HiveMd.extractImage(shown);
