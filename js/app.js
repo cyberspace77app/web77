@@ -8988,7 +8988,8 @@ let CS77_FILTER_LOW_REP = 20;
     const bodyEl = article.querySelector(":scope > .post-body");
     const paintBody = () => {
       if (!bodyEl || !bodyEl.isConnected) return;
-      bodyEl.innerHTML = markdownForNsfw(body || "", currentPost && postHasNsfw(currentPost));
+      bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
+      ensurePostComments();
     };
     if (bodyEl && !HiveMd.markdownReady()) HiveMd.whenMarkdownReady().then(paintBody, paintBody);
     else paintBody();
@@ -10424,6 +10425,22 @@ let CS77_FILTER_LOW_REP = 20;
     return false;
   }
 
+  function postNsfwGated(post) {
+    return Boolean(post) && !showNsfwContent() && postHasNsfw(post);
+  }
+
+  // One placeholder for the whole post body. The markdown stays out of the
+  // page so its images are not requested until Reveal content.
+  function nsfwPostHoldHtml() {
+    return `<div class="nsfw-hold nsfw-hold-post">
+      <div class="nsfw-hold-label">nsfw</div>
+      <div class="nsfw-hold-actions">
+        <button type="button" class="nsfw-reveal">Reveal content</button>
+        <button type="button" class="nsfw-always">Always show nsfw</button>
+      </div>
+    </div>`;
+  }
+
   function positiveDim(value) {
     const match = /^(\d{1,5})(?:\.\d+)?(?:px)?$/.exec(String(value || "").trim());
     if (!match) return 0;
@@ -10534,134 +10551,12 @@ let CS77_FILTER_LOW_REP = 20;
     return nsfwBox(w, h, portrait);
   }
 
-  function isImageLink(anchor) {
-    if (!anchor || anchor.tagName !== "A") return false;
-    if (anchor.querySelector("iframe, video, .embed")) return false;
-    const imgs = anchor.querySelectorAll("img");
-    if (imgs.length !== 1) return false;
-    for (let i = 0; i < anchor.childNodes.length; i++) {
-      const child = anchor.childNodes[i];
-      if (child === imgs[0]) continue;
-      if (child.nodeType === 3 && !String(child.textContent || "").trim()) continue;
-      if (child.nodeType === 8) continue;
-      return false;
-    }
-    return true;
-  }
-
-  function isSoleMediaBlock(block, node) {
-    if (!block || block.tagName !== "P") return false;
-    const kids = block.childNodes;
-    for (let i = 0; i < kids.length; i++) {
-      const child = kids[i];
-      if (child === node) continue;
-      if (child.nodeType === 3 && !String(child.textContent || "").trim()) continue;
-      if (child.nodeType === 8) continue;
-      return false;
-    }
-    return true;
-  }
-
-  function measureNsfwNode(node) {
-    const embed =
-      node.classList && node.classList.contains("embed")
-        ? node
-        : node.querySelector
-          ? node.querySelector(".embed")
-          : null;
-    if (embed && embed.querySelector("iframe, video")) {
-      const video = embed.querySelector("video");
-      return nsfwBox(
-        positiveDim(video && video.getAttribute("width")),
-        positiveDim(video && video.getAttribute("height")),
-        embed.classList.contains("embed-portrait")
-      );
-    }
-    const video = node.tagName === "VIDEO" ? node : node.querySelector && node.querySelector("video");
-    if (video) {
-      return nsfwBox(
-        positiveDim(video.getAttribute("width")),
-        positiveDim(video.getAttribute("height")),
-        false
-      );
-    }
-    const img = node.tagName === "IMG" ? node : node.querySelector && node.querySelector("img");
-    if (img) {
-      const fromUrl = dimensionsFromUrl(img.getAttribute("src") || "");
-      const w = positiveDim(img.getAttribute("width")) || fromUrl.w;
-      const h = positiveDim(img.getAttribute("height")) || fromUrl.h;
-      return nsfwBox(w, h, false);
-    }
-    return nsfwBox(0, 0, false);
-  }
-
-  function nsfwMediaTargets(root) {
-    const targets = [];
-    root.querySelectorAll("iframe, video").forEach((el) => {
-      if (el.closest(".embed-map, .tweet-embed, .nsfw-hold")) return;
-      const box = el.closest(".embed") || el;
-      if (targets.indexOf(box) === -1) targets.push(box);
-    });
-    root.querySelectorAll("img").forEach((img) => {
-      if (img.closest(".embed, .tweet-embed, .nsfw-hold")) return;
-      let node = img;
-      if (isImageLink(img.parentElement)) node = img.parentElement;
-      if (isSoleMediaBlock(node.parentElement, node)) node = node.parentElement;
-      if (targets.indexOf(node) === -1) targets.push(node);
-    });
-    return targets.filter((node) => !targets.some((other) => other !== node && other.contains(node)));
-  }
-
-  function replaceWithNsfwHold(node) {
-    const doc = node.ownerDocument;
-    const box = measureNsfwNode(node);
-    const hold = doc.createElement("div");
-    hold.className = "nsfw-hold" + (box.portrait ? " is-portrait" : "");
-    hold.setAttribute("style", nsfwHoldStyle(box));
-    const label = doc.createElement("div");
-    label.className = "nsfw-hold-label";
-    label.textContent = "nsfw";
-    const actions = doc.createElement("div");
-    actions.className = "nsfw-hold-actions";
-    const reveal = doc.createElement("button");
-    reveal.type = "button";
-    reveal.className = "nsfw-reveal";
-    reveal.textContent = "Reveal content";
-    const always = doc.createElement("button");
-    always.type = "button";
-    always.className = "nsfw-always";
-    always.textContent = "Always show nsfw";
-    actions.append(reveal, always);
-    const stored = doc.createElement("template");
-    node.replaceWith(hold);
-    stored.content.appendChild(node);
-    hold.append(label, actions, stored);
-  }
-
-  // The real image or player stays in a template so the browser does not
-  // download it until Reveal content puts that markup back in the page.
-  function gateNsfwMediaHtml(html) {
-    const raw = String(html || "");
-    if (!raw || !/<img\b|<video\b|<iframe\b|class="embed/i.test(raw)) return raw;
-    const doc = new DOMParser().parseFromString('<div id="cs77-nsfw-root">' + raw + "</div>", "text/html");
-    const root = doc.getElementById("cs77-nsfw-root");
-    if (!root) return raw;
-    const targets = nsfwMediaTargets(root);
-    if (!targets.length) return raw;
-    targets.forEach((node) => {
-      if (node.isConnected) replaceWithNsfwHold(node);
-    });
-    return root.innerHTML;
-  }
-
-  function markdownForNsfw(body, nsfw) {
-    const html = HiveMd.renderMarkdown(body || "");
-    if (!nsfw || showNsfwContent()) return html;
-    return gateNsfwMediaHtml(html);
-  }
-
   function revealNsfwHold(hold) {
     if (!hold || !hold.querySelector) return;
+    if (hold.classList.contains("nsfw-hold-post")) {
+      revealGatedPost();
+      return;
+    }
     const stored = hold.querySelector("template");
     if (!stored) {
       hold.remove();
@@ -10684,6 +10579,69 @@ let CS77_FILTER_LOW_REP = 20;
       const holds = Array.from(root.querySelectorAll(".nsfw-hold"));
       holds.forEach(revealNsfwHold);
     });
+  }
+
+  function revealGatedPost() {
+    const article = activeArticle();
+    const root = currentPost;
+    if (!article || !root || !postLayer.open) return;
+    const bodyEl = article.querySelector(":scope > .post-body");
+    if (bodyEl && bodyEl.querySelector(".nsfw-hold-post")) {
+      const paint = () => {
+        if (!bodyEl.isConnected || !bodyEl.querySelector(".nsfw-hold-post")) return;
+        const source = currentPost || root;
+        bodyEl.innerHTML = HiveMd.renderMarkdown((source && source.body) || "");
+      };
+      if (HiveMd.markdownReady()) paint();
+      else HiveMd.whenMarkdownReady().then(paint, paint);
+    }
+    ensurePostComments();
+  }
+
+  function ensurePostComments() {
+    if (!postLayer.open || !postLayer.author || !postLayer.permlink) return;
+    const article = activeArticle();
+    const list = article && article.querySelector(".comment-list");
+    if (!list) return;
+    const state = list.getAttribute("data-comments");
+    if (state === "loading" || state === "ready") return;
+    if (list.querySelector(".post-comments-pending, .comment, .feed-hint, .post-comments-error")) return;
+    list.setAttribute("data-comments", "loading");
+    fillCommentList(commentsPendingHtml());
+    const gen = postLayer.gen;
+    const author = postLayer.author;
+    const permlink = postLayer.permlink;
+    const markdownReady = HiveMd.whenMarkdownReady();
+    HiveApi.getDiscussion(author, permlink, observer())
+      .then(async (discussion) => {
+        if (!postStill(gen, author, permlink)) return;
+        setNodeLabel();
+        const root = buildCommentTree(discussion, author, permlink);
+        if (!root) {
+          if (list.isConnected) list.setAttribute("data-comments", "ready");
+          fillCommentList(commentsErrorHtml("Couldn't load comments."));
+          return;
+        }
+        const prev = currentPost;
+        currentPost = root;
+        rememberContent(root);
+        const count = discussionCommentCount(discussion, root);
+        try {
+          await markdownReady;
+        } catch (err) {
+          // renderMarkdown escapes the source when the CDN scripts fail.
+        }
+        if (!postStill(gen, author, permlink)) return;
+        patchOpenArticle(prev, root);
+        setCommentCount(count);
+        fillCommentList(renderedCommentsHtml(root));
+        if (list.isConnected) list.setAttribute("data-comments", "ready");
+      })
+      .catch((err) => {
+        if (!postStill(gen, author, permlink)) return;
+        if (list.isConnected) list.setAttribute("data-comments", "ready");
+        fillCommentList(commentsErrorHtml(err.message || String(err)));
+      });
   }
 
   // The resize proxy answers 413 for a large GIF and drops the animation.
@@ -13215,15 +13173,11 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
-  function renderComment(node, rootNsfw) {
+  function renderComment(node) {
     if (!node) return "";
     if (isBlacklistedPost(node)) return "";
     rememberContent(node);
-    const nsfw =
-      rootNsfw === true ||
-      postHasNsfw(node) ||
-      (rootNsfw == null && Boolean(currentPost && postHasNsfw(currentPost)));
-    const replies = (node._replies || []).map((child) => renderComment(child, nsfw)).join("");
+    const replies = (node._replies || []).map((child) => renderComment(child)).join("");
     const user = observer();
     const author = HiveMd.escapeHtml(node.author);
     const permlink = HiveMd.escapeHtml(node.permlink);
@@ -13243,7 +13197,7 @@ let CS77_FILTER_LOW_REP = 20;
       </article>
     `;
     }
-    const body = markdownForNsfw(node.body || "", nsfw);
+    const body = HiveMd.renderMarkdown(node.body || "");
     const poll = pollShellHtml(node);
     const replyBtn = user
       ? `<button type="button" class="comment-reply-btn" data-reply-author="${author}" data-reply-permlink="${permlink}">Reply</button>`
@@ -14175,11 +14129,7 @@ let CS77_FILTER_LOW_REP = 20;
         } catch {
           // renderMarkdown escapes the source when the CDN scripts fail.
         }
-        bodyEl.innerHTML = markdownForNsfw(
-          body,
-          postHasNsfw({ json_metadata: jsonMetadata, category: parentPermlink }) ||
-            Boolean(currentPost && postHasNsfw(currentPost))
-        );
+        bodyEl.innerHTML = HiveMd.renderMarkdown(body);
       }
       closeCommentEditor(comment);
     } catch (err) {
@@ -15545,8 +15495,12 @@ let CS77_FILTER_LOW_REP = 20;
           submitLabel: "Comment",
         })
       : "";
-    const commentsBody =
-      options.commentsHtml != null ? options.commentsHtml : commentsPendingHtml();
+    const gated = postNsfwGated(root);
+    const commentsBody = gated
+      ? ""
+      : options.commentsHtml != null
+        ? options.commentsHtml
+        : commentsPendingHtml();
     return `
       <article class="article">
         ${community}
@@ -15563,7 +15517,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
         </div>
         ${articleTagsHtml(root)}
-        <div class="post-body">${markdownForNsfw(root.body || "", postHasNsfw(root))}</div>
+        <div class="post-body">${gated ? nsfwPostHoldHtml() : HiveMd.renderMarkdown(root.body || "")}</div>
         ${pollShellHtml(root)}
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
@@ -15583,8 +15537,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function renderedCommentsHtml(root) {
-    const nsfw = postHasNsfw(root);
-    const comments = (root._replies || []).map((node) => renderComment(node, nsfw)).join("");
+    const comments = (root._replies || []).map((node) => renderComment(node)).join("");
     return comments || `<p class="feed-hint">No comments yet.</p>`;
   }
 
@@ -16025,7 +15978,9 @@ let CS77_FILTER_LOW_REP = 20;
     paintArticleTitle(article, root);
     if (String((prev && prev.body) || "") !== String(root.body || "")) {
       const bodyEl = article.querySelector(":scope > .post-body");
-      if (bodyEl) bodyEl.innerHTML = markdownForNsfw(root.body || "", postHasNsfw(root));
+      if (bodyEl && !bodyEl.querySelector(".nsfw-hold-post")) {
+        bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
+      }
     }
     if (
       !isRootPost(root) ||
@@ -16606,28 +16561,31 @@ let CS77_FILTER_LOW_REP = 20;
     postLayer.author = a;
     postLayer.permlink = p;
     const snap = postSnaps.get(snapKey(a, p));
-    const useSnap = Boolean(snap && snap.html);
+    const snapGated = Boolean(snap && String(snap.html).indexOf("nsfw-hold-post") !== -1);
+    // A gated snapshot stays hidden while the setting is off. Turning the
+    // setting on skips that snapshot so the body and comments render.
+    const useSnap = Boolean(snap && snap.html) && (showNsfwContent() || snapGated);
     // Overlap the CDN scripts with the discussion request. A cached body waits
-    // so author HTML is not inserted before DOMPurify is loaded.
+    // so author HTML is not inserted before DOMPurify is loaded. A gated body
+    // is only the placeholder, so it can paint before those scripts load.
     const markdownReady = HiveMd.whenMarkdownReady();
+    const known = findLoadedPost(a, p);
+    const gated = postNsfwGated(known);
     let restoreScroll = null;
     if (useSnap) {
       showPostSnap(snap);
       if (!options.jumpComments && !options.anchor) restoreScroll = snap.scroll || 0;
+    } else if (known && (known.title || known.body) && (gated || HiveMd.markdownReady())) {
+      paintArticle(known, {
+        commentCount: Number(known.children) || 0,
+        commentsHtml: gated ? "" : commentsPendingHtml(),
+      });
     } else {
-      const cached = HiveMd.markdownReady() ? findLoadedPost(a, p) : null;
-      if (cached && (cached.title || cached.body)) {
-        paintArticle(cached, {
-          commentCount: Number(cached.children) || 0,
-          commentsHtml: commentsPendingHtml(),
-        });
-      } else {
-        paintPostMessage(
-          `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Opening post…</div>`
-        );
-        currentPost = null;
-        setPageMeta("Post — CyberSpace77");
-      }
+      paintPostMessage(
+        `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Opening post…</div>`
+      );
+      currentPost = null;
+      setPageMeta("Post — CyberSpace77");
     }
 
     revealPostLayer();
@@ -16644,15 +16602,39 @@ let CS77_FILTER_LOW_REP = 20;
       });
     };
     if (!pendingNow) {
-      finishAnchor(true);
+      finishAnchor(!shown.querySelector(".nsfw-hold-post"));
       return;
+    }
+
+    // An unknown post may be NSFW. Load that post alone before the thread
+    // so a gated body does not download its comments.
+    if (!known || postNsfwGated(known)) {
+      let preview = known && (known.title || known.body) ? known : null;
+      if (!preview) {
+        try {
+          preview = await HiveApi.getPost(a, p);
+        } catch (err) {
+          preview = null;
+        }
+        if (!postStill(gen, a, p)) return;
+      }
+      if (preview && postNsfwGated(preview)) {
+        if (!activeArticle()) {
+          paintArticle(preview, {
+            commentCount: Number(preview.children) || 0,
+            commentsHtml: "",
+          });
+        }
+        finishAnchor(false);
+        return;
+      }
     }
 
     try {
       const discussionPromise = HiveApi.getDiscussion(a, p, observer());
       if (!useSnap && !activeArticle()) {
         const cachedNow = findLoadedPost(a, p);
-        if (cachedNow && (cachedNow.title || cachedNow.body)) {
+        if (cachedNow && !postNsfwGated(cachedNow) && (cachedNow.title || cachedNow.body)) {
           markdownReady.then(() => {
             if (!postStill(gen, a, p) || activeArticle()) return;
             paintArticle(cachedNow, {
@@ -16666,6 +16648,14 @@ let CS77_FILTER_LOW_REP = 20;
       if (!postStill(gen, a, p)) return;
       setNodeLabel();
       const root = buildCommentTree(discussion, a, p);
+      if (root && postNsfwGated(root)) {
+        paintArticle(root, {
+          commentCount: discussionCommentCount(discussion, root),
+          commentsHtml: "",
+        });
+        finishAnchor(false);
+        return;
+      }
       if (!root) {
         if (!activeArticle()) {
           currentPost = null;
