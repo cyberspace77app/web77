@@ -4431,8 +4431,9 @@ let CS77_FILTER_LOW_REP = 20;
     const baseDepth = historyDepth() || 1;
     const depth = replace ? baseDepth : baseDepth + 1;
     routePushed = !replace;
-    if (replace) history.replaceState({ nav, depth }, "", url);
-    else history.pushState({ nav, depth }, "", url);
+    const shellState = shellHistoryState(path, replace);
+    if (replace) history.replaceState(Object.assign({ nav, depth }, shellState), "", url);
+    else history.pushState(Object.assign({ nav, depth }, shellState), "", url);
     publishNavPushed = parseRoute(path).name === "publish" && !replace;
     route();
   }
@@ -4629,14 +4630,18 @@ let CS77_FILTER_LOW_REP = 20;
     if (a.closest("#logoBrand")) {
       const here = parseRoute();
       e.preventDefault();
-      // One step back through posts, profiles, spaces, and subspaces.
+      // Leave the current profile, subspace, space, or settings layer.
       // The global feed is the top: the logo scrolls it instead of leaving.
       if (isOnTopLevelFeed(here)) {
         scrollActiveToTop();
         return;
       }
-      if (historyDepth() > 1) {
-        history.back();
+      // Tabs of the same profile, subspace, space, or settings page are one
+      // layer. Skip them and land on the page that opened the layer.
+      const jump = logoLayerJump();
+      if (jump > 0) {
+        if (jump > 1) history.go(-jump);
+        else history.back();
         return;
       }
       navigate(appHref(pathForFeedSort(defaultFeedSort())));
@@ -28644,6 +28649,57 @@ let CS77_FILTER_LOW_REP = 20;
     return Number.isFinite(depth) && depth > 0 ? depth : 0;
   }
 
+  // Pages whose tabs are one history layer. A different profile, subspace,
+  // or space is a new layer. Posts and the global sorts stay one step each.
+  function historyShellId(route) {
+    if (!route) return "";
+    if (route.name === "profile" && route.author) return "profile:" + route.author;
+    if (route.name === "community" && route.community) return "community:" + route.community;
+    if (route.name === "settings") return "settings";
+    if (route.name === "search") return "search";
+    if (route.name === "communities") return "communities";
+    if (route.name === "feed" && route.tag) return "space:" + route.tag;
+    return "";
+  }
+
+  function shellHistoryState(path, replace) {
+    const shell = historyShellId(parseRoute(path));
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    const prevSteps = Number(prev.shellSteps) || 0;
+    let shellSteps = 1;
+    if (shell && shell === prev.shell && prevSteps > 0) {
+      shellSteps = prevSteps + (replace ? 0 : 1);
+    }
+    return { shell: shell, shellSteps: shellSteps };
+  }
+
+  function ensureShellStamp(route) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    if (Number(prev.shellSteps) > 0) return;
+    stampHistoryFields({
+      shell: historyShellId(route),
+      shellSteps: 1,
+    });
+  }
+
+  // How many history entries the logo should pop. Zero means there is no
+  // in-app page above this layer, so the logo opens the global feed.
+  function logoLayerJump() {
+    let bonus = 0;
+    if (history.state && history.state.peoplePanel) {
+      bonus = 1;
+      if (peopleList.open) {
+        closePeoplePanel({ skipHistory: true });
+        peopleHistoryOn = false;
+      }
+    }
+    const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
+    const depth = historyDepth() || 1;
+    const canPop = Math.max(0, depth - 1) + bonus;
+    if (steps <= canPop && canPop > 0) return steps;
+    return 0;
+  }
+
   function ensureHistoryNav() {
     const existing = historyNavId();
     if (existing) {
@@ -29479,6 +29535,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "post") {
       HiveMd.whenMarkdownReady();
       ensureHistoryNav();
+      ensureShellStamp(r);
       noteProfileReturnStep(fromPop, pushed, "post");
       noteFeedStack(fromPop, pushed, "post");
       publishNavPushed = false;
@@ -29516,6 +29573,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     const nav = ensureHistoryNav();
+    ensureShellStamp(r);
     noteFeedLayer(fromPop, r);
     const restored = takeFeedPark(nav, key);
     // A post opened from the feed stays up under the publish dialog. Closing
