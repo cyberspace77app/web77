@@ -8925,3 +8925,213 @@ min-height: 0;
     transition: opacity 0.35s ease 0.12s;
   }
 }
+
+/* Embed dialog and the transparent /embed/@author/permlink card. */
+#embedCode {
+  display: block;
+  width: 100%;
+  min-height: 8.5rem;
+  padding: 0.8rem 0.95rem;
+  margin: 0 0 0.35rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+#embedCode:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+#embedCopy.is-copied {
+  color: var(--yellow);
+  opacity: 1;
+}
+
+html.is-embed,
+html.is-embed body {
+  height: 100%;
+  min-height: 100%;
+  background: transparent;
+  background-color: transparent;
+  color-scheme: normal;
+}
+
+html.is-embed body {
+  display: block;
+  overflow: hidden;
+}
+
+html.is-embed .hero,
+html.is-embed .footer,
+html.is-embed .bg-hex,
+html.is-embed .scanlines,
+html.is-embed .publish-fab,
+html.is-embed .scroll-top,
+html.is-embed .post-layer,
+html.is-embed .welcome-flyer {
+  display: none !important;
+}
+
+html.is-embed .app {
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: safe center;
+  overflow: auto;
+  background: transparent;
+}
+
+html.is-embed #view {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 36rem;
+  margin: 0 auto;
+}
+
+a.embed-card,
+a.embed-card:hover {
+  color: inherit;
+  text-shadow: none;
+}
+
+html.is-embed .embed-card,
+html.is-embed .embed-card:hover,
+html.is-embed .embed-card:focus {
+  background: var(--bg-panel-opaque);
+  border-color: var(--red);
+  box-shadow: none;
+  overflow: visible;
+  padding: 1.7rem 1.55rem 1.45rem;
+  gap: 0.85rem;
+}
+
+a.embed-card:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 3px;
+}
+
+html.is-embed .embed-card .card-meta {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.embed-meta {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+html.is-embed .embed-card .embed-meta > * {
+  max-width: 100%;
+}
+
+html.is-embed .embed-card .embed-meta .author-link {
+  flex-shrink: 1;
+}
+
+html.is-embed .embed-card .embed-meta .author-name,
+html.is-embed .embed-card .embed-meta .community {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embed-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--yellow);
+  line-height: 0;
+  filter: drop-shadow(0 0 6px rgba(255, 42, 77, 0.7));
+  pointer-events: none;
+  transition: filter 0.25s ease, color 0.25s ease;
+}
+
+html.has-mouse .embed-card:hover .embed-mark,
+.embed-card:focus-visible .embed-mark {
+  color: var(--red-bright);
+  filter:
+    drop-shadow(0 0 6px #ff2a4d)
+    drop-shadow(0 0 16px rgba(227, 19, 55, 0.9))
+    drop-shadow(0 0 28px rgba(227, 19, 55, 0.55));
+}
+
+.embed-mark-logo {
+  width: 36px;
+  height: 36px;
+  display: block;
+  overflow: visible;
+  transform-origin: center;
+  transition: transform 0.45s ease;
+}
+
+.embed-mark-logo.is-spinning {
+  transition: none;
+}
+
+.embed-status {
+  margin: 0.35rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--gray);
+}
+
+html.is-embed .embed-card .card-meta .meta-time {
+  margin-left: 0;
+}
+
+html.is-embed .embed-card .card-thumb {
+  max-height: 220px;
+  object-fit: cover;
+}
+
+.embed-stats {
+  flex-wrap: wrap;
+  gap: 0.55rem 0.7rem;
+}
+
+.embed-stat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2.45rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gray);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.embed-stat.is-payout {
+  color: var(--yellow);
+}
+
+.embed-stat.is-declined .payout-amount {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
+.embed-stat .reblog-icon {
+  width: 1.15em;
+  height: 1.15em;
+}

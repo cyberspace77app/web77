@@ -10,6 +10,16 @@
     } catch (e) {}
     var parts = path.split("/").filter(Boolean);
     var last = parts.length ? parts[parts.length - 1] : "";
+    var routeHead = parts.length ? String(parts[0]).toLowerCase() : "";
+    var hashPath = (location.hash || "").replace(/^#/, "");
+    var hashHead = "";
+    if (hashPath.charAt(0) === "/") {
+      var hashParts = hashPath.split("/").filter(Boolean);
+      hashHead = hashParts.length ? String(hashParts[0]).toLowerCase() : "";
+    }
+    if (routeHead === "embed" || hashHead === "embed") {
+      document.documentElement.classList.add("is-embed");
+    }
     var routes = {
       feed: 1,
       created: 1,
@@ -42,7 +52,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.57">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.61">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -678,6 +688,19 @@
     </div>
   </div>
 
+  <div class="overlay" id="embedOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="embedTitle">
+      <h2 id="embedTitle">Embed</h2>
+      <p id="embedLead">Paste this iframe on another site.</p>
+      <label class="login-label" for="embedCode">Embed code</label>
+      <textarea id="embedCode" rows="5" readonly spellcheck="false"></textarea>
+      <div class="overlay-actions">
+        <button type="button" class="btn-ghost" id="embedCopy">Copy</button>
+        <button type="button" class="btn-ghost" id="embedClose">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="publishDiscard" hidden>
     <div class="panel overlay-card login-card">
       <h2 id="publishDiscardTitle">Discard post</h2>
@@ -699,6 +722,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.1"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.75"></script>
+  <script src="/js/app.js?v=0.19.79"></script>
 </body>
 </html>

@@ -1431,6 +1431,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (offerCrossPost) items.push(crossPostItemHtml());
     items.push(
       `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
+      `<button type="button" class="content-more-item content-more-embed" role="menuitem">Embed</button>`,
       `<a class="content-more-item content-more-explorer" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerContentUrl(name, link))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
     );
     return `
@@ -4075,6 +4076,17 @@ let CS77_FILTER_LOW_REP = 20;
       return { name: "notfound" };
     }
 
+    if (first === "embed") {
+      if (parts.length === 3 && parts[1].charAt(0) === "@") {
+        const author = parts[1].slice(1).toLowerCase();
+        const permlink = parts[2];
+        if (/^[a-z0-9.\-]{3,16}$/.test(author) && permlink) {
+          return { name: "embed", author, permlink };
+        }
+      }
+      return { name: "notfound" };
+    }
+
     // /121566 is the community page and is redirected to /subspace/121566.
     if (/^\d+$/.test(first) && parts.length <= 2) {
       const community = communityFromToken(first);
@@ -4109,6 +4121,7 @@ let CS77_FILTER_LOW_REP = 20;
       return r.tag ? "feed:" + r.sort + ":" + r.tag : "feed:" + r.sort;
     }
     if (r.name === "post") return "post:" + r.author + "/" + r.permlink;
+    if (r.name === "embed") return "embed:" + r.author + "/" + r.permlink;
     if (r.name === "profile") return "profile:" + r.author + ":" + (r.page || "posts");
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
     if (r.name === "settings") return "settings:" + (r.page || "general");
@@ -4144,6 +4157,7 @@ let CS77_FILTER_LOW_REP = 20;
       return pathForFeedSort(rest);
     }
     if (key.indexOf("post:") === 0) return "/@" + key.slice(5);
+    if (key.indexOf("embed:") === 0) return "/embed/@" + key.slice(6);
     if (key.indexOf("profile:") === 0) {
       const rest = key.slice(8);
       const colon = rest.lastIndexOf(":");
@@ -5892,6 +5906,10 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if (!crossPostBusy) hideCrossPost();
+      return;
+    }
+    if (embedDialogOpen()) {
+      hideEmbed();
       return;
     }
     if (contentDeleteOpen()) {
@@ -28853,6 +28871,238 @@ let CS77_FILTER_LOW_REP = 20;
     moreBtn.click();
   }
 
+  function embedFrameUrl(author, permlink) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    const path = "/embed/@" + name + "/" + link;
+    try {
+      return new URL(path, location.href).href;
+    } catch (err) {
+      return path;
+    }
+  }
+
+  function embedAttr(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;");
+  }
+
+  function embedSnippet(author, permlink, kind) {
+    const src = embedAttr(embedFrameUrl(author, permlink));
+    const name = String(author || "").replace(/^@/, "");
+    const what = kind === "comment" ? "comment" : "post";
+    const title = embedAttr("CyberSpace77 " + what + " by @" + name);
+    return (
+      '<iframe src="' +
+      src +
+      '" title="' +
+      title +
+      '" width="600" height="680" style="border:0;max-width:100%;background:transparent;" allowtransparency="true"></iframe>'
+    );
+  }
+
+  let embedCopyTimer = 0;
+
+  function embedDialogOpen() {
+    const el = $("#embedOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function resetEmbedCopyLabel() {
+    if (embedCopyTimer) {
+      clearTimeout(embedCopyTimer);
+      embedCopyTimer = 0;
+    }
+    const btn = $("#embedCopy");
+    if (!btn) return;
+    btn.textContent = "Copy";
+    btn.classList.remove("is-copied");
+  }
+
+  function hideEmbed() {
+    const el = $("#embedOverlay");
+    if (el) el.hidden = true;
+    resetEmbedCopyLabel();
+  }
+
+  function openEmbedDialog(author, permlink, kind) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    const area = $("#embedCode");
+    const ov = $("#embedOverlay");
+    if (!name || !link || !area || !ov) return;
+    resetEmbedCopyLabel();
+    area.value = embedSnippet(name, link, kind);
+    ov.hidden = false;
+    area.focus();
+    area.select();
+  }
+
+  function copyEmbedCode() {
+    const area = $("#embedCode");
+    const btn = $("#embedCopy");
+    if (!area) return;
+    const text = area.value;
+    if (!text) return;
+    copyToClipboard(text)
+      .then(() => {
+        if (!btn || !embedDialogOpen()) return;
+        btn.textContent = "Copied";
+        btn.classList.add("is-copied");
+        if (embedCopyTimer) clearTimeout(embedCopyTimer);
+        embedCopyTimer = window.setTimeout(() => {
+          embedCopyTimer = 0;
+          if (!embedDialogOpen()) return;
+          resetEmbedCopyLabel();
+        }, 1600);
+      })
+      .catch((err) => {
+        showError((err && err.message) || "Couldn't copy the embed code.");
+      });
+  }
+
+  function embedOpenUrl(post) {
+    const threaded = commentOnRootHref(post);
+    const raw = threaded || postPath(post);
+    try {
+      return new URL(raw, location.href).href;
+    } catch (err) {
+      return raw;
+    }
+  }
+
+  function embedMarkHtml() {
+    return `<span class="embed-mark" aria-hidden="true"><svg class="embed-mark-logo" viewBox="0 0 128 128" width="36" height="36"><polygon points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linejoin="miter"></polygon></svg></span>`;
+  }
+
+  function embedCommunityHtml(post) {
+    const name = communityNameOf(post);
+    if (name) {
+      const text = (post && post.community_title) || name;
+      return `<span class="community">${HiveMd.escapeHtml(text)}</span>`;
+    }
+    if (!isRootPost(post)) return "";
+    const tag =
+      normalizeRouteTag(post && post.category) || normalizeRouteTag(post && post.community);
+    if (tag && !isCommunityName(tag)) {
+      return `<span class="community">${HiveMd.escapeHtml(tag)}</span>`;
+    }
+    return "";
+  }
+
+  function embedTitleText(post) {
+    if (isRootPost(post)) return String((post && post.title) || "").trim() || "(untitled)";
+    const own = String((post && post.title) || "").trim();
+    if (own) return own;
+    const rootTitle = String((post && post.root_title) || "").trim();
+    if (rootTitle) return "RE: " + rootTitle;
+    return "Comment";
+  }
+
+  function embedExcerptText(post) {
+    const root = isRootPost(post);
+    const result = HiveMd.excerpt(post, root ? 220 : 360, {
+      preserveLineBreaks: false,
+      maxLines: root ? 3 : 6,
+    });
+    const holder = document.createElement("div");
+    holder.innerHTML = result.html || "";
+    return (holder.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  function embedImageHtml(post) {
+    if (!showNsfwContent() && postHasNsfw(post)) return "";
+    const img = HiveMd.extractImage(post);
+    if (!img) return "";
+    return `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="" onerror="this.remove()">`;
+  }
+
+  function embedMetaHtml(post) {
+    const name = String(post.author || "").replace(/^@/, "");
+    const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
+    const avatar = `<img class="avatar" src="${HiveMd.escapeHtml(HiveMd.avatarUrl(name, "small"))}" alt="">`;
+    const community = embedCommunityHtml(post);
+    return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span><span>${rep}</span>${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
+  }
+
+  function embedStatsHtml(post) {
+    const up = upvoteCountOf(post);
+    const down = downvoteCountOf(post);
+    const comments = Number(post.children) || 0;
+    const bits = [
+      `<span class="embed-stat">▲ ${up}</span>`,
+      `<span class="embed-stat is-down">▼ ${down}</span>`,
+      `<span class="embed-stat">C ${comments}</span>`,
+    ];
+    if (isRootPost(post)) {
+      bits.push(
+        `<span class="embed-stat">${reblogIconHtml()}<span class="reblog-n">${reblogCountOf(post)}</span></span>`
+      );
+    }
+    const figures = payoutFigures(post);
+    const mode = figures.burned ? " is-burned" : figures.declined ? " is-declined" : "";
+    bits.push(
+      `<span class="embed-stat is-payout${mode}"><span class="payout-value">${payoutTotalHtml(figures)}</span></span>`
+    );
+    return `<div class="card-stats embed-stats">${bits.join("")}</div>`;
+  }
+
+  function embedCardHtml(post) {
+    const href = HiveMd.escapeHtml(embedOpenUrl(post));
+    const author = HiveMd.escapeHtml(post.author || "");
+    const permlink = HiveMd.escapeHtml(post.permlink || "");
+    const excerpt = embedExcerptText(post);
+    const excerptHtml = excerpt
+      ? `<p class="card-excerpt">${HiveMd.escapeHtml(excerpt)}</p>`
+      : "";
+    return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer" data-author="${author}" data-permlink="${permlink}">${embedMetaHtml(post)}<h2>${HiveMd.escapeHtml(embedTitleText(post))}</h2>${excerptHtml}${embedImageHtml(post)}${embedStatsHtml(post)}</a>`;
+  }
+
+  function embedMessageHtml(author, permlink, message) {
+    const href = HiveMd.escapeHtml(contentPageUrl(author, permlink));
+    return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer"><div class="card-meta">${embedMarkHtml()}</div><p class="embed-status">${HiveMd.escapeHtml(message)}</p></a>`;
+  }
+
+  let embedGen = 0;
+
+  async function renderEmbed(author, permlink) {
+    const gen = ++embedGen;
+    const name = String(author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    const link = String(permlink || "");
+    setPageMeta("CyberSpace77");
+    view.innerHTML = embedMessageHtml(name, link, "Loading…");
+    let post = null;
+    let failed = false;
+    try {
+      post = await HiveApi.getPost(name, link);
+    } catch (err) {
+      failed = true;
+    }
+    if (gen !== embedGen) return;
+    const here = parseRoute();
+    if (here.name !== "embed" || here.author !== name || here.permlink !== link) return;
+    if (failed) {
+      setPageMeta("CyberSpace77");
+      view.innerHTML = embedMessageHtml(name, link, "Could not load this post.");
+      return;
+    }
+    if (!post || !post.author || !post.permlink || isBlacklistedPost(post)) {
+      setPageMeta("Not found — CyberSpace77");
+      view.innerHTML = embedMessageHtml(
+        name,
+        link,
+        post && isBlacklistedPost(post) ? "This post is not available." : "This post could not be found."
+      );
+      return;
+    }
+    setPageMeta(embedTitleText(post) + " — CyberSpace77");
+    view.innerHTML = embedCardHtml(post);
+  }
+
   function routeStill(key) {
     return routeKey(parseRoute()) === key;
   }
@@ -28888,6 +29138,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeWalletMore();
     hideContentDelete(true);
     hideCrossPost(true);
+    hideEmbed();
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
@@ -28911,6 +29162,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     quietSmartHeader();
     const r = parseRoute();
+    document.documentElement.classList.toggle("is-embed", r.name === "embed");
     // Account-menu comments, replies, and wallet collapse the banner on mobile.
     // Profile-nav tabs keep that collapse. A direct link to one's account, and
     // account-menu Profile, show the banner again.
@@ -29164,6 +29416,14 @@ let CS77_FILTER_LOW_REP = 20;
       currentViewKey = key;
       return;
     }
+    if (r.name === "embed") {
+      liveFeedNav = 0;
+      currentViewKey = key;
+      await renderEmbed(r.author, r.permlink);
+      if (!routeStill(key)) return;
+      currentViewKey = key;
+      return;
+    }
     setPageMeta("Not found — CyberSpace77");
     liveFeedNav = 0;
     view.innerHTML = notFoundHtml();
@@ -29407,6 +29667,46 @@ let CS77_FILTER_LOW_REP = 20;
 
     logo.addEventListener("pointerleave", () => {
       angle = 0;
+      logo.classList.remove("is-spinning");
+      logo.style.transform = "rotate(0deg)";
+    });
+  }
+
+  function bindEmbedLogoSpin() {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let card = null;
+    let angle = 0;
+
+    function logoOf(root) {
+      return root ? root.querySelector(".embed-mark-logo") : null;
+    }
+
+    document.addEventListener("pointerover", (e) => {
+      const next = e.target.closest ? e.target.closest(".embed-card") : null;
+      if (!next || next === card) return;
+      card = next;
+      angle = 0;
+      const logo = logoOf(card);
+      if (logo && !reduce.matches) logo.classList.add("is-spinning");
+    });
+
+    document.addEventListener("pointermove", (e) => {
+      if (!card || reduce.matches) return;
+      if (!card.contains(e.target)) return;
+      const logo = logoOf(card);
+      if (!logo) return;
+      angle += e.movementX;
+      logo.style.transform = "rotate(" + angle + "deg)";
+    });
+
+    document.addEventListener("pointerout", (e) => {
+      if (!card) return;
+      const next = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest(".embed-card") : null;
+      if (next === card) return;
+      const logo = logoOf(card);
+      card = null;
+      angle = 0;
+      if (!logo) return;
       logo.classList.remove("is-spinning");
       logo.style.transform = "rotate(0deg)";
     });
@@ -29751,6 +30051,7 @@ let CS77_FILTER_LOW_REP = 20;
     if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     bindRootLinks();
     bindLogoSpin();
+    bindEmbedLogoSpin();
     bindLogoMenu();
     bindNodeMenus();
     bindScrollTop();
@@ -30058,9 +30359,10 @@ let CS77_FILTER_LOW_REP = 20;
       if (inContentMoreMenu) {
         const editItem = profileMoreEl.closest(".content-more-edit");
         const copyItem = profileMoreEl.closest(".content-more-copy");
+        const embedItem = profileMoreEl.closest(".content-more-embed");
         const deleteItem = profileMoreEl.closest(".content-more-delete");
         const crossItem = profileMoreEl.closest(".content-more-cross");
-        if (editItem || copyItem || deleteItem || crossItem) {
+        if (editItem || copyItem || embedItem || deleteItem || crossItem) {
           e.preventDefault();
           const root = document.querySelector(".content-more.is-open");
           const deleteAuthor = root && root.getAttribute("data-author");
@@ -30070,6 +30372,7 @@ let CS77_FILTER_LOW_REP = 20;
           if (root && deleteItem) openContentDelete(deleteAuthor, deletePermlink, deleteKind);
           else if (root && editItem) editContentFromMore(root);
           else if (root && crossItem) openCrossPost(deleteAuthor, deletePermlink);
+          else if (root && embedItem) openEmbedDialog(deleteAuthor, deletePermlink, deleteKind);
           else if (root) copyContentLink(root);
           return;
         }
@@ -31086,6 +31389,31 @@ let CS77_FILTER_LOW_REP = 20;
       });
       publishOverlay.addEventListener("focusout", (e) => {
         if (e.target && e.target.id === "publishTagInput") takeTagsFromInput();
+      });
+    }
+    const embedOverlay = $("#embedOverlay");
+    if (embedOverlay) {
+      const embedCode = $("#embedCode");
+      if (embedCode) {
+        embedCode.addEventListener("focus", () => {
+          embedCode.select();
+        });
+      }
+      embedOverlay.addEventListener("click", (e) => {
+        if (e.target === embedOverlay) {
+          const active = document.activeElement;
+          if (!active || !embedOverlay.contains(active)) hideEmbed();
+          return;
+        }
+        if (e.target.closest("#embedClose")) {
+          e.preventDefault();
+          hideEmbed();
+          return;
+        }
+        if (e.target.closest("#embedCopy")) {
+          e.preventDefault();
+          copyEmbedCode();
+        }
       });
     }
     const contentDelete = $("#contentDelete");
