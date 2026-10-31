@@ -98,16 +98,11 @@ let CS77_FILTER_LOW_REP = 20;
   let pendingCommentsScroll = false;
   let pendingPublish = false;
   let publishDest = { type: "blog", name: "", title: "My cyberspace" };
-  // Warning under Publish in when this account cannot post in the subspace.
-  // Publish still sends. Hivemind mutes that post in the subspace.
   let publishDestNote = "";
   let publishAccessSeq = 0;
   // Load of the selected subspace account's required beneficiary.
   let publishBeneficiarySeq = 0;
-  // Account last applied for the selected subspace. Choosing another subspace
-  // or My cyberspace removes that one row. Other beneficiary rows stay.
-  // Kept after the author removes the row, so reopening the draft does not
-  // put it back. Choosing that subspace again loads it once more.
+  // Account last applied for the selected subspace.
   let publishCommunityBeneficiary = null;
   // Silent council comment check. The note warns when a comment would be muted.
   // Comment and Reply still send.
