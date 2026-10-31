@@ -28714,10 +28714,19 @@ let CS77_FILTER_LOW_REP = 20;
     return nav;
   }
 
+  // Comments and replies keep their cards when another profile is opened.
+  // Posts and wallet still load again.
+  function isProfileListKey(key) {
+    return !!key && key.indexOf("profile:") === 0 && (key.endsWith(":comments") || key.endsWith(":replies"));
+  }
+
   function isRestorableFeedKey(key) {
     return (
       !!key &&
-      (key === "welcome" || key.indexOf("feed:") === 0 || key.indexOf("community:") === 0)
+      (key === "welcome" ||
+        key.indexOf("feed:") === 0 ||
+        key.indexOf("community:") === 0 ||
+        isProfileListKey(key))
     );
   }
 
@@ -28751,6 +28760,17 @@ let CS77_FILTER_LOW_REP = 20;
     return currentViewKey.indexOf("community:" + nextRoute.community + ":") === 0;
   }
 
+  // Posts, comments, replies, and wallet of one account keep the banner and
+  // swap the section in place. Parking that shell would reload the profile.
+  function sameProfileShell(nextRoute) {
+    if (!nextRoute || nextRoute.name !== "profile" || !nextRoute.author) return false;
+    const author = String(nextRoute.author)
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!author) return false;
+    return currentViewKey.indexOf("profile:" + author + ":") === 0;
+  }
+
   function shouldParkLiveFeed(nextRoute, fromPop, pushed) {
     if (!nextRoute || nextRoute.name === "post" || nextRoute.name === "publish") return false;
     if (!fromPop && !pushed) return false;
@@ -28758,6 +28778,7 @@ let CS77_FILTER_LOW_REP = 20;
     const nextKey = routeKey(nextRoute);
     if (!nextKey || nextKey === currentViewKey) return false;
     if (sameCommunityShell(nextRoute)) return false;
+    if (sameProfileShell(nextRoute)) return false;
     return true;
   }
 
@@ -28961,6 +28982,35 @@ let CS77_FILTER_LOW_REP = 20;
     if (section) view.appendChild(section);
   }
 
+  function snapshotProfileState() {
+    return {
+      author: profileState.author,
+      page: profileState.page,
+      profile: profileState.profile,
+      followed: profileState.followed,
+      muted: profileState.muted,
+      pending: profileState.pending,
+      mutePending: profileState.mutePending,
+      claimPending: profileState.claimPending,
+      wallet: profileState.wallet,
+      walletTx: profileState.walletTx,
+    };
+  }
+
+  function applyProfileSnapshot(snap) {
+    if (!snap) return;
+    profileState.author = snap.author;
+    profileState.page = snap.page;
+    profileState.profile = snap.profile;
+    profileState.followed = snap.followed;
+    profileState.muted = snap.muted;
+    profileState.pending = snap.pending;
+    profileState.mutePending = snap.mutePending;
+    profileState.claimPending = snap.claimPending;
+    profileState.wallet = snap.wallet;
+    profileState.walletTx = snap.walletTx;
+  }
+
   function snapshotFeedState() {
     return {
       kind: feedState.kind,
@@ -29059,6 +29109,7 @@ let CS77_FILTER_LOW_REP = 20;
         subscribed: communityState.subscribed,
         pending: communityState.pending,
       },
+      profile: isProfileListKey(currentViewKey) ? snapshotProfileState() : null,
       expanded,
     });
     liveFeedNav = 0;
@@ -29067,7 +29118,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (fromPop) return;
     parkedNavForLayer = nav;
     parkedNavForLayerSteps = 1 + between;
-    if (nextRoute && nextRoute.name === "profile") {
+    // A comments or replies list parked under the next profile is not the
+    // feed that opened this profile stack.
+    if (nextRoute && nextRoute.name === "profile" && !isProfileListKey(currentViewKey)) {
       profileReturnNav = nav;
       profileReturnSteps = 1 + between;
       profileReturnOpen = true;
@@ -29094,6 +29147,7 @@ let CS77_FILTER_LOW_REP = 20;
     communityState.info = park.community.info;
     communityState.subscribed = park.community.subscribed;
     communityState.pending = park.community.pending;
+    applyProfileSnapshot(park.profile);
     expandedCardExcerpts.clear();
     park.expanded.forEach((k) => expandedCardExcerpts.add(k));
     queueFeedVideoSync();
@@ -29703,13 +29757,14 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       currentViewKey = key;
-      liveFeedNav = 0;
+      // Comments and replies can be parked. Posts and wallet load again.
+      liveFeedNav = isProfileListKey(key) ? nav : 0;
       accountMenuSubNav = false;
       accountMenuProfile = false;
       await renderProfile(r.author, r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
-      liveFeedNav = 0;
+      liveFeedNav = isProfileListKey(key) ? nav : 0;
       return;
     }
     if (r.name === "community") {
