@@ -8949,11 +8949,6 @@ min-height: 0;
   box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
 }
 
-#embedCopy.is-copied {
-  color: var(--yellow);
-  opacity: 1;
-}
-
 html.is-embed,
 html.is-embed body {
   height: 100%;
