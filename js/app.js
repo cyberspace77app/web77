@@ -174,8 +174,8 @@ let CS77_FILTER_LOW_REP = 20;
   let spaceTagSearchGen = 0;
   let trendingTagNamesCache = null;
   let trendingTagNamesAt = 0;
-  // History entry id for the feed currently mounted in #view. A profile opened
-  // from that feed parks the list under this id and Back mounts it again.
+  // History entry id for the feed currently mounted in #view. Leaving that
+  // feed parks the list under this id. Back, Forward, and the logo mount it again.
   let liveFeedNav = 0;
   let historyNavSeq = 0;
   const feedParks = new Map();
@@ -185,8 +185,17 @@ let CS77_FILTER_LOW_REP = 20;
   let profileReturnSteps = 0;
   let profileReturnOpen = false;
   let parkedForProfile = false;
-  // Post entries pushed over the live feed. A profile opened from one of them
-  // counts those entries so the logo lands on the feed.
+  // Space or subspace opened over a parked feed. The logo steps back to that
+  // parent, skipping sort changes inside the same space or subspace.
+  let feedLayerNav = 0;
+  let feedLayerSteps = 0;
+  let feedLayerId = "";
+  let feedLayerStampNav = 0;
+  // Set while parking, then consumed once the next route is known.
+  let parkedNavForLayer = 0;
+  let parkedNavForLayerSteps = 1;
+  // Post entries pushed over the live feed. A profile or nested feed opened
+  // from one of them counts those entries so the logo lands on the feed.
   let feedStackDepth = 0;
   let routeFromPop = false;
   let routePushed = false;
@@ -197,6 +206,9 @@ let CS77_FILTER_LOW_REP = 20;
   // Set for a click on the subspace nav. route() clears it. Those switches
   // keep the header and the scroll position.
   let communityNavSwitch = false;
+  // Nav of the community tab last committed to the screen. Tab switches keep
+  // the banner mounted, so the previous tab's list is parked under this id.
+  let lastCommittedNav = 0;
   // Session-menu Comments / Replies / Wallet. Mobile hides the profile banner
   // and scrolls to the top. Desktop scrolls to .profile-nav only when that
   // nav is already painted and not fully in the viewport.
@@ -216,10 +228,14 @@ let CS77_FILTER_LOW_REP = 20;
     hadWelcome: false,
   };
   const postSnaps = new Map();
+  const communityTabParks = new Map();
+  // History nav of the post currently in #postLayer. Snapshots are stored
+  // under that id so Back returns to the same scroll.
   const cardContentStamps = new Map();
   const originalPostCache = new Map();
   const revealedMuted = new Set();
-  const POST_SNAP_MAX = 6;
+  const POST_SNAP_MAX = 8;
+  let postEntryNav = 0;
   const communityState = {
     name: "",
     info: null,
@@ -4412,9 +4428,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const url = appHref(path) + hashFragment(href);
     const nav = replace ? historyNavId() || nextHistoryNav() : nextHistoryNav();
+    const baseDepth = historyDepth() || 1;
+    const depth = replace ? baseDepth : baseDepth + 1;
     routePushed = !replace;
-    if (replace) history.replaceState({ nav }, "", url);
-    else history.pushState({ nav }, "", url);
+    if (replace) history.replaceState({ nav, depth }, "", url);
+    else history.pushState({ nav, depth }, "", url);
     publishNavPushed = parseRoute(path).name === "publish" && !replace;
     route();
   }
@@ -4610,39 +4628,19 @@ let CS77_FILTER_LOW_REP = 20;
     if (!isInternalHref(href)) return;
     if (a.closest("#logoBrand")) {
       const here = parseRoute();
-      const returnSteps = Number(history.state && history.state.profileReturnSteps) || 0;
-      const returnNav = Number(history.state && history.state.profileReturnNav) || 0;
-      // A profile opened from a feed steps back to that feed, same as Back.
-      if (
-        here.name === "profile" &&
-        returnSteps > 0 &&
-        returnSteps < history.length &&
-        feedParks.has(returnNav)
-      ) {
-        e.preventDefault();
-        history.go(-returnSteps);
+      e.preventDefault();
+      // One step back through posts, profiles, spaces, and subspaces.
+      // The global feed is the top: the logo scrolls it instead of leaving.
+      if (isOnTopLevelFeed(here)) {
+        scrollActiveToTop();
         return;
       }
-      // A post opened over a feed steps back onto that feed. Navigating to
-      // the feed URL would add another entry and leave the saved list behind.
-      if (here.name === "post" && liveFeedNav && isRestorableFeedKey(currentViewKey)) {
-        const depth = Math.max(
-          feedStackDepth,
-          Number(history.state && history.state.feedStackDepth) || 0,
-          1
-        );
-        if (depth < history.length) {
-          e.preventDefault();
-          history.go(-depth);
-          return;
-        }
-      }
-      if (logoUsesTopFeed(here)) {
-        e.preventDefault();
-        if (isOnTopLevelFeed(here)) scrollActiveToTop();
-        else navigate(appHref(pathForFeedSort(defaultFeedSort())));
+      if (historyDepth() > 1) {
+        history.back();
         return;
       }
+      navigate(appHref(pathForFeedSort(defaultFeedSort())));
+      return;
     }
     if (a.closest("#sessionAccountMenu") && isSessionProfileSubLink(href)) {
       accountMenuSubNav = true;
@@ -5641,7 +5639,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function isOnTopLevelFeed(route) {
-    return Boolean(route && route.name === "feed" && !route.tag && route.sort === defaultFeedSort());
+    return Boolean(route && route.name === "feed" && !route.tag);
   }
 
   function paintLogoMenu() {
@@ -9521,7 +9519,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function leaveDeletedPost(author, permlink) {
-    postSnaps.delete(snapKey(author, permlink));
+    forgetPostSnaps(author, permlink);
     const pv = postViewEl();
     if (pv) pv.innerHTML = "";
     if (currentPost && samePostId(currentPost, author, permlink)) currentPost = null;
@@ -9558,7 +9556,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function applyDeletedContent(author, permlink) {
     removeDeletedCards(author, permlink);
-    postSnaps.delete(snapKey(author, permlink));
+    forgetPostSnaps(author, permlink);
     const commentEl = findCommentEl(author, permlink);
     if (commentEl) {
       const parentAuthor = commentEl.getAttribute("data-parent-author") || "";
@@ -16638,24 +16636,39 @@ let CS77_FILTER_LOW_REP = 20;
     return String(html || "").indexOf("post-comments-pending") !== -1;
   }
 
+  function forgetPostSnaps(author, permlink) {
+    const name = String(author || "").replace(/^@/, "").toLowerCase();
+    const link = String(permlink || "");
+    postSnaps.forEach((snap, nav) => {
+      if (!snap) return;
+      if (String(snap.author || "").toLowerCase() === name && String(snap.permlink || "") === link) {
+        postSnaps.delete(nav);
+      }
+    });
+  }
+
   function rememberPostSnap() {
     if (!postLayer.author || !postLayer.permlink) return;
     const pv = postViewEl();
     if (!pv || !pv.innerHTML.trim()) return;
+    const nav = postEntryNav || (history.state && history.state.cs77 === "post" ? historyNavId() : 0);
+    if (!nav) return;
     const html = pv.innerHTML;
-    const key = snapKey(postLayer.author, postLayer.permlink);
     const pending = htmlHasPendingComments(html);
-    const prev = postSnaps.get(key);
+    const prev = postSnaps.get(nav);
     if (pending && prev && !htmlHasPendingComments(prev.html)) return;
-    postSnaps.delete(key);
-    postSnaps.set(key, {
+    postSnaps.delete(nav);
+    postSnaps.set(nav, {
       html,
-      scroll: window.scrollY || window.pageYOffset || 0,
+      scroll: scrollYNow(),
       title: document.title,
       root: currentPost,
+      author: postLayer.author,
+      permlink: postLayer.permlink,
     });
     while (postSnaps.size > POST_SNAP_MAX) {
       const oldest = postSnaps.keys().next().value;
+      if (oldest === nav) break;
       postSnaps.delete(oldest);
     }
   }
@@ -16739,6 +16752,7 @@ let CS77_FILTER_LOW_REP = 20;
     const underKey =
       (state && state.cs77 === "post" && state.underKey) || currentViewKey || "";
     const prevNav = state && Number(state.nav);
+    const nav = Number.isFinite(prevNav) && prevNav > 0 ? prevNav : nextHistoryNav();
     history.replaceState(
       Object.assign(
         {
@@ -16746,13 +16760,14 @@ let CS77_FILTER_LOW_REP = 20;
           underScroll: postLayer.scrollY || 0,
           underKey,
           underWelcome: !!postLayer.hadWelcome,
-          nav: Number.isFinite(prevNav) && prevNav > 0 ? prevNav : nextHistoryNav(),
+          nav,
         },
         carriedHistoryFields(state)
       ),
       "",
       location.href
     );
+    postEntryNav = nav;
   }
 
   function closeWelcomeForPost() {
@@ -17040,6 +17055,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!postLayer.open) return;
     stopCommentJump();
     rememberPostSnap();
+    postEntryNav = 0;
     postLayer.gen += 1;
     const layer = postLayerEl();
     if (layer) layer.hidden = true;
@@ -17187,11 +17203,12 @@ let CS77_FILTER_LOW_REP = 20;
     const gen = ++postLayer.gen;
     postLayer.author = a;
     postLayer.permlink = p;
-    const snap = postSnaps.get(snapKey(a, p));
+    const snap = postSnaps.get(historyNavId());
     const snapGated = Boolean(snap && String(snap.html).indexOf("nsfw-hold-post") !== -1);
-    // A gated snapshot stays hidden while the setting is off. Turning the
-    // setting on skips that snapshot so the body and comments render.
-    const useSnap = Boolean(snap && snap.html) && (showNsfwContent() || snapGated);
+    // A gated snapshot stays hidden while NSFW is off. Turning it on skips
+    // that placeholder so the body and comments render. Any other snapshot
+    // is the page the reader left, with or without NSFW.
+    const useSnap = Boolean(snap && snap.html) && (!snapGated || !showNsfwContent());
     // Overlap the CDN scripts with the discussion request. A cached body waits
     // so author HTML is not inserted before DOMPurify is loaded. A gated body
     // is only the placeholder, so it can paint before those scripts load.
@@ -17199,9 +17216,12 @@ let CS77_FILTER_LOW_REP = 20;
     const known = findLoadedPost(a, p);
     const gated = postNsfwGated(known);
     let restoreScroll = null;
+    // A history return keeps the scroll from when this entry was left.
+    // A fresh open still follows #comments or a comment link.
+    const keepPlace = Boolean(options.held && useSnap);
     if (useSnap) {
       showPostSnap(snap);
-      if (!options.jumpComments && !options.anchor) restoreScroll = snap.scroll || 0;
+      if (keepPlace || (!options.jumpComments && !options.anchor)) restoreScroll = Number(snap.scroll) || 0;
     } else if (known && (known.title || known.body) && (gated || HiveMd.markdownReady())) {
       paintArticle(known, {
         commentCount: Number(known.children) || 0,
@@ -17223,6 +17243,7 @@ let CS77_FILTER_LOW_REP = 20;
     // comment list. Either one still needs the discussion.
     const pendingNow = !articleShown || htmlHasPendingComments(shown.innerHTML);
     const finishAnchor = (commentsReady) => {
+      if (keepPlace) return;
       requestAnimationFrame(() => {
         if (!postStill(gen, a, p)) return;
         settlePostAnchor(options, commentsReady);
@@ -28618,15 +28639,22 @@ let CS77_FILTER_LOW_REP = 20;
     return historyNavSeq;
   }
 
+  function historyDepth() {
+    const depth = Number(history.state && history.state.depth);
+    return Number.isFinite(depth) && depth > 0 ? depth : 0;
+  }
+
   function ensureHistoryNav() {
     const existing = historyNavId();
     if (existing) {
       if (existing > historyNavSeq) historyNavSeq = existing;
+      if (!historyDepth()) stampHistoryFields({ depth: 1 });
       return existing;
     }
     const nav = nextHistoryNav();
     const prev = history.state && typeof history.state === "object" ? history.state : {};
-    history.replaceState(Object.assign({}, prev, { nav }), "", location.href);
+    const depth = Number(prev.depth) > 0 ? Number(prev.depth) : 1;
+    history.replaceState(Object.assign({}, prev, { nav, depth }), "", location.href);
     return nav;
   }
 
@@ -28635,6 +28663,19 @@ let CS77_FILTER_LOW_REP = 20;
       !!key &&
       (key === "welcome" || key.indexOf("feed:") === 0 || key.indexOf("community:") === 0)
     );
+  }
+
+  // A tag feed or a subspace. The global sorts (following, latest, trending, hot)
+  // are the top layer: the logo scrolls those instead of leaving them.
+  function nestedFeedLayerId(route) {
+    if (!route) return "";
+    if (route.name === "community" && route.community) return "community:" + route.community;
+    if (route.name === "feed" && route.tag) return "space:" + route.tag;
+    return "";
+  }
+
+  function isNestedFeedRoute(route) {
+    return Boolean(nestedFeedLayerId(route));
   }
 
   function canParkLiveFeed() {
@@ -28647,6 +28688,23 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
+  // Subspace Latest / Trending / About / Members keep the banner and swap the
+  // subpage in place. Parking that shell would reload the community.
+  function sameCommunityShell(nextRoute) {
+    if (!nextRoute || nextRoute.name !== "community" || !nextRoute.community) return false;
+    return currentViewKey.indexOf("community:" + nextRoute.community + ":") === 0;
+  }
+
+  function shouldParkLiveFeed(nextRoute, fromPop, pushed) {
+    if (!nextRoute || nextRoute.name === "post" || nextRoute.name === "publish") return false;
+    if (!fromPop && !pushed) return false;
+    if (!canParkLiveFeed()) return false;
+    const nextKey = routeKey(nextRoute);
+    if (!nextKey || nextKey === currentViewKey) return false;
+    if (sameCommunityShell(nextRoute)) return false;
+    return true;
+  }
+
   function carriedHistoryFields(state) {
     const src = state && typeof state === "object" ? state : {};
     const out = {};
@@ -28656,8 +28714,10 @@ let CS77_FILTER_LOW_REP = 20;
       out.profileReturnSteps = steps;
       out.profileReturnNav = returnNav;
     }
-    const depth = Number(src.feedStackDepth) || 0;
-    if (depth > 0) out.feedStackDepth = depth;
+    const stack = Number(src.feedStackDepth) || 0;
+    if (stack > 0) out.feedStackDepth = stack;
+    const appDepth = Number(src.depth) || 0;
+    if (appDepth > 0) out.depth = appDepth;
     return out;
   }
 
@@ -28685,6 +28745,74 @@ let CS77_FILTER_LOW_REP = 20;
   function stampFeedStack() {
     if (!feedStackDepth) return;
     stampHistoryFields({ feedStackDepth: feedStackDepth });
+  }
+
+  function syncFeedLayerFromHistory() {
+    const layer = nestedFeedLayerId(parseRoute());
+    const state = history.state || {};
+    const steps = Number(state.feedParentSteps) || 0;
+    const parent = Number(state.feedParentNav) || 0;
+    feedLayerStampNav = historyNavId();
+    if (layer && steps > 0 && parent > 0 && feedParks.has(parent)) {
+      feedLayerNav = parent;
+      feedLayerSteps = steps;
+      feedLayerId = layer;
+      return;
+    }
+    feedLayerNav = 0;
+    feedLayerSteps = 0;
+    feedLayerId = layer || "";
+  }
+
+  function stampFeedLayer() {
+    if (!feedLayerSteps || !feedLayerNav) return;
+    stampHistoryFields({
+      feedParentNav: feedLayerNav,
+      feedParentSteps: feedLayerSteps,
+    });
+    feedLayerStampNav = historyNavId();
+  }
+
+  // Sort changes inside one space or subspace share a parent. A different
+  // space or subspace, and posts opened over the parent, start a new step count.
+  function noteFeedLayer(fromPop, route) {
+    if (fromPop) {
+      parkedNavForLayer = 0;
+      parkedNavForLayerSteps = 1;
+      syncFeedLayerFromHistory();
+      return;
+    }
+    const layer = nestedFeedLayerId(route);
+    const parked = parkedNavForLayer;
+    const parkedSteps = parkedNavForLayerSteps || 1;
+    parkedNavForLayer = 0;
+    parkedNavForLayerSteps = 1;
+    if (!layer) {
+      feedLayerNav = 0;
+      feedLayerSteps = 0;
+      feedLayerId = "";
+      feedLayerStampNav = 0;
+      return;
+    }
+    if (feedLayerId === layer && feedLayerSteps > 0 && feedLayerNav && feedParks.has(feedLayerNav)) {
+      const here = historyNavId();
+      // A canonical redirect replaces the entry this push just added. Count
+      // that entry once so the logo still clears the whole layer.
+      if (here && here !== feedLayerStampNav) feedLayerSteps += 1;
+      stampFeedLayer();
+      return;
+    }
+    if (parked && feedParks.has(parked)) {
+      feedLayerNav = parked;
+      feedLayerSteps = parkedSteps;
+      feedLayerId = layer;
+      stampFeedLayer();
+      return;
+    }
+    feedLayerNav = 0;
+    feedLayerSteps = 0;
+    feedLayerId = layer;
+    feedLayerStampNav = historyNavId();
   }
 
   function syncProfileReturnFromHistory() {
@@ -28739,6 +28867,44 @@ let CS77_FILTER_LOW_REP = 20;
     stampFeedStack();
   }
 
+  function stashCommunityTab(nav) {
+    if (!nav || communityTabParks.has(nav)) return;
+    const section = document.getElementById("communitySubpage");
+    if (!section) return;
+    const scrollY = scrollYNow();
+    const feed = snapshotFeedState();
+    const expanded = new Set(expandedCardExcerpts);
+    feedState.gen += 1;
+    feedState.loading = false;
+    pauseCurrentFeedVideo();
+    const holder = document.createElement("div");
+    holder.appendChild(section);
+    communityTabParks.set(nav, {
+      holder,
+      scrollY,
+      feed,
+      expanded,
+      key: currentViewKey,
+    });
+    while (communityTabParks.size > FEED_PARK_MAX) {
+      const oldest = communityTabParks.keys().next().value;
+      if (oldest === nav) break;
+      const old = communityTabParks.get(oldest);
+      if (old && old.holder) old.holder.replaceChildren();
+      communityTabParks.delete(oldest);
+    }
+  }
+
+  function restoreCommunityTab(tab) {
+    applyFeedSnapshot(tab.feed);
+    expandedCardExcerpts.clear();
+    if (tab.expanded) tab.expanded.forEach((k) => expandedCardExcerpts.add(k));
+    const existing = document.getElementById("communitySubpage");
+    if (existing) existing.remove();
+    const section = tab.holder && tab.holder.firstElementChild;
+    if (section) view.appendChild(section);
+  }
+
   function snapshotFeedState() {
     return {
       kind: feedState.kind,
@@ -28773,19 +28939,42 @@ let CS77_FILTER_LOW_REP = 20;
     if (park && park.holder) park.holder.replaceChildren();
   }
 
+  function anchoredFeedParkIds(extra) {
+    const keep = new Set();
+    const seeds = [feedLayerNav, profileReturnNav, extra || 0];
+    for (let s = 0; s < seeds.length; s++) {
+      let cursor = seeds[s];
+      let guard = 0;
+      while (cursor && feedParks.has(cursor) && guard < FEED_PARK_MAX + 2) {
+        if (keep.has(cursor)) break;
+        keep.add(cursor);
+        const older = feedParks.get(cursor);
+        cursor = older && older.parentNav;
+        guard += 1;
+      }
+    }
+    return keep;
+  }
+
   function rememberFeedPark(park) {
     feedParks.set(park.nav, park);
+    const keep = anchoredFeedParkIds(park.nav);
     while (feedParks.size > FEED_PARK_MAX) {
-      const oldest = feedParks.keys().next().value;
-      if (oldest === park.nav) break;
-      discardFeedPark(feedParks.get(oldest));
-      feedParks.delete(oldest);
+      let victim = 0;
+      for (const id of feedParks.keys()) {
+        if (keep.has(id)) continue;
+        victim = id;
+        break;
+      }
+      if (!victim) break;
+      discardFeedPark(feedParks.get(victim));
+      feedParks.delete(victim);
     }
   }
 
-  // The profile page uses #view and the shared feed list. Detach the feed
+  // The next page uses #view and the shared feed list. Detach the feed
   // instead of serializing it, so Load more and the painted cards survive.
-  function parkLiveFeed(fromPop) {
+  function parkLiveFeed(fromPop, nextRoute) {
     const nav = liveFeedNav;
     const holder = document.createElement("div");
     const feed = snapshotFeedState();
@@ -28801,6 +28990,7 @@ let CS77_FILTER_LOW_REP = 20;
     rememberFeedPark({
       nav,
       key: currentViewKey,
+      parentNav: feedLayerNav || 0,
       holder,
       scrollY,
       hadWelcome:
@@ -28819,10 +29009,14 @@ let CS77_FILTER_LOW_REP = 20;
     const between = postLayer.open ? feedStackDepth : 0;
     feedStackDepth = 0;
     if (fromPop) return;
-    profileReturnNav = nav;
-    profileReturnSteps = 1 + between;
-    profileReturnOpen = true;
-    parkedForProfile = true;
+    parkedNavForLayer = nav;
+    parkedNavForLayerSteps = 1 + between;
+    if (nextRoute && nextRoute.name === "profile") {
+      profileReturnNav = nav;
+      profileReturnSteps = 1 + between;
+      profileReturnOpen = true;
+      parkedForProfile = true;
+    }
   }
 
   function takeFeedPark(nav, key) {
@@ -29293,11 +29487,12 @@ let CS77_FILTER_LOW_REP = 20;
       const anchor = !jumpComments ? commentHashFromLocation() : "";
       pendingCommentsScroll = false;
       hidePublishOverlay();
-      await presentPost(r.author, r.permlink, { jumpComments, anchor });
+      await presentPost(r.author, r.permlink, { jumpComments, anchor, held: fromPop });
       return;
     }
-    // Capture the feed before welcome teardown scrolls the window to the top.
-    if (r.name === "profile" && canParkLiveFeed()) parkLiveFeed(fromPop);
+    // Park before welcome teardown scrolls the window to the top, and before a
+    // redirect replaces this entry. The list stays under the previous nav.
+    if (shouldParkLiveFeed(r, fromPop, pushed)) parkLiveFeed(fromPop, r);
     noteProfileReturnStep(fromPop, pushed, r.name);
     noteFeedStack(fromPop, pushed, r.name);
     const showWelcome = resolveWelcome(r);
@@ -29321,6 +29516,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     const nav = ensureHistoryNav();
+    noteFeedLayer(fromPop, r);
     const restored = takeFeedPark(nav, key);
     // A post opened from the feed stays up under the publish dialog. Closing
     // the dialog returns to that post instead of the feed underneath.
@@ -29397,6 +29593,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (restored) {
         if (restored.hadWelcome) revealParkedWelcome();
         scrollWindowInstant(restored.scrollY);
+        if (r.name === "feed" && !r.tag && !(showWelcome && isHomePath())) storeFeedView(r.sort);
         if (restored.feed.loading) resumeParkedFeedLoad();
         else queueFeedInfinite();
       } else if (isRestorableFeedKey(key)) {
@@ -29458,12 +29655,36 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (r.name === "community") {
+      if (sameCommunityShell(r)) {
+        const leaving = lastCommittedNav;
+        if (leaving && leaving !== nav) stashCommunityTab(leaving);
+      }
+      const tabPark = communityTabParks.get(nav);
+      if (
+        tabPark &&
+        tabPark.key === key &&
+        view.querySelector(".community-banner") &&
+        view.querySelector(".community-nav")
+      ) {
+        communityTabParks.delete(nav);
+        restoreCommunityTab(tabPark);
+        paintCommunityNavActive(normalizeCommunityPage(r.page) || "latest");
+        currentViewKey = key;
+        liveFeedNav = nav;
+        lastCommittedNav = nav;
+        scrollWindowInstant(tabPark.scrollY);
+        if (tabPark.feed && tabPark.feed.loading) resumeParkedFeedLoad();
+        else queueFeedInfinite();
+        return;
+      }
       currentViewKey = key;
       liveFeedNav = nav;
+      lastCommittedNav = nav;
       await renderCommunity(r.community, r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
       liveFeedNav = nav;
+      lastCommittedNav = nav;
       return;
     }
     if (r.name === "tags") {
