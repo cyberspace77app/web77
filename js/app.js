@@ -715,7 +715,7 @@ let CS77_FILTER_LOW_REP = 20;
     errorText.textContent = errorBannerText(msg);
     errorBanner.hidden = false;
     window.clearTimeout(errorHideTimer);
-    errorHideTimer = window.setTimeout(clearError, 3000);
+    errorHideTimer = window.setTimeout(clearError, 5000);
   }
 
   function clearError() {
