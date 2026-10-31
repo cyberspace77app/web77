@@ -8981,7 +8981,8 @@ html.is-embed .app {
   margin: 0;
   padding: 20px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: safe center;
   overflow: auto;
   background: transparent;
@@ -8992,6 +8993,22 @@ html.is-embed #view {
   width: 100%;
   max-width: 36rem;
   margin: 0 auto;
+}
+
+html.is-embed #view:has(.card-thumb) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: min-content;
+}
+
+html.is-embed .embed-card:has(.card-thumb) {
+  flex: 1 1 auto;
+  min-height: min-content;
+}
+
+html.is-embed .embed-card:has(.card-thumb) > :not(.card-thumb) {
+  flex-shrink: 0;
 }
 
 a.embed-card,
@@ -9092,7 +9109,10 @@ html.is-embed .embed-card .card-meta .meta-time {
 }
 
 html.is-embed .embed-card .card-thumb {
-  max-height: 220px;
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 220px;
+  max-height: none;
   object-fit: cover;
 }
 
