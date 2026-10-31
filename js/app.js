@@ -27442,13 +27442,13 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <p class="settings-note" id="settingsWeightNote">Empty or 0 uses the last vote weight.</p>
         <div class="settings-field settings-autoplay-field">
-          <label class="settings-label" for="settingsAutoplayVideos">Auto play videos</label>
+          <label class="settings-label" for="settingsAutoplayVideos">Autoplay videos</label>
           <label class="cyber-toggle">
             <input id="settingsAutoplayVideos" type="checkbox">
             <span class="cyber-toggle-track" aria-hidden="true"></span>
             <span class="cyber-toggle-copy">
-              <span class="cyber-toggle-title">Auto play videos</span>
-              <span class="cyber-toggle-sub">muted while the video is on screen</span>
+              <span class="cyber-toggle-title">Autoplay videos</span>
+              <span class="cyber-toggle-sub">videos start muted</span>
             </span>
           </label>
         </div>
