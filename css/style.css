@@ -3387,10 +3387,21 @@ a.tag:hover {
 
 .post-body .tweet-embed,
 .comment-body .tweet-embed {
-  display: flex;
-  justify-content: center;
+  /* widgets.js inserts a 550px shell before the fallback blockquote and
+     removes the blockquote only after the iframe paints. A flex row puts
+     that shell and the fallback side by side, so "View on X" is squeezed
+     into the leftover strip on the right. One grid cell stacks them. */
+  display: grid;
+  justify-items: center;
   width: 100%;
   margin: 1.35rem 0;
+}
+
+.post-body .tweet-embed > *,
+.comment-body .tweet-embed > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .comment-body .tweet-embed {
