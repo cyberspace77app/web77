@@ -29324,10 +29324,13 @@ let CS77_FILTER_LOW_REP = 20;
       if (!currentViewKey) {
         scrollWindowInstant(0);
         const sort = defaultFeedSort();
-        setPageMeta(sort === "feed" ? "Feed — CyberSpace77" : "CyberSpace77");
-        await renderFeed(sort, true);
+        // A direct /publish visit has no page yet. That feed belongs under the
+        // dialog. Waiting for it kept the composer hidden for the whole request.
         currentViewKey = "feed:" + sort;
         storeFeedView(sort);
+        openPublishOverlay();
+        await renderFeed(sort, true);
+        return;
       }
       openPublishOverlay();
       return;
