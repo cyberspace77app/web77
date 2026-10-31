@@ -7226,14 +7226,28 @@ body:has(#pollVotesOverlay:not([hidden])) {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    margin: 0.65rem 0.85rem 0.8rem;
+    margin: 0;
     align-self: stretch;
-    max-width: calc(100% - 1.7rem);
+    max-width: 100%;
   }
 
   .node-menu-in-menu .status-pill {
-    align-self: flex-start;
+    align-self: stretch;
+    justify-content: flex-start;
+    width: 100%;
     max-width: 100%;
+    /* Same inset as .logo-dropdown-link in this breakpoint, so the dot lines up with those labels. */
+    padding: 0.9rem 1.15rem;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .node-menu-in-menu .status-pill:hover {
+    border-color: transparent;
+    background: transparent;
+    text-shadow: var(--glow-yellow);
   }
 
   .node-menu-in-menu .node-label {
@@ -7243,7 +7257,7 @@ body:has(#pollVotesOverlay:not([hidden])) {
   .node-menu-in-menu .node-dropdown {
     position: static;
     right: auto;
-    padding-top: 0.35rem;
+    padding-top: 0;
     width: 100%;
   }
 
@@ -7253,6 +7267,13 @@ body:has(#pollVotesOverlay:not([hidden])) {
     background: transparent;
     backdrop-filter: none;
     box-shadow: none;
+    border: none;
+    border-radius: 0;
+  }
+
+  .node-menu-in-menu .node-option {
+    padding-left: 1.15rem;
+    padding-right: 1.15rem;
   }
 
   #sessionSlot,
