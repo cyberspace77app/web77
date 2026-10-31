@@ -705,8 +705,14 @@ let CS77_FILTER_LOW_REP = 20;
 
   let errorHideTimer = 0;
 
+  // Hive and Keychain put one or two <br> tags between the sentences.
+  function errorBannerText(msg) {
+    if (msg == null) return "";
+    return String(msg).replace(/\s*(?:<br\s*\/?\s*>\s*){1,2}/gi, " · ").trim();
+  }
+
   function showError(msg) {
-    errorText.textContent = msg;
+    errorText.textContent = errorBannerText(msg);
     errorBanner.hidden = false;
     window.clearTimeout(errorHideTimer);
     errorHideTimer = window.setTimeout(clearError, 3000);
