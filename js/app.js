@@ -9727,24 +9727,39 @@ let CS77_FILTER_LOW_REP = 20;
     paintCrossPostChrome();
   }
 
-  // Hivemind treats this as a cross-post when the first tag is cross-post and
-  // the metadata names the original. The sentence matches the Ecency body.
-  function crossPostBody(author, permlink, message) {
-    const name = String(author || "").replace(/^@/, "");
-    const link = String(permlink || "");
+  // PeakD's shell is one sentence. The link is the original post path
+  // (/category/@author/permlink). "by @" is the account creating the shell.
+  // A message is appended after <br><br>. An empty message stays off the body.
+  function crossPostHref(post) {
+    const author = String((post && post.author) || "").replace(/^@/, "");
+    const permlink = String((post && post.permlink) || "");
+    const raw = String((post && post.url) || "").trim();
+    if (author && permlink && raw.startsWith("/") && raw.indexOf("/@" + author + "/") !== -1) {
+      return raw;
+    }
+    const category = String((post && (post.category || post.parent_permlink)) || "")
+      .replace(/^#/, "")
+      .trim();
+    if (category && author && permlink) return "/" + category + "/@" + author + "/" + permlink;
+    return "/@" + author + "/" + permlink;
+  }
+
+  function crossPostBody(target, poster, message) {
+    const author = String((target && target.author) || "").replace(/^@/, "");
+    const permlink = String((target && target.permlink) || "");
+    const by = String(poster || "").replace(/^@/, "");
+    const href = (target && target.href) || crossPostHref(target);
     const intro =
       "This is a cross post of [@" +
-      name +
+      author +
       "/" +
-      link +
-      "](/@" +
-      name +
-      "/" +
-      link +
+      permlink +
+      "](" +
+      href +
       ") by @" +
-      name +
+      by +
       ".";
-    const note = String(message || "").replace(/\s+/g, " ").trim();
+    const note = String(message || "").trim();
     if (!note) return intro;
     return intro + "<br><br>" + note;
   }
@@ -9832,10 +9847,16 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (gen !== crossPostGen) return;
     crossPostResolving = false;
+    const sensitive = metadataTags(post).filter((tag) => tag === "nsfw" || tag === "porn");
     crossPostTarget = {
       author: String(post.author || "").replace(/^@/, ""),
       permlink: String(post.permlink || ""),
       title: clampPublishTitle(String(post.title || "").trim()) || "Post",
+      category: String(post.category || post.parent_permlink || "")
+        .replace(/^#/, "")
+        .trim(),
+      href: crossPostHref(post),
+      sensitive,
     };
     paintCrossPostChrome();
   }
@@ -9915,7 +9936,17 @@ let CS77_FILTER_LOW_REP = 20;
       setCrossPostStatus("Choose a subspace.", true);
       return;
     }
+    const origin = normalizeCommunityName(target.category);
+    if (origin && origin === id) {
+      setCrossPostStatus("This post is already in that subspace.", true);
+      return;
+    }
     const message = ($("#crossPostMessage") && $("#crossPostMessage").value) || "";
+    const permlink = crossPostPermlink(target.permlink, id);
+    const tags = ["cross-post"];
+    (Array.isArray(target.sensitive) ? target.sensitive : []).forEach((tag) => {
+      if (tag && tags.indexOf(tag) === -1) tags.push(tag);
+    });
     const epoch = crossPostEpoch;
     crossPostBusy = true;
     paintCrossPostChrome();
@@ -9925,15 +9956,25 @@ let CS77_FILTER_LOW_REP = 20;
         author: user,
         parentAuthor: "",
         parentPermlink: id,
-        permlink: crossPostPermlink(target.permlink, id),
+        permlink,
         title: target.title,
-        body: crossPostBody(target.author, target.permlink, message),
+        body: crossPostBody(target, user, message),
         jsonMetadata: {
-          tags: ["cross-post"],
+          tags,
           app: APP_ID + "/" + APP_VERSION,
           format: "markdown",
+          image: [],
           original_author: target.author,
           original_permlink: target.permlink,
+        },
+        commentOptions: {
+          author: user,
+          permlink,
+          max_accepted_payout: "0.000 HBD",
+          percent_hbd: 10000,
+          allow_votes: true,
+          allow_curation_rewards: false,
+          extensions: [],
         },
       });
       await queued.promise;

@@ -4082,6 +4082,12 @@ a.tag:hover {
   color: var(--gray-dim);
 }
 
+#crossPostOverlay .label-optional {
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+}
+
 #crossPostMessage::placeholder {
   color: var(--gray-dim);
 }
