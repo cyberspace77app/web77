@@ -3109,6 +3109,58 @@ let CS77_FILTER_LOW_REP = 20;
     run();
   }
 
+  // Keychain and the node both use this sentence when the weight already matches.
+  function isIdenticalVoteError(err) {
+    const msg = (err && err.message) || String(err || "");
+    return /identical to this vote/i.test(msg);
+  }
+
+  function rememberVoteList(author, permlink, votes) {
+    const write = (node) => {
+      node.active_votes = votes;
+      node.stats = Object.assign({}, node.stats || {}, { total_votes: votes.length });
+    };
+    eachContentNode(author, permlink, write);
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i] && items[i].original_entry;
+      if (entry && entry.author === author && entry.permlink === permlink) write(entry);
+    }
+    votesCache.set(postKey(author, permlink), { votes });
+  }
+
+  // The chain already has this weight. Reload the vote list instead of
+  // putting the stale counts back on the post or comment.
+  function refreshIdenticalVoteStats(author, permlink, gen) {
+    const key = postKey(author, permlink);
+    return HiveApi.getActiveVotes(author, permlink)
+      .then((list) => {
+        if (voteRefreshGen.get(key) !== gen) return false;
+        if (!Array.isArray(list)) return false;
+        rememberVoteList(author, permlink, list);
+        const user = observer();
+        const postLike = {
+          author,
+          permlink,
+          active_votes: list,
+          stats: { total_votes: list.length },
+        };
+        const mine = findUserVote(list, user);
+        const next = {
+          sign: mine ? votePolarity(mine) : 0,
+          pending: false,
+          upCount: upvoteCountOf(postLike),
+          downCount: downvoteCountOf(postLike),
+          rshares: mine ? voteRshares(mine) : 0,
+        };
+        localVotes.set(key, next);
+        syncVoteButtons(author, permlink, next);
+        repaintOpenVoters(author, permlink);
+        return true;
+      })
+      .catch(() => false);
+  }
+
   function queueVote(author, permlink, percent) {
     const user = observer();
     if (!user) return;
@@ -3151,6 +3203,33 @@ let CS77_FILTER_LOW_REP = 20;
       permlink,
       weight,
     });
+    const revertFailedVote = () => {
+      if (voteRefreshGen.get(key) !== queuedGen) return;
+      voteRefreshGen.set(key, queuedGen + 1);
+      if (previous) {
+        localVotes.set(key, {
+          sign: previous.sign,
+          pending: false,
+          upCount: previous.upCount != null ? previous.upCount : currentUp,
+          downCount: previous.downCount != null ? previous.downCount : currentDown,
+          rshares: previous.rshares == null ? null : previous.rshares,
+        });
+      } else {
+        localVotes.delete(key);
+      }
+      const restored = localVotes.get(key);
+      syncVoteButtons(author, permlink, restored || {
+        sign: currentSign,
+        pending: false,
+        upCount: currentUp,
+        downCount: currentDown,
+      });
+      if (before && Number.isFinite(before.payout)) {
+        setDisplayedPayout(author, permlink, before.payout, before.netRshares);
+      }
+      repaintOpenVoters(author, permlink);
+    };
+
     promise
       .then(async () => {
         if (voteRefreshGen.get(key) !== queuedGen) return;
@@ -3175,34 +3254,20 @@ let CS77_FILTER_LOW_REP = 20;
         refreshVoteValue(author, permlink, nextSign, before, weight, basis);
       })
       .catch((err) => {
+        const message = (err && err.message) || String(err);
         if (voteRefreshGen.get(key) !== queuedGen) {
-          showError(err.message || String(err));
+          showError(message);
           return;
         }
-        voteRefreshGen.set(key, queuedGen + 1);
-        if (previous) {
-          localVotes.set(key, {
-            sign: previous.sign,
-            pending: false,
-            upCount: previous.upCount != null ? previous.upCount : currentUp,
-            downCount: previous.downCount != null ? previous.downCount : currentDown,
-            rshares: previous.rshares == null ? null : previous.rshares,
-          });
-        } else {
-          localVotes.delete(key);
+        if (!isIdenticalVoteError(err)) {
+          revertFailedVote();
+          showError(message);
+          return;
         }
-        const restored = localVotes.get(key);
-        syncVoteButtons(author, permlink, restored || {
-          sign: currentSign,
-          pending: false,
-          upCount: currentUp,
-          downCount: currentDown,
+        showError(message);
+        refreshIdenticalVoteStats(author, permlink, queuedGen).then((applied) => {
+          if (!applied) revertFailedVote();
         });
-        if (before && Number.isFinite(before.payout)) {
-          setDisplayedPayout(author, permlink, before.payout, before.netRshares);
-        }
-        repaintOpenVoters(author, permlink);
-        showError(err.message || String(err));
       });
   }
 
