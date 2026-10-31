@@ -28897,12 +28897,9 @@ let CS77_FILTER_LOW_REP = 20;
     return contentOf(name, link) || contentOf(name.toLowerCase(), link);
   }
 
-  // The picture card grows to fill the frame, so 800 leaves a real preview.
-  // A 3Speak player stays 16:9, and 750 fits that player plus the card text.
-  // A card with no media fits in 600.
+  // Text fits in 600. A preview image or a 3Speak player uses 800.
   function embedFrameHeight(post) {
-    if (post && embedSpeakHtml(post)) return 750;
-    if (post && embedImageHtml(post)) return 800;
+    if (post && (embedSpeakHtml(post) || embedImageHtml(post))) return 800;
     return 600;
   }
 
