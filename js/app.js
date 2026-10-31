@@ -643,6 +643,10 @@ let CS77_FILTER_LOW_REP = 20;
   function bindNodeMenus() {
     paintNodeMenus();
     setNodeLabel();
+    window.addEventListener("cs77-node-change", () => {
+      paintNodeMenus();
+      setNodeLabel();
+    });
 
     document.querySelectorAll(".node-menu").forEach((menu) => {
       const trigger = menu.querySelector(".status-pill");
@@ -28012,6 +28016,17 @@ let CS77_FILTER_LOW_REP = 20;
     return `
       <form class="settings-form" id="settingsNodesForm" autocomplete="off">
         <div class="settings-field">
+          <label class="settings-label" for="settingsAutoNode">Switch automatically</label>
+          <label class="cyber-toggle">
+            <input id="settingsAutoNode" type="checkbox">
+            <span class="cyber-toggle-track" aria-hidden="true"></span>
+            <span class="cyber-toggle-copy">
+              <span class="cyber-toggle-title">Switch automatically</span>
+              <span class="cyber-toggle-sub">automatically switch and fall back to another node</span>
+            </span>
+          </label>
+        </div>
+        <div class="settings-field">
           <div class="settings-label" id="settingsNodesLabel">Custom nodes</div>
           <div id="settingsNodeRows"></div>
           <div class="settings-node-row" id="settingsNodeDraft">
@@ -28128,6 +28143,13 @@ let CS77_FILTER_LOW_REP = 20;
     settingsNodeBusy = false;
     const form = $("#settingsNodesForm");
     if (!form) return;
+    const auto = $("#settingsAutoNode");
+    if (auto) {
+      auto.checked = HiveApi.autoSwitch();
+      auto.addEventListener("change", () => {
+        HiveApi.setAutoSwitch(auto.checked);
+      });
+    }
     paintSettingsNodeRows();
     form.addEventListener("submit", (e) => {
       e.preventDefault();

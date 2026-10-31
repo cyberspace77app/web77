@@ -9,10 +9,14 @@
   const PAGE_SIZE = 20;
   const NODE_STORAGE_KEY = "cs77_hive_node";
   const CUSTOM_NODES_KEY = "cs77_hive_custom_nodes";
+  // Missing key stays on. "0" is the explicit off.
+  const AUTO_SWITCH_KEY = "cs77_hive_auto_switch";
   const CUSTOM_NODE_LIMIT = 8;
+  // Full page load only. About one reload in 21 moves to another public node.
+  const NODE_SWITCH_ROLL = 21;
 
   // Hive public nodes
-  const FALLBACK_NODES = [
+  const HIVE_NODES = [
     "https://api.hive.blog",
     "https://api.openhive.network",
     "https://api.c0ff33a.uk",
@@ -52,7 +56,7 @@
       const raw = localStorage.getItem(CUSTOM_NODES_KEY);
       const list = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(list)) return [];
-      const seen = new Set(FALLBACK_NODES);
+      const seen = new Set(HIVE_NODES);
       const out = [];
       for (let i = 0; i < list.length; i++) {
         const parsed = parseNodeInput(list[i]);
@@ -83,7 +87,7 @@
     }
     const parsed = parseNodeInput(raw);
     if (!parsed.url) return "";
-    if (FALLBACK_NODES.includes(parsed.url)) return parsed.url;
+    if (HIVE_NODES.includes(parsed.url)) return parsed.url;
     const customs = readCustomNodes();
     if (!customs.includes(parsed.url)) {
       customs.push(parsed.url);
@@ -100,16 +104,47 @@
     }
   }
 
-  let activeNode = readStoredNode() || FALLBACK_NODES[0];
+  function readAutoSwitch() {
+    try {
+      return localStorage.getItem(AUTO_SWITCH_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  }
+
+  function setAutoSwitch(on) {
+    try {
+      localStorage.setItem(AUTO_SWITCH_KEY, on ? "1" : "0");
+    } catch {
+      /* private mode / quota */
+    }
+  }
+
+  let activeNode = readStoredNode() || HIVE_NODES[0];
+
+  // Dice once per full load. A hit leaves the current node for another public one.
+  function rollAnotherNode() {
+    if (!readAutoSwitch()) return;
+    if (!(Math.random() < 1 / NODE_SWITCH_ROLL)) return;
+    const pool = [];
+    for (let i = 0; i < HIVE_NODES.length; i++) {
+      if (HIVE_NODES[i] !== activeNode) pool.push(HIVE_NODES[i]);
+    }
+    if (!pool.length) return;
+    activeNode = pool[Math.floor(Math.random() * pool.length)];
+    writeStoredNode(activeNode);
+  }
+
+  rollAnotherNode();
 
   function getKnownNodes() {
-    return FALLBACK_NODES.concat(readCustomNodes());
+    return HIVE_NODES.concat(readCustomNodes());
   }
 
   function setActiveNode(url) {
     const parsed = parseNodeInput(url);
     if (!parsed.url) return false;
-    if (!FALLBACK_NODES.includes(parsed.url) && !readCustomNodes().includes(parsed.url)) {
+    if (!HIVE_NODES.includes(parsed.url) && !readCustomNodes().includes(parsed.url)) {
       return false;
     }
     activeNode = parsed.url;
@@ -120,7 +155,7 @@
   function saveCustomNode(url) {
     const parsed = parseNodeInput(url);
     if (!parsed.url) return false;
-    if (!FALLBACK_NODES.includes(parsed.url)) {
+    if (!HIVE_NODES.includes(parsed.url)) {
       const customs = readCustomNodes().filter((item) => item !== parsed.url);
       customs.push(parsed.url);
       writeCustomNodes(customs.slice(-CUSTOM_NODE_LIMIT));
@@ -134,7 +169,7 @@
 
   function addCustomNode(url) {
     const parsed = parseNodeInput(url);
-    if (!parsed.url || FALLBACK_NODES.includes(parsed.url)) return false;
+    if (!parsed.url || HIVE_NODES.includes(parsed.url)) return false;
     const customs = readCustomNodes();
     if (customs.includes(parsed.url) || customs.length >= CUSTOM_NODE_LIMIT) return false;
     customs.push(parsed.url);
@@ -149,7 +184,7 @@
     if (!customs.includes(parsed.url)) return false;
     writeCustomNodes(customs.filter((item) => item !== parsed.url));
     if (activeNode === parsed.url) {
-      activeNode = FALLBACK_NODES[0];
+      activeNode = HIVE_NODES[0];
       writeStoredNode(activeNode);
     }
     return true;
@@ -160,7 +195,19 @@
   }
 
   function nodeList() {
-    return [...new Set([activeNode, ...FALLBACK_NODES])];
+    if (!readAutoSwitch()) return [activeNode];
+    return [...new Set([activeNode, ...HIVE_NODES])];
+  }
+
+  function rememberNode(url) {
+    if (!url || url === activeNode) return;
+    activeNode = url;
+    writeStoredNode(url);
+    try {
+      window.dispatchEvent(new CustomEvent("cs77-node-change"));
+    } catch {
+      /* no window */
+    }
   }
 
   function isNetworkError(err) {
@@ -294,13 +341,15 @@
 
   async function hiveRpc(method, params, preserveBig) {
     const nodes = nodeList();
+    const started = activeNode;
     let lastErr;
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       try {
         const result = await hiveRpcOnce(node, method, params, undefined, preserveBig);
-        activeNode = node;
+        // An older call must not pull the app back onto a node it already left.
+        if (node !== started && activeNode === started) rememberNode(node);
         return result;
       } catch (err) {
         lastErr = err;
@@ -1866,6 +1915,8 @@
     hiveToVests,
     getActiveNode,
     getActiveHost,
+    autoSwitch: readAutoSwitch,
+    setAutoSwitch,
     getPollRecord,
     getPollChoices,
     getPollTallies,
