@@ -1390,6 +1390,8 @@ let CS77_FILTER_LOW_REP = 20;
       body: node.body || "",
       parent_author: node.parent_author || "",
       parent_permlink: node.parent_permlink || "",
+      root_title: node.root_title || "",
+      created: node.created || "",
       json_metadata: node.json_metadata,
     });
   }
@@ -28889,6 +28891,14 @@ let CS77_FILTER_LOW_REP = 20;
       .replace(/</g, "&lt;");
   }
 
+  function embedScriptUrl() {
+    try {
+      return new URL("/js/embed.js", location.href).href;
+    } catch (err) {
+      return "/js/embed.js";
+    }
+  }
+
   function embedKnownPost(author, permlink) {
     const loaded = findLoadedPost(author, permlink);
     if (loaded) return loaded;
@@ -28897,26 +28907,34 @@ let CS77_FILTER_LOW_REP = 20;
     return contentOf(name, link) || contentOf(name.toLowerCase(), link);
   }
 
-  // Text fits in 600. A preview image or a 3Speak player uses 800.
-  function embedFrameHeight(post) {
-    if (post && (embedSpeakHtml(post) || embedImageHtml(post))) return 800;
-    return 600;
+  function embedPostComplete(post) {
+    if (!post || !post.created) return false;
+    if (isRootPost(post)) return true;
+    return Boolean(String(post.title || "").trim() || String(post.root_title || "").trim());
   }
 
-  function embedSnippet(author, permlink, kind, post) {
+  function embedSnippet(author, permlink, post) {
     const src = embedAttr(embedFrameUrl(author, permlink));
-    const name = String(author || "").replace(/^@/, "");
-    const what = kind === "comment" ? "comment" : "post";
-    const title = embedAttr("CyberSpace77 " + what + " by @" + name);
-    const height = embedFrameHeight(post);
+    const script = embedAttr(embedScriptUrl());
+    const name = String((post && post.author) || author || "").replace(/^@/, "");
+    const title = post ? embedTitleText(post) : "Post";
+    const when = post ? formatCreated(post.created) : "";
     return (
-      '<iframe src="' +
+      '<blockquote class="cyberspace77-embed">\n' +
+      "  <p>" +
+      HiveMd.escapeHtml(title) +
+      "</p>\n" +
+      "  <p>&mdash; @" +
+      HiveMd.escapeHtml(name) +
+      ' <a href="' +
       src +
-      '" title="' +
-      title +
-      '" width="100%" height="' +
-      height +
-      '" style="border:0;width:100%;max-width:100%;background:transparent;" allowtransparency="true"></iframe>'
+      '">' +
+      HiveMd.escapeHtml(when || "View on CyberSpace77") +
+      "</a></p>\n" +
+      "</blockquote>\n" +
+      '<script async src="' +
+      script +
+      '" charset="utf-8"></script>'
     );
   }
 
@@ -28954,20 +28972,20 @@ let CS77_FILTER_LOW_REP = 20;
     const token = ++embedDialogToken;
     const post = embedKnownPost(name, link);
     resetEmbedCopyLabel();
-    area.value = embedSnippet(name, link, kind, post);
+    area.value = embedSnippet(name, link, post);
     ov.hidden = false;
     // Focusing the field on a phone opens the keyboard. A tap still selects the snippet.
     if (!isMobileViewport()) {
       area.focus();
       area.select();
     }
-    if (post) return;
+    if (embedPostComplete(post)) return;
     HiveApi.getPost(name, link)
       .then((loaded) => {
         if (token !== embedDialogToken || !embedDialogOpen()) return;
         const btn = $("#embedCopy");
         if (btn && btn.classList.contains("is-copied")) return;
-        area.value = embedSnippet(name, link, kind, loaded);
+        area.value = embedSnippet(name, link, loaded);
         if (document.activeElement === area) area.select();
       })
       .catch(() => {});
@@ -29122,6 +29140,41 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   let embedGen = 0;
+  let embedSizeObserver = null;
+  let embedSizeLast = 0;
+
+  function stopEmbedSizeWatch() {
+    if (embedSizeObserver) embedSizeObserver.disconnect();
+    embedSizeObserver = null;
+    embedSizeLast = 0;
+  }
+
+  // The host iframe sizes itself from this height. Measure the card column,
+  // not the viewport, or a stretch layout would lock the frame to its start size.
+  function postEmbedSize() {
+    if (!document.documentElement.classList.contains("is-embed") || window.parent === window) return;
+    const app = document.querySelector(".app");
+    if (!app) return;
+    const height = Math.ceil(app.getBoundingClientRect().height);
+    if (height < 1 || height === embedSizeLast) return;
+    embedSizeLast = height;
+    window.parent.postMessage({ type: "cs77-embed-size", height: height }, "*");
+  }
+
+  function watchEmbedSize() {
+    if (!document.documentElement.classList.contains("is-embed")) return;
+    const app = document.querySelector(".app");
+    if (app && typeof ResizeObserver === "function") {
+      if (!embedSizeObserver) {
+        embedSizeObserver = new ResizeObserver(function () {
+          postEmbedSize();
+        });
+      }
+      embedSizeObserver.observe(app);
+    }
+    postEmbedSize();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(postEmbedSize);
+  }
 
   async function renderEmbed(author, permlink) {
     const gen = ++embedGen;
@@ -29131,6 +29184,7 @@ let CS77_FILTER_LOW_REP = 20;
     const link = String(permlink || "");
     setPageMeta("CyberSpace77");
     view.innerHTML = embedMessageHtml(name, link, "Loading…");
+    watchEmbedSize();
     let post = null;
     let failed = false;
     try {
@@ -29144,6 +29198,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (failed) {
       setPageMeta("CyberSpace77");
       view.innerHTML = embedMessageHtml(name, link, "Could not load this post.");
+      watchEmbedSize();
       return;
     }
     if (!post || !post.author || !post.permlink || isBlacklistedPost(post)) {
@@ -29153,10 +29208,12 @@ let CS77_FILTER_LOW_REP = 20;
         link,
         post && isBlacklistedPost(post) ? "This post is not available." : "This post could not be found."
       );
+      watchEmbedSize();
       return;
     }
     setPageMeta(embedTitleText(post) + " — CyberSpace77");
     view.innerHTML = embedCardHtml(post);
+    watchEmbedSize();
   }
 
   function routeStill(key) {
@@ -29195,6 +29252,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
+    stopEmbedSizeWatch();
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;

@@ -8951,15 +8951,20 @@ min-height: 0;
 
 html.is-embed,
 html.is-embed body {
-  height: 100%;
-  min-height: 100%;
+  height: auto;
+  min-height: 0;
   background: transparent;
   background-color: transparent;
   color-scheme: normal;
 }
 
+html.is-embed {
+  overflow: hidden;
+}
+
 html.is-embed body {
   display: block;
+  margin: 0;
   overflow: hidden;
 }
 
@@ -8975,40 +8980,21 @@ html.is-embed .welcome-flyer {
 }
 
 html.is-embed .app {
-  height: 100%;
+  height: auto;
   min-height: 0;
+  flex: none;
   max-width: none;
   margin: 0;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: safe center;
-  overflow: auto;
+  padding: 32px 20px;
+  display: block;
+  overflow: visible;
   background: transparent;
 }
 
 html.is-embed #view {
-  flex: 0 0 auto;
   width: 100%;
   max-width: 36rem;
   margin: 0 auto;
-}
-
-html.is-embed #view:has(.card-thumb) {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: min-content;
-}
-
-html.is-embed .embed-card:has(.card-thumb) {
-  flex: 1 1 auto;
-  min-height: min-content;
-}
-
-html.is-embed .embed-card:has(.card-thumb) > :not(.card-thumb) {
-  flex-shrink: 0;
 }
 
 a.embed-card,
@@ -9121,10 +9107,11 @@ html.is-embed .embed-card .card-meta .meta-time {
 }
 
 html.is-embed .embed-card .card-thumb {
-  flex: 1 1 0;
+  flex: none;
   width: 100%;
-  min-height: 220px;
-  max-height: none;
+  height: auto;
+  min-height: 0;
+  max-height: 480px;
   object-fit: cover;
 }
 
