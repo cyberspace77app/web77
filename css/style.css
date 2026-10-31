@@ -6582,8 +6582,50 @@ body:has(#pollVotesOverlay:not([hidden])) {
   margin: 0 0 1rem;
 }
 
-.publish-poll > .publish-field-label:first-child {
+.publish-poll > .publish-poll-choices-label {
   margin-top: 0;
+}
+
+.publish-poll-lock {
+  display: none;
+}
+
+.publish-card.is-poll-locked .publish-poll-lock {
+  display: block;
+}
+
+.publish-poll-lock-note {
+  margin: 0 0 0.85rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--gray);
+}
+
+.publish-card.is-poll-locked .publish-poll-lock .publish-field-label {
+  margin-top: 0;
+}
+
+.publish-card.is-poll-locked #publishPollBtn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.publish-card.is-poll-locked .publish-poll input,
+.publish-card.is-poll-locked .publish-poll select {
+  cursor: default;
+  opacity: 1;
+  color: var(--yellow);
+  -webkit-text-fill-color: var(--yellow);
+}
+
+.publish-card.is-poll-locked .publish-poll select {
+  background-image: none;
+  padding-right: 0.95rem;
+}
+
+.publish-card.is-poll-locked #publishPollAdd,
+.publish-card.is-poll-locked .publish-poll-remove {
+  display: none;
 }
 
 .publish-poll-choice {

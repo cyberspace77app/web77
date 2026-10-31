@@ -6176,6 +6176,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (tagsWrap) tagsWrap.hidden = comment;
     if (body) body.placeholder = comment ? "Write your comment…" : "Write your post…";
     paintPublishTitlePlaceholder();
+    paintPublishPollLock();
     if (pageEl) {
       pageEl.classList.toggle("is-editing", editing);
       pageEl.classList.toggle("is-editing-comment", comment);
@@ -7014,19 +7015,22 @@ let CS77_FILTER_LOW_REP = 20;
   function paintPublishTitlePlaceholder() {
     const title = $("#publishTitle");
     if (!title) return;
-    title.placeholder = !editingComment() && publishPollIsOn() ? "Poll question…" : "Teaser…";
+    title.placeholder =
+      !editingComment() && publishPollIsOn() && !editingLockedPoll() ? "Poll question…" : "Teaser…";
   }
 
   function setPublishPollOpen(on) {
     const btn = $("#publishPollBtn");
     const panel = $("#publishPoll");
-    const open = Boolean(on) && !editingComment();
+    const locked = editingLockedPoll();
+    const open = locked || (Boolean(on) && !editingComment());
     if (btn) {
       btn.classList.toggle("is-set", open);
       btn.setAttribute("aria-pressed", open ? "true" : "false");
     }
     if (panel) panel.hidden = !open;
     paintPublishTitlePlaceholder();
+    paintPublishPollLock();
   }
 
   function readPublishPollChoices() {
@@ -7043,11 +7047,12 @@ let CS77_FILTER_LOW_REP = 20;
     const list = Array.isArray(choices) ? choices.map((item) => String(item == null ? "" : item).slice(0, 128)) : [];
     while (list.length < 2) list.push("");
     if (list.length > PUBLISH_POLL_CHOICE_MAX) list.length = PUBLISH_POLL_CHOICE_MAX;
+    const locked = editingLockedPoll();
     root.innerHTML = list
       .map((text, i) => {
         const n = i + 1;
         const remove =
-          list.length > 2
+          !locked && list.length > 2
             ? `<button type="button" class="publish-beneficiary-remove publish-poll-remove" aria-label="Remove choice ${n}">×</button>`
             : "";
         return `<div class="publish-poll-choice">
@@ -7057,7 +7062,8 @@ let CS77_FILTER_LOW_REP = 20;
         </div>`;
       })
       .join("");
-    if (add) add.disabled = list.length >= PUBLISH_POLL_CHOICE_MAX;
+    if (add) add.disabled = locked || list.length >= PUBLISH_POLL_CHOICE_MAX;
+    paintPublishPollLock();
   }
 
   function readPublishPoll() {
@@ -7104,6 +7110,99 @@ let CS77_FILTER_LOW_REP = 20;
       else panel.removeAttribute("data-hide");
     }
     setPublishPollOpen(on);
+  }
+
+  // Hive ignores edits to poll metadata. These keys stay as they were posted,
+  // including a title that is separate from the post teaser.
+  const POLL_META_KEYS = [
+    "content_type",
+    "version",
+    "title",
+    "question",
+    "choices",
+    "preferred_interpretation",
+    "token",
+    "end_time",
+    "max_choices_voted",
+    "allow_vote_changes",
+    "ui_hide_res_until_voted",
+    "filters",
+    "community_membership",
+    "hive_votes",
+    "hide_votes",
+    "vote_change",
+  ];
+
+  function editingLockedPoll() {
+    return Boolean(publishEdit && publishEdit.pollMeta && !publishEdit.comment);
+  }
+
+  function clonePublishMeta(value) {
+    if (value == null || typeof value !== "object") return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (err) {
+      return value;
+    }
+  }
+
+  function pollMetaSnapshot(raw) {
+    if (!window.HiveMd) return null;
+    const meta = HiveMd.parseJsonMetadata(raw);
+    if (String(meta.content_type || "").toLowerCase() !== "poll") return null;
+    const snap = {};
+    POLL_META_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(meta, key)) snap[key] = clonePublishMeta(meta[key]);
+    });
+    return snap;
+  }
+
+  function lockedPollTitleText(snap) {
+    if (!snap) return "";
+    if (typeof snap.title === "string" && snap.title.trim()) return snap.title;
+    if (snap.question != null && String(snap.question).trim()) return String(snap.question);
+    return "";
+  }
+
+  function paintPublishPollLock() {
+    const locked = editingLockedPoll();
+    const page = $("#publishPage");
+    if (page) page.classList.toggle("is-poll-locked", locked);
+    const lock = $("#publishPollLock");
+    if (lock) lock.hidden = !locked;
+    const pollTitle = locked ? lockedPollTitleText(publishEdit.pollMeta) : "";
+    const titleEl = $("#publishPollTitle");
+    const titleLabel = $("#publishPollTitleLabel");
+    if (titleEl) {
+      titleEl.value = pollTitle;
+      titleEl.hidden = !pollTitle;
+      titleEl.readOnly = true;
+    }
+    if (titleLabel) titleLabel.hidden = !pollTitle;
+    const btn = $("#publishPollBtn");
+    if (btn) {
+      btn.disabled = locked;
+      btn.textContent = locked ? "Poll" : "Create poll";
+      btn.title = locked ? "A poll cannot be changed after it is posted." : "Create poll";
+    }
+    const panel = $("#publishPoll");
+    if (!panel) return;
+    panel.querySelectorAll("input, select, button").forEach((el) => {
+      if (el.id === "publishPollTitle" || el.id === "publishPollAdd") return;
+      el.disabled = locked;
+      if (el.tagName === "INPUT") el.readOnly = locked;
+    });
+    const add = $("#publishPollAdd");
+    if (add && locked) add.disabled = true;
+  }
+
+  function applyLockedPollMetadata(jsonMetadata) {
+    const snap = publishEdit && publishEdit.pollMeta;
+    if (!snap || !jsonMetadata) return;
+    POLL_META_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(snap, key)) jsonMetadata[key] = clonePublishMeta(snap[key]);
+      else delete jsonMetadata[key];
+    });
   }
 
   function publishPollFilledChoices(poll) {
@@ -8803,7 +8902,8 @@ let CS77_FILTER_LOW_REP = 20;
       setPublishStatus(commentEdit ? "Write the comment." : "Write the post body.", true);
       return;
     }
-    if (!commentEdit && publishPollIsOn()) {
+    const lockedPoll = Boolean(!commentEdit && publishEdit && publishEdit.pollMeta);
+    if (!commentEdit && !lockedPoll && publishPollIsOn()) {
       const pollError = publishPollError(readPublishPoll());
       if (pollError) {
         setPublishStatus(pollError, true);
@@ -8870,10 +8970,14 @@ let CS77_FILTER_LOW_REP = 20;
     if (!commentEdit) {
       applyLocationMetadata(jsonMetadata, body);
       applyDescriptionMetadata(jsonMetadata, normalizedPublishDescription());
-      const pollError = applyPollMetadata(jsonMetadata, title);
-      if (pollError) {
-        setPublishStatus(pollError, true);
-        return;
+      if (lockedPoll) {
+        applyLockedPollMetadata(jsonMetadata);
+      } else {
+        const pollError = applyPollMetadata(jsonMetadata, title);
+        if (pollError) {
+          setPublishStatus(pollError, true);
+          return;
+        }
       }
     }
 
@@ -9018,12 +9122,14 @@ let CS77_FILTER_LOW_REP = 20;
     cancelPublishCommunityCheck();
     setPublishDestNote("");
     const comment = !isRootPost(post);
+    const pollMeta = comment ? null : pollMetaSnapshot(post.json_metadata);
     publishEdit = {
       author: post.author,
       permlink: post.permlink,
       parentAuthor: post.parent_author || "",
       parentPermlink: post.parent_permlink || post.category || "",
       jsonMetadata: post.json_metadata,
+      pollMeta,
       comment,
       title: post.title || "",
       tags: comment ? metadataTags(post) : null,
@@ -13752,19 +13858,21 @@ let CS77_FILTER_LOW_REP = 20;
         reward: publishEdit ? "default" : reward,
         beneficiaries,
       });
-      const loadedPoll = data.poll && typeof data.poll === "object" ? data.poll : null;
-      applyPublishPoll(
-        loadedPoll
-          ? {
-              on: true,
-              choices: Array.isArray(loadedPoll.choices) ? loadedPoll.choices : ["", ""],
-              days: loadedPoll.days,
-              age: loadedPoll.age,
-              interpretation: loadedPoll.interpretation,
-              max: loadedPoll.max,
-            }
-          : null
-      );
+      if (!editingLockedPoll()) {
+        const loadedPoll = data.poll && typeof data.poll === "object" ? data.poll : null;
+        applyPublishPoll(
+          loadedPoll
+            ? {
+                on: true,
+                choices: Array.isArray(loadedPoll.choices) ? loadedPoll.choices : ["", ""],
+                days: loadedPoll.days,
+                age: loadedPoll.age,
+                interpretation: loadedPoll.interpretation,
+                max: loadedPoll.max,
+              }
+            : null
+        );
+      }
       if (
         description.trim() ||
         (!publishEdit && (reward !== "default" || beneficiaries.length))
@@ -30271,7 +30379,7 @@ let CS77_FILTER_LOW_REP = 20;
         }
         if (e.target.closest("#publishPollBtn")) {
           e.preventDefault();
-          if (editingComment()) return;
+          if (editingComment() || editingLockedPoll()) return;
           const next = !publishPollIsOn();
           if (next && document.querySelectorAll("#publishPollChoices input").length < 2) {
             const current = readPublishPoll();
@@ -30289,6 +30397,7 @@ let CS77_FILTER_LOW_REP = 20;
         }
         if (e.target.closest("#publishPollAdd")) {
           e.preventDefault();
+          if (editingLockedPoll()) return;
           const rows = readPublishPollChoices();
           if (rows.length >= PUBLISH_POLL_CHOICE_MAX) return;
           rows.push("");
@@ -30302,6 +30411,7 @@ let CS77_FILTER_LOW_REP = 20;
         const removePoll = e.target.closest(".publish-poll-remove");
         if (removePoll) {
           e.preventDefault();
+          if (editingLockedPoll()) return;
           const row = removePoll.closest(".publish-poll-choice");
           const rows = readPublishPollChoices();
           const index = row ? Array.from(row.parentNode.children).indexOf(row) : -1;
