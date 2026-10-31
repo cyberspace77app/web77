@@ -15359,7 +15359,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     const note = section.querySelector(".poll-note");
-    if (note) note.textContent = state.indexingVote ? "Indexing vote..." : "";
+    if (note) note.textContent = state.indexingVote ? "Indexing vote…" : "";
   }
 
   function paintPollBars(section, state) {
