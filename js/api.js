@@ -8,11 +8,10 @@
   const NODE_TEST_TIMEOUT_MS = 12000;
   const PAGE_SIZE = 20;
   const NODE_STORAGE_KEY = "cs77_hive_node";
-  const CUSTOM_NODES_KEY = "cs77_hive_custom_nodes";
-  // Missing key stays on. "0" is the explicit off.
   const AUTO_SWITCH_KEY = "cs77_hive_auto_switch";
+  const CUSTOM_NODES_KEY = "cs77_hive_custom_nodes";
   const CUSTOM_NODE_LIMIT = 8;
-  // Full page load only. About one reload in 21 moves to another public node.
+  // Load balancing on full page load. About one reload in 21 moves to another public node.
   const NODE_SWITCH_ROLL = 21;
 
   // Hive public nodes
