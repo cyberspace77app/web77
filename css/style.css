@@ -2480,6 +2480,7 @@ a.community:hover {
 
 .post-card > .nsfw-hold {
   margin: 0;
+  background: transparent;
 }
 
 .nsfw-hold.is-portrait {
