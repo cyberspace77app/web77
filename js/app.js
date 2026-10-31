@@ -28889,21 +28889,42 @@ let CS77_FILTER_LOW_REP = 20;
       .replace(/</g, "&lt;");
   }
 
-  function embedSnippet(author, permlink, kind) {
+  function embedKnownPost(author, permlink) {
+    const loaded = findLoadedPost(author, permlink);
+    if (loaded) return loaded;
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    return contentOf(name, link) || contentOf(name.toLowerCase(), link);
+  }
+
+  // The picture card grows to fill the frame, so 800 leaves a real preview.
+  // A 3Speak player stays 16:9, and 750 fits that player plus the card text.
+  // A card with no media fits in 600.
+  function embedFrameHeight(post) {
+    if (post && embedSpeakHtml(post)) return 750;
+    if (post && embedImageHtml(post)) return 800;
+    return 600;
+  }
+
+  function embedSnippet(author, permlink, kind, post) {
     const src = embedAttr(embedFrameUrl(author, permlink));
     const name = String(author || "").replace(/^@/, "");
     const what = kind === "comment" ? "comment" : "post";
     const title = embedAttr("CyberSpace77 " + what + " by @" + name);
+    const height = embedFrameHeight(post);
     return (
       '<iframe src="' +
       src +
       '" title="' +
       title +
-      '" width="600" height="680" style="border:0;max-width:100%;background:transparent;" allowtransparency="true"></iframe>'
+      '" width="100%" height="' +
+      height +
+      '" style="border:0;width:100%;max-width:100%;background:transparent;" allowtransparency="true"></iframe>'
     );
   }
 
   let embedCopyTimer = 0;
+  let embedDialogToken = 0;
 
   function embedDialogOpen() {
     const el = $("#embedOverlay");
@@ -28933,11 +28954,26 @@ let CS77_FILTER_LOW_REP = 20;
     const area = $("#embedCode");
     const ov = $("#embedOverlay");
     if (!name || !link || !area || !ov) return;
+    const token = ++embedDialogToken;
+    const post = embedKnownPost(name, link);
     resetEmbedCopyLabel();
-    area.value = embedSnippet(name, link, kind);
+    area.value = embedSnippet(name, link, kind, post);
     ov.hidden = false;
-    area.focus();
-    area.select();
+    // Focusing the field on a phone opens the keyboard. A tap still selects the snippet.
+    if (!isMobileViewport()) {
+      area.focus();
+      area.select();
+    }
+    if (post) return;
+    HiveApi.getPost(name, link)
+      .then((loaded) => {
+        if (token !== embedDialogToken || !embedDialogOpen()) return;
+        const btn = $("#embedCopy");
+        if (btn && btn.classList.contains("is-copied")) return;
+        area.value = embedSnippet(name, link, kind, loaded);
+        if (document.activeElement === area) area.select();
+      })
+      .catch(() => {});
   }
 
   function copyEmbedCode() {
@@ -29019,6 +29055,22 @@ let CS77_FILTER_LOW_REP = 20;
     return `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="" onerror="this.remove()">`;
   }
 
+  function embedSpeakSrc(src) {
+    const next = String(src || "").replace(/([?&])autoplay=[^&]*/gi, "$1autoplay=0");
+    if (/[?&]autoplay=0(?:&|$)/.test(next)) return next;
+    return next + (next.indexOf("?") === -1 ? "?" : "&") + "autoplay=0";
+  }
+
+  function embedSpeakHtml(post) {
+    if (!showNsfwContent() && postHasNsfw(post)) return "";
+    const html = HiveMd.previewVideo(post);
+    if (!html || feedPlayerKind(html) !== "3speak") return "";
+    const paused = String(html).replace(/\bsrc="([^"]*)"/i, function (_full, src) {
+      return 'src="' + embedSpeakSrc(src) + '"';
+    });
+    return `<div class="card-video embed-speak">${paused}</div>`;
+  }
+
   function embedMetaHtml(post) {
     const name = String(post.author || "").replace(/^@/, "");
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
@@ -29057,7 +29109,14 @@ let CS77_FILTER_LOW_REP = 20;
     const excerptHtml = excerpt
       ? `<p class="card-excerpt">${HiveMd.escapeHtml(excerpt)}</p>`
       : "";
-    return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer" data-author="${author}" data-permlink="${permlink}">${embedMetaHtml(post)}<h2>${HiveMd.escapeHtml(embedTitleText(post))}</h2>${excerptHtml}${embedImageHtml(post)}${embedStatsHtml(post)}</a>`;
+    const speak = embedSpeakHtml(post);
+    const media = speak || embedImageHtml(post);
+    const inner = `${embedMetaHtml(post)}<h2>${HiveMd.escapeHtml(embedTitleText(post))}</h2>${excerptHtml}${media}${embedStatsHtml(post)}`;
+    if (!speak) {
+      return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer" data-author="${author}" data-permlink="${permlink}">${inner}</a>`;
+    }
+    const label = HiveMd.escapeHtml(embedTitleText(post));
+    return `<article class="post-card embed-card" data-author="${author}" data-permlink="${permlink}"><a class="embed-hit" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="${label}"></a>${inner}</article>`;
   }
 
   function embedMessageHtml(author, permlink, message) {

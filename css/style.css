@@ -9028,9 +9028,21 @@ html.is-embed .embed-card:focus {
   gap: 0.85rem;
 }
 
-a.embed-card:focus-visible {
+a.embed-card:focus-visible,
+.embed-hit:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 3px;
+}
+
+.embed-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+html.is-embed .embed-card .embed-speak {
+  position: relative;
+  z-index: 2;
 }
 
 html.is-embed .embed-card .card-meta {
