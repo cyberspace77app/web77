@@ -38,6 +38,8 @@ let CS77_FILTER_LOW_REP = 20;
     comment: "cs77_downvote_weight_comment",
   };
   const SHOW_NSFW_KEY = "cs77_show_nsfw";
+  // Missing key stays on. "0" is the explicit off.
+  const AUTOPLAY_VIDEOS_KEY = "cs77_autoplay_videos";
   const VOTERS_PAGE = 40;
   const VOTERS_SCROLL_PX = 72;
   const IMAGE_HOST = "https://images.hive.blog";
@@ -10612,6 +10614,22 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function autoplayVideos() {
+    try {
+      return localStorage.getItem(AUTOPLAY_VIDEOS_KEY) !== "0";
+    } catch (err) {
+      return true;
+    }
+  }
+
+  function storeAutoplayVideos(on) {
+    try {
+      localStorage.setItem(AUTOPLAY_VIDEOS_KEY, on ? "1" : "0");
+    } catch (err) {
+      // The preference stays on when storage is blocked.
+    }
+  }
+
   function showNsfwContent() {
     try {
       return localStorage.getItem(SHOW_NSFW_KEY) === "1";
@@ -10786,6 +10804,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     hold.replaceWith(frag);
+    queueFeedVideoSync();
   }
 
   function revealAllNsfwHolds() {
@@ -10869,6 +10888,328 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.proxyImage(raw, 480);
   }
 
+  // Rumble, PeerTube, Odysee, and Twitch have no pause command that keeps
+  // the place. They start from a muted autoplay URL and stop when the
+  // original player address is restored. The other kinds pause in place.
+  const FEED_SWAP_PARAMS = {
+    rumble: { autoplay: "2" },
+    peertube: { autoplay: "1", muted: "1" },
+    odysee: { autoplay: "true" },
+    twitch: { autoplay: "true", muted: "true" },
+  };
+  let feedVideoCurrent = null;
+  let feedVideoSyncQueued = false;
+  let feedVideoWatchStarted = false;
+  const feedVideoTimers = new WeakMap();
+
+  function pageOrigin() {
+    try {
+      if (location.protocol !== "http:" && location.protocol !== "https:") return "";
+      return location.origin || "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  // The card and the post body share one embed. The kind is stamped only on
+  // the card so autoplay never starts inside an open post.
+  function feedPlayerKind(html) {
+    const s = String(html || "");
+    if (/youtube(?:-nocookie)?\.com\/embed\//i.test(s)) return "youtube";
+    if (/play\.3speak\.tv\//i.test(s)) return "3speak";
+    if (/player\.vimeo\.com\/video\//i.test(s)) return "vimeo";
+    if (/rumble\.com\/embed\//i.test(s)) return "rumble";
+    if (/peertube\.tv\/videos\/embed\//i.test(s)) return "peertube";
+    if (/play\.d\.tube\//i.test(s)) return "dtube";
+    if (/odysee\.com\/\$\/embed\//i.test(s)) return "odysee";
+    if (/skatehype\.com\/ifplay\.php/i.test(s)) return "skatehype";
+    if (/tiktok\.com\/player\//i.test(s)) return "tiktok";
+    if (/player\.twitch\.tv\/|clips\.twitch\.tv\/embed/i.test(s)) return "twitch";
+    if (/<video\b/i.test(s)) return "file";
+    if (/<iframe\b/i.test(s)) return "iframe";
+    return "";
+  }
+
+  function prepareCardPlayerSrc(src, kind) {
+    const url = new URL(src, location.href);
+    if (kind === "youtube") {
+      url.searchParams.set("enablejsapi", "1");
+      url.searchParams.set("playsinline", "1");
+      url.searchParams.set("mute", "1");
+      const origin = pageOrigin();
+      if (origin) url.searchParams.set("origin", origin);
+      return url.toString();
+    }
+    if (kind === "vimeo") {
+      url.searchParams.set("muted", "1");
+      url.searchParams.set("autopause", "0");
+      url.searchParams.set("playsinline", "1");
+      return url.toString();
+    }
+    if (kind === "3speak") {
+      // The watch id is author/permlink. Rebuilding the URL would encode the
+      // slash, so the mute flag is appended to the original address.
+      if (/[?&]mute=1(?:&|#|$)/.test(src)) return src;
+      const hashAt = src.indexOf("#");
+      const hash = hashAt >= 0 ? src.slice(hashAt) : "";
+      const base = hashAt >= 0 ? src.slice(0, hashAt) : src;
+      return base + (base.indexOf("?") === -1 ? "?" : "&") + "mute=1" + hash;
+    }
+    if (kind === "twitch") {
+      url.searchParams.set("muted", "true");
+      if (!url.searchParams.get("autoplay")) url.searchParams.set("autoplay", "false");
+      return url.toString();
+    }
+    return src;
+  }
+
+  function withAutoplayAllow(attrs) {
+    if (/\ballow\s*=\s*"[^"]*\bautoplay\b/i.test(attrs)) return attrs;
+    const quoted = /\ballow\s*=\s*"([^"]*)"/i.exec(attrs);
+    if (!quoted) return attrs + ' allow="autoplay; fullscreen; picture-in-picture"';
+    const next = quoted[1].replace(/^\s+|\s+$/g, "");
+    return attrs.replace(quoted[0], 'allow="' + (next ? next + "; autoplay" : "autoplay") + '"');
+  }
+
+  function prepareCardPlayer(html, kind) {
+    if (!html || !kind || kind === "file") return html;
+    return String(html).replace(/<iframe\b([^>]*)>/i, function (_full, attrs) {
+      let next = withAutoplayAllow(attrs);
+      const srcMatch = /\bsrc\s*=\s*"([^"]*)"/i.exec(next);
+      if (!srcMatch) return "<iframe" + next + ">";
+      const raw = srcMatch[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+      let updated = raw;
+      try {
+        updated = prepareCardPlayerSrc(raw, kind);
+      } catch (err) {
+        updated = raw;
+      }
+      if (updated !== raw) next = next.replace(srcMatch[0], 'src="' + HiveMd.escapeHtml(updated) + '"');
+      return "<iframe" + next + ">";
+    });
+  }
+
+  function postFeedPlayer(iframe, message) {
+    if (!iframe || !iframe.contentWindow) return;
+    let origin = "*";
+    try {
+      const src = iframe.getAttribute("src") || "";
+      if (src && src.indexOf("about:") !== 0) origin = new URL(src, location.href).origin;
+    } catch (err) {
+      origin = "*";
+    }
+    try {
+      iframe.contentWindow.postMessage(message, origin);
+    } catch (err) {
+      try {
+        iframe.contentWindow.postMessage(message, "*");
+      } catch (err2) {
+        // A player that is already gone cannot take the command.
+      }
+    }
+  }
+
+  function feedPlayerUrl(src, params) {
+    const url = new URL(src, location.href);
+    Object.keys(params).forEach((key) => {
+      url.searchParams.set(key, params[key]);
+    });
+    return url.toString();
+  }
+
+  function commandFeedPlayer(box, kind, action, mute) {
+    if (kind === "file") {
+      const video = box.querySelector("video");
+      if (!video) return;
+      if (action === "pause") {
+        video.pause();
+        return;
+      }
+      if (mute) video.muted = true;
+      video.playsInline = true;
+      const pending = video.play();
+      if (pending && typeof pending.catch === "function") pending.catch(function () {});
+      return;
+    }
+    const iframe = box.querySelector("iframe");
+    if (!iframe) return;
+    const swap = FEED_SWAP_PARAMS[kind];
+    if (swap) {
+      if (action === "pause") {
+        const rest = box.getAttribute("data-rest-src");
+        if (rest && iframe.getAttribute("src") !== rest) iframe.setAttribute("src", rest);
+        return;
+      }
+      const current = iframe.getAttribute("src") || "";
+      if (!current) return;
+      if (!box.getAttribute("data-rest-src")) box.setAttribute("data-rest-src", current);
+      let next = "";
+      try {
+        next = feedPlayerUrl(box.getAttribute("data-rest-src"), swap);
+      } catch (err) {
+        return;
+      }
+      if (next && iframe.getAttribute("src") !== next) iframe.setAttribute("src", next);
+      return;
+    }
+    if (kind === "youtube") {
+      if (action === "play") {
+        postFeedPlayer(iframe, JSON.stringify({ event: "listening", id: 1, channel: "widget" }));
+        if (mute) {
+          postFeedPlayer(iframe, JSON.stringify({ event: "command", func: "mute", args: [], channel: "widget" }));
+        }
+        postFeedPlayer(iframe, JSON.stringify({ event: "command", func: "playVideo", args: [], channel: "widget" }));
+      } else {
+        postFeedPlayer(iframe, JSON.stringify({ event: "command", func: "pauseVideo", args: [], channel: "widget" }));
+      }
+      return;
+    }
+    if (kind === "3speak") {
+      if (action === "play") {
+        if (mute) postFeedPlayer(iframe, { type: "mute" });
+        postFeedPlayer(iframe, { type: "play" });
+      } else {
+        postFeedPlayer(iframe, { type: "pause" });
+      }
+      return;
+    }
+    if (kind === "vimeo") {
+      if (action === "play") {
+        if (mute) postFeedPlayer(iframe, { method: "setMuted", value: true });
+        postFeedPlayer(iframe, { method: "play" });
+      } else {
+        postFeedPlayer(iframe, { method: "pause" });
+      }
+      return;
+    }
+    if (kind === "tiktok") {
+      if (action === "play") {
+        if (mute) postFeedPlayer(iframe, { "x-tiktok-player": true, type: "mute" });
+        postFeedPlayer(iframe, { "x-tiktok-player": true, type: "play" });
+      } else {
+        postFeedPlayer(iframe, { "x-tiktok-player": true, type: "pause" });
+      }
+      return;
+    }
+    if (action === "play") {
+      if (mute) {
+        postFeedPlayer(iframe, { type: "mute" });
+        postFeedPlayer(iframe, { method: "setMuted", value: true });
+      }
+      postFeedPlayer(iframe, { type: "play" });
+      postFeedPlayer(iframe, { method: "play" });
+    } else {
+      postFeedPlayer(iframe, { type: "pause" });
+      postFeedPlayer(iframe, { method: "pause" });
+    }
+  }
+
+  function clearFeedVideoTimers(box) {
+    const timers = feedVideoTimers.get(box);
+    if (!timers) return;
+    for (let i = 0; i < timers.length; i++) clearTimeout(timers[i]);
+    feedVideoTimers.delete(box);
+  }
+
+  function pauseFeedVideo(box) {
+    if (!box) return;
+    clearFeedVideoTimers(box);
+    commandFeedPlayer(box, box.getAttribute("data-player") || "", "pause", false);
+  }
+
+  function pauseCurrentFeedVideo() {
+    const current = feedVideoCurrent;
+    feedVideoCurrent = null;
+    if (current) pauseFeedVideo(current);
+  }
+
+  function playFeedVideo(box) {
+    clearFeedVideoTimers(box);
+    const kind = box.getAttribute("data-player") || "";
+    const started = Date.now();
+    const run = function () {
+      if (feedVideoCurrent !== box || !box.isConnected) return;
+      commandFeedPlayer(box, kind, "play", Date.now() - started < 450);
+    };
+    run();
+    if (FEED_SWAP_PARAMS[kind]) return;
+    feedVideoTimers.set(
+      box,
+      [300, 900, 1800].map((delay) => setTimeout(run, delay))
+    );
+  }
+
+  // A tall portrait clip can fill the screen while most of its own box is
+  // still outside. That one is on screen. A clip counts as outside once less
+  // than a few pixels of it remain in the viewport.
+  function feedVideoMetrics(el) {
+    if (!el || !el.isConnected || (el.closest && el.closest("template, .nsfw-hold"))) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return null;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (vh < 1) return null;
+    if (rect.bottom <= 0 || rect.top >= vh) return { onScreen: false, ready: false, rank: 0 };
+    const visible = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
+    if (visible < 8) return { onScreen: false, ready: false, rank: 0 };
+    const ratio = visible / rect.height;
+    const cover = visible / vh;
+    const dist = Math.abs(rect.top + rect.height / 2 - vh / 2) / vh;
+    return {
+      onScreen: true,
+      ready: ratio >= 0.55 || cover >= 0.5,
+      rank: Math.max(ratio, Math.min(1, cover)) - dist * 0.15,
+    };
+  }
+
+  function syncFeedVideos() {
+    feedVideoSyncQueued = false;
+    const current = feedVideoCurrent && feedVideoCurrent.isConnected ? feedVideoCurrent : null;
+    if (current !== feedVideoCurrent && feedVideoCurrent) pauseFeedVideo(feedVideoCurrent);
+    if (!autoplayVideos() || document.body.classList.contains("is-post-open")) {
+      if (current) pauseFeedVideo(current);
+      feedVideoCurrent = null;
+      return;
+    }
+    const nodes = document.querySelectorAll(".card-video[data-player]");
+    let best = null;
+    let bestRank = -1;
+    for (let i = 0; i < nodes.length; i++) {
+      const metrics = feedVideoMetrics(nodes[i]);
+      if (!metrics || !metrics.ready) continue;
+      if (metrics.rank > bestRank) {
+        best = nodes[i];
+        bestRank = metrics.rank;
+      }
+    }
+    let keep = best;
+    if (current && current !== best) {
+      const metrics = feedVideoMetrics(current);
+      if (metrics && metrics.onScreen && (!best || (metrics.ready && bestRank < metrics.rank + 0.18))) {
+        keep = current;
+      }
+    }
+    if (current && current !== keep) pauseFeedVideo(current);
+    feedVideoCurrent = keep && keep.isConnected ? keep : null;
+    if (keep && keep !== current && feedVideoCurrent === keep) playFeedVideo(keep);
+  }
+
+  function queueFeedVideoSync() {
+    if (feedVideoSyncQueued) return;
+    feedVideoSyncQueued = true;
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(syncFeedVideos);
+    else setTimeout(syncFeedVideos, 0);
+  }
+
+  function watchFeedVideos() {
+    if (feedVideoWatchStarted || typeof MutationObserver !== "function" || !document.body) return;
+    feedVideoWatchStarted = true;
+    const observer = new MutationObserver(() => {
+      queueFeedVideoSync();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    queueFeedVideoSync();
+  }
+
   function cardHtml(post) {
     const shown = cardDisplayPost(post) || post;
     const share = shareLineHtml(post);
@@ -10909,7 +11250,10 @@ let CS77_FILTER_LOW_REP = 20;
       const thumbLink = thumb
         ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
         : "";
-      const videoHtml = video ? `<div class="card-video">${video}</div>` : "";
+      const videoKind = video ? feedPlayerKind(video) : "";
+      const videoHtml = video
+        ? `<div class="card-video"${videoKind ? ` data-player="${videoKind}"` : ""}>${prepareCardPlayer(video, videoKind)}</div>`
+        : "";
       const media = poll
         ? poll
         : video
@@ -16369,6 +16713,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeWelcomeForPost();
     const active = document.activeElement;
     if (active && active !== document.body && active.blur) active.blur();
+    pauseCurrentFeedVideo();
     document.body.classList.add("is-post-open");
     layer.hidden = false;
     setPostBackgroundHidden(true);
@@ -16456,11 +16801,13 @@ let CS77_FILTER_LOW_REP = 20;
           list.insertAdjacentHTML("beforeend", visible.slice(existing.length).map(mapFn).join(""));
         }
         mountFeedPolls(list);
+        queueFeedVideoSync();
         return;
       }
     }
     list.innerHTML = visible.map(mapFn).join("");
     mountFeedPolls(list);
+    queueFeedVideoSync();
   }
 
   function feedCardHrefMatches(href, author, permlink) {
@@ -16657,6 +17004,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     scrollWindowInstant(restore ? y : 0);
     updateScrollTopBtn();
+    queueFeedVideoSync();
   }
 
   function postStill(gen, author, permlink) {
@@ -27093,6 +27441,17 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
         </div>
         <p class="settings-note" id="settingsWeightNote">Empty or 0 uses the last vote weight.</p>
+        <div class="settings-field settings-autoplay-field">
+          <label class="settings-label" for="settingsAutoplayVideos">Auto play videos</label>
+          <label class="cyber-toggle">
+            <input id="settingsAutoplayVideos" type="checkbox">
+            <span class="cyber-toggle-track" aria-hidden="true"></span>
+            <span class="cyber-toggle-copy">
+              <span class="cyber-toggle-title">Auto play videos</span>
+              <span class="cyber-toggle-sub">muted while the video is on screen</span>
+            </span>
+          </label>
+        </div>
         <div class="settings-field settings-nsfw-field">
           <label class="settings-label" for="settingsShowNsfw">NSFW</label>
           <label class="cyber-toggle">
@@ -27139,6 +27498,14 @@ let CS77_FILTER_LOW_REP = 20;
       commitSettingsWeightInput($("#settingsVoteComment"));
     });
     fillSettingsWeights();
+    const autoplay = $("#settingsAutoplayVideos");
+    if (autoplay) {
+      autoplay.checked = autoplayVideos();
+      autoplay.addEventListener("change", () => {
+        storeAutoplayVideos(autoplay.checked);
+        queueFeedVideoSync();
+      });
+    }
     const nsfw = $("#settingsShowNsfw");
     if (nsfw) {
       nsfw.checked = showNsfwContent();
@@ -28353,6 +28720,7 @@ let CS77_FILTER_LOW_REP = 20;
     armInstantScroll();
     feedState.gen += 1;
     feedState.loading = false;
+    pauseCurrentFeedVideo();
     while (view.firstChild) holder.appendChild(view.firstChild);
     rememberFeedPark({
       nav,
@@ -28402,6 +28770,7 @@ let CS77_FILTER_LOW_REP = 20;
     communityState.pending = park.community.pending;
     expandedCardExcerpts.clear();
     park.expanded.forEach((k) => expandedCardExcerpts.add(k));
+    queueFeedVideoSync();
   }
 
   function revealParkedWelcome() {
@@ -29328,6 +29697,10 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("resize", maybeLoadMoreBrowse);
     window.addEventListener("scroll", maybeLoadMoreFeed, { passive: true });
     window.addEventListener("resize", maybeLoadMoreFeed);
+    window.addEventListener("scroll", queueFeedVideoSync, { passive: true });
+    window.addEventListener("resize", queueFeedVideoSync);
+    window.addEventListener("pagehide", pauseCurrentFeedVideo);
+    watchFeedVideos();
     window.addEventListener("scroll", maybeLoadMoreWallet, { passive: true });
     window.addEventListener("resize", maybeLoadMoreWallet);
     const peopleScroll = document.getElementById("peopleScroll");
