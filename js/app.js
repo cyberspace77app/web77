@@ -640,6 +640,44 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // The logo list is display:none until the first open, so its scroll height
+  // lags one frame. A smooth scrollIntoView in that frame moves nothing.
+  // Reading layout and setting scrollTop (instant) still works on that first tap.
+  function revealLogoNodeList(menu) {
+    if (!menu.classList.contains("node-menu-in-menu") || !menu.classList.contains("is-open")) return;
+    const scroller = menu.closest(".logo-dropdown-panel");
+    const dropdown = menu.querySelector(".node-dropdown");
+    const pill = menu.querySelector(".status-pill");
+    if (!scroller || !dropdown || !pill) return;
+
+    const align = () => {
+      if (!menu.classList.contains("is-open")) return true;
+      const view = scroller.getBoundingClientRect();
+      const drop = dropdown.getBoundingClientRect();
+      if (drop.height < 1) return false;
+      const hiddenBelow = drop.bottom - view.bottom;
+      if (hiddenBelow <= 1) return true;
+      const delta = Math.min(hiddenBelow, Math.max(0, pill.getBoundingClientRect().top - view.top));
+      if (delta <= 1) return true;
+      const before = scroller.scrollTop;
+      const behavior = scroller.style.scrollBehavior;
+      scroller.style.scrollBehavior = "auto";
+      scroller.scrollTop = before + delta;
+      scroller.style.scrollBehavior = behavior;
+      if (scroller.scrollTop <= before + 0.5) return false;
+      const viewAfter = scroller.getBoundingClientRect();
+      const stillHidden = dropdown.getBoundingClientRect().bottom - viewAfter.bottom > 1;
+      const pillPinned = pill.getBoundingClientRect().top - viewAfter.top <= 1;
+      return !stillHidden || pillPinned;
+    };
+
+    if (align()) return;
+    requestAnimationFrame(() => {
+      if (!menu.classList.contains("is-open") || align()) return;
+      requestAnimationFrame(align);
+    });
+  }
+
   function bindNodeMenus() {
     paintNodeMenus();
     setNodeLabel();
@@ -658,6 +696,7 @@ let CS77_FILTER_LOW_REP = 20;
         closeNodeMenus();
         menu.classList.toggle("is-open", open);
         trigger.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) revealLogoNodeList(menu);
       });
     });
 
