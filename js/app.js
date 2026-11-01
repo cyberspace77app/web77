@@ -4447,8 +4447,10 @@ let CS77_FILTER_LOW_REP = 20;
     const depth = replace ? baseDepth : baseDepth + 1;
     routePushed = !replace;
     const shellState = shellHistoryState(path, replace);
-    if (replace) history.replaceState(Object.assign({ nav, depth }, shellState), "", url);
-    else history.pushState(Object.assign({ nav, depth }, shellState), "", url);
+    const layers = historyLayersFor(parseRoute(path), replace);
+    const entry = Object.assign({ nav, depth, layers }, shellState);
+    if (replace) history.replaceState(entry, "", url);
+    else history.pushState(entry, "", url);
     publishNavPushed = parseRoute(path).name === "publish" && !replace;
     route();
   }
@@ -4690,13 +4692,13 @@ let CS77_FILTER_LOW_REP = 20;
           u.search === location.search;
         if (samePage && commentsAreShowing() && scrollToAnchor(commentFrag)) {
           if (location.hash !== u.hash) {
-            history.pushState(history.state, "", u.pathname + u.search + u.hash);
+            pushSamePageHistory(u.pathname + u.search + u.hash);
           }
           return;
         }
         if (samePage) {
           if (location.hash !== u.hash) {
-            history.pushState(history.state, "", u.pathname + u.search + u.hash);
+            pushSamePageHistory(u.pathname + u.search + u.hash);
           }
           const pv = postViewEl();
           settlePostAnchor(
@@ -4726,23 +4728,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (toComments) pendingCommentsScroll = true;
     if (!isInternalHref(href)) return;
     if (a.closest("#logoBrand")) {
-      const here = parseRoute();
       e.preventDefault();
-      // Leave the current profile, subspace, space, or settings layer.
-      // The global feed is the top: the logo scrolls it instead of leaving.
-      if (isOnTopLevelFeed(here)) {
-        scrollActiveToTop();
-        return;
-      }
-      // Tabs of the same profile, subspace, space, or settings page are one
-      // layer. Skip them and land on the page that opened the layer.
-      const jump = logoLayerJump();
-      if (jump > 0) {
-        if (jump > 1) history.go(-jump);
-        else history.back();
-        return;
-      }
-      navigate(appHref(pathForFeedSort(defaultFeedSort())));
+      followLogoBrand();
       return;
     }
     if (a.closest("#sessionAccountMenu") && isSessionProfileSubLink(href)) {
@@ -5745,11 +5732,6 @@ let CS77_FILTER_LOW_REP = 20;
 
   function logoFeedHref() {
     return appHref(pathForFeedSort(observer() ? "feed" : "latest"));
-  }
-
-  function logoUsesTopFeed(route) {
-    if (!route) return false;
-    return route.name === "feed" || route.name === "community" || route.name === "welcome" || route.name === "profile";
   }
 
   function isOnTopLevelFeed(route) {
@@ -28808,8 +28790,157 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // How many history entries the logo should pop. Zero means there is no
-  // in-app page above this layer, so the logo opens the global feed.
+  // One history layer. Tabs of the same profile, subspace, space, settings,
+  // or search page share an id and add to n. The logo walks this trail.
+  function layerForRoute(route) {
+    if (!route || !route.name || route.name === "notfound") return { k: "i", id: "notfound" };
+    if (route.name === "feed" && route.tag) return { k: "s", id: "space:" + route.tag };
+    if (route.name === "feed") return { k: "g", id: "global" };
+    if (route.name === "welcome") return { k: "g", id: "welcome" };
+    if (route.name === "community" && route.community) return { k: "c", id: "community:" + route.community };
+    if (route.name === "tags") return { k: "i", id: "spaces" };
+    if (route.name === "communities") return { k: "i", id: "subspaces" };
+    if (route.name === "post" && route.author && route.permlink) {
+      return { k: "p", id: "post:" + route.author + "/" + route.permlink };
+    }
+    if (route.name === "profile" && route.author) return { k: "u", id: "profile:" + route.author };
+    if (route.name === "settings") return { k: "i", id: "settings" };
+    if (route.name === "search") return { k: "i", id: "search" };
+    if (route.name === "about") return { k: "i", id: "about" };
+    if (route.name === "imprint") return { k: "i", id: "imprint" };
+    if (route.name === "publish") return { k: "i", id: "publish" };
+    if (route.name === "embed") return { k: "i", id: "embed:" + (route.author || "") + "/" + (route.permlink || "") };
+    return { k: "i", id: route.name };
+  }
+
+  function cloneLayers(layers) {
+    if (!Array.isArray(layers)) return [];
+    const out = [];
+    for (let i = 0; i < layers.length; i++) {
+      const layer = layers[i];
+      if (!layer || !layer.k) continue;
+      const n = Number(layer.n);
+      // Older entries marked the Spaces and Subspaces directories as their own layers.
+      const k = layer.k === "d" || layer.k === "b" || layer.id === "spaces" || layer.id === "subspaces" ? "i" : layer.k;
+      out.push({ k: k, id: layer.id || "", n: n > 0 ? n : 1 });
+    }
+    return out;
+  }
+
+  function historyLayersFor(route, replace) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    let layers = cloneLayers(prev.layers);
+    if (!layers.length && !replace) {
+      const from = layerForRoute(parseRoute());
+      const n = Number(prev.shellSteps) > 0 ? Number(prev.shellSteps) : 1;
+      layers = [{ k: from.k, id: from.id, n: n }];
+    }
+    const next = layerForRoute(route);
+    if (!layers.length) return [{ k: next.k, id: next.id, n: 1 }];
+    const top = layers[layers.length - 1];
+    if (top.k === next.k && top.id === next.id) {
+      if (!replace) top.n += 1;
+      return layers;
+    }
+    if (replace) {
+      layers[layers.length - 1] = { k: next.k, id: next.id, n: top.n || 1 };
+      return layers;
+    }
+    layers.push({ k: next.k, id: next.id, n: 1 });
+    return layers;
+  }
+
+  function ensureLayers(route) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    if (Array.isArray(prev.layers) && prev.layers.length) return;
+    const layer = layerForRoute(route);
+    const n = Number(prev.shellSteps) > 0 ? Number(prev.shellSteps) : 1;
+    stampHistoryFields({ layers: [{ k: layer.k, id: layer.id, n: n }] });
+  }
+
+  // A comment hash is another entry on the same page. Count it so the logo
+  // can step past it.
+  function pushSamePageHistory(url) {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    const layers = cloneLayers(prev.layers);
+    if (layers.length) layers[layers.length - 1].n += 1;
+    const depth = (Number(prev.depth) || 1) + 1;
+    history.pushState(Object.assign({}, prev, { layers: layers, depth: depth }), "", url);
+  }
+
+  function logoPeopleOn() {
+    return !!(history.state && history.state.peoplePanel);
+  }
+
+  function logoCap(steps, people) {
+    const depth = historyDepth() || 1;
+    const canPop = Math.max(0, depth - 1) + (people ? 1 : 0);
+    if (steps > canPop) return canPop > 0 ? canPop : 0;
+    return steps > 0 ? steps : 0;
+  }
+
+  // Publish sits on the page underneath. The logo follows that page.
+  function logoOriginIndex(layers) {
+    let index = layers.length - 1;
+    while (index > 0 && layers[index].id === "publish") index -= 1;
+    return index;
+  }
+
+  function logoStepsAfter(layers, index, people) {
+    let steps = people ? 1 : 0;
+    for (let i = index + 1; i < layers.length; i++) steps += Number(layers[i].n) || 1;
+    return logoCap(steps, people);
+  }
+
+  // Where the brand is allowed to land, walking backward from origin.
+  // p/u post or profile: subspace, space feed, or global feed.
+  // c/s subspace or space feed: the global feed.
+  // i settings, search, the Spaces and Subspaces directories, and other internal pages: the page under them.
+  function logoStopsAt(origin, layer) {
+    if (!origin || !layer) return false;
+    if (origin.k === "p" || origin.k === "u") return layer.k === "c" || layer.k === "s" || layer.k === "g";
+    if (origin.k === "g" && origin.id !== "global") return layer.k === "g" && layer.id === "global";
+    if (origin.k === "c" || origin.k === "s") return layer.k === "g";
+    return layer.k !== "i";
+  }
+
+  function logoBrandJump() {
+    const people = logoPeopleOn();
+    const layers = cloneLayers(history.state && history.state.layers);
+    if (!layers.length) {
+      if (isOnTopLevelFeed(parseRoute())) return { top: true, steps: people ? 1 : 0, closePeople: false };
+      return { top: false, steps: logoLayerJump(), closePeople: false };
+    }
+    const originIndex = logoOriginIndex(layers);
+    const origin = layers[originIndex];
+    const onGlobal = !!(origin && origin.k === "g" && origin.id === "global");
+    let stop = onGlobal ? originIndex : -1;
+    if (!onGlobal) {
+      for (let i = originIndex - 1; i >= 0; i--) {
+        if (logoStopsAt(origin, layers[i])) {
+          stop = i;
+          break;
+        }
+      }
+    }
+    if (stop < 0) return { top: false, steps: 0, closePeople: false };
+    const steps = logoStepsAfter(layers, stop, people);
+    return { top: onGlobal, steps: steps, closePeople: people && steps > 1 };
+  }
+
+  function followLogoBrand() {
+    const jump = logoBrandJump();
+    if (jump.closePeople && peopleList.open) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+    }
+    if (jump.steps > 1) history.go(-jump.steps);
+    else if (jump.steps === 1) history.back();
+    if (jump.top) scrollActiveToTop();
+    else if (!jump.steps) navigate(appHref(pathForFeedSort(defaultFeedSort())));
+  }
+
+  // Used when this entry has no layer trail yet. Pops the open tab group.
   function logoLayerJump() {
     let bonus = 0;
     if (history.state && history.state.peoplePanel) {
@@ -28929,6 +29060,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (stack > 0) out.feedStackDepth = stack;
     const appDepth = Number(src.depth) || 0;
     if (appDepth > 0) out.depth = appDepth;
+    const layers = cloneLayers(src.layers);
+    if (layers.length) out.layers = layers;
     return out;
   }
 
@@ -30132,6 +30265,7 @@ let CS77_FILTER_LOW_REP = 20;
       HiveMd.whenMarkdownReady();
       ensureHistoryNav();
       ensureShellStamp(r);
+      ensureLayers(r);
       noteProfileReturnStep(fromPop, pushed, "post");
       noteFeedStack(fromPop, pushed, "post");
       publishNavPushed = false;
@@ -30170,6 +30304,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const nav = ensureHistoryNav();
     ensureShellStamp(r);
+    ensureLayers(r);
     noteFeedLayer(fromPop, r);
     const restored = takeFeedPark(nav, key);
     // A post opened from the feed stays up under the publish dialog. Closing
