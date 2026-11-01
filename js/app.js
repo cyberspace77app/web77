@@ -123,6 +123,7 @@ let CS77_FILTER_LOW_REP = 20;
   let publishNavPushed = false;
   let settingsProfileDraft = null;
   let settingsProfileBaseline = null;
+  let settingsLegacyRaw = null;
   let settingsBusy = false;
   let communityEditDraft = null;
   let communityEditBaseline = null;
@@ -27867,6 +27868,7 @@ let CS77_FILTER_LOW_REP = 20;
           <p class="settings-note">Other settings stored in your profile. Expert mode (keep as is recommended).</p>
           <textarea id="settingsCustom" class="settings-custom" name="custom" rows="12" spellcheck="false">${esc(fields.custom || "{}")}</textarea>
         </div>
+        ${settingsLegacyFieldHtml(fields)}
         <div class="settings-actions">
           <button type="submit" class="btn-primary" id="settingsSaveBtn">Save</button>
           <button type="button" class="btn-ghost" id="settingsResetBtn">Reset</button>
@@ -27897,6 +27899,7 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: ($("#settingsAvatar") && $("#settingsAvatar").value) || "",
       cover_image: ($("#settingsCover") && $("#settingsCover").value) || "",
       custom: ($("#settingsCustom") && $("#settingsCustom").value) || "",
+      legacyDelete: Boolean($("#settingsLegacyDelete") && $("#settingsLegacyDelete").checked),
     };
   }
 
@@ -27909,12 +27912,86 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: (fields && fields.profile_image) || "",
       cover_image: (fields && fields.cover_image) || "",
       custom: (fields && fields.custom) || "{}",
+      legacyDelete: Boolean(fields && fields.legacyDelete),
     };
   }
 
   function clearSettingsProfileScratch() {
     settingsProfileDraft = null;
     settingsProfileBaseline = null;
+    settingsLegacyRaw = null;
+  }
+
+  function rememberSettingsLegacy(user, account) {
+    if (!user) return;
+    settingsLegacyRaw = {
+      user: user,
+      text: String((account && account.json_metadata) || ""),
+    };
+  }
+
+  function settingsLegacySource(user) {
+    if (!settingsLegacyRaw || settingsLegacyRaw.user !== user) return "";
+    return settingsLegacyRaw.text || "";
+  }
+
+  // "{}" and a blank string hold no Steem-era profile. The chain will not
+  // store a blank json_metadata, so a cleared account comes back as "{}".
+  function legacyMetadataPresent(raw) {
+    const text = String(raw || "").trim();
+    if (!text || text === "null") return false;
+    try {
+      const data = JSON.parse(text);
+      if (!data || typeof data !== "object" || Array.isArray(data)) return true;
+      return Object.keys(data).length > 0;
+    } catch {
+      return true;
+    }
+  }
+
+  function formatLegacyMetadata(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return "";
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      return text;
+    }
+  }
+
+  function settingsLegacyFieldHtml(fields) {
+    const user = observer();
+    const raw = settingsLegacySource(user);
+    if (!legacyMetadataPresent(raw)) return "";
+    const esc = HiveMd.escapeHtml;
+    const checked = fields && fields.legacyDelete ? " checked" : "";
+    return `
+      <div class="settings-field settings-legacy-field" id="settingsLegacyField">
+        <label class="settings-label" for="settingsLegacy">Legacy (json_metadata)</label>
+        <textarea id="settingsLegacy" class="settings-custom" name="legacy" rows="12" readonly spellcheck="false">${esc(formatLegacyMetadata(raw))}</textarea>
+        <label class="cyber-toggle">
+          <input id="settingsLegacyDelete" type="checkbox"${checked}>
+          <span class="cyber-toggle-track" aria-hidden="true"></span>
+          <span class="cyber-toggle-copy">
+            <span class="cyber-toggle-title">Delete legacy profile data</span>
+            <span class="cyber-toggle-sub">requires your Active key</span>
+          </span>
+        </label>
+      </div>
+    `;
+  }
+
+  function clearSettingsLegacyField(user) {
+    if (accountState.user === user && accountState.account) {
+      accountState.account.json_metadata = "";
+    }
+    if (settingsLegacyRaw && settingsLegacyRaw.user === user) settingsLegacyRaw.text = "";
+    const box = $("#settingsLegacy");
+    if (box) box.value = "";
+    const toggle = $("#settingsLegacyDelete");
+    if (toggle) toggle.checked = false;
+    const field = $("#settingsLegacyField");
+    if (field) field.remove();
   }
 
   function rememberSettingsProfileDraft() {
@@ -27937,6 +28014,8 @@ let CS77_FILTER_LOW_REP = 20;
     set("#settingsAvatar", values.profile_image);
     set("#settingsCover", values.cover_image);
     set("#settingsCustom", values.custom);
+    const legacyDelete = $("#settingsLegacyDelete");
+    if (legacyDelete) legacyDelete.checked = Boolean(values.legacyDelete);
     paintSettingsPicture("avatar", values.profile_image);
     paintSettingsPicture("cover", values.cover_image);
     return values;
@@ -27963,10 +28042,12 @@ let CS77_FILTER_LOW_REP = 20;
     const reset = $("#settingsResetBtn");
     const avatar = $("#settingsAvatarUpload");
     const cover = $("#settingsCoverUpload");
+    const legacyDelete = $("#settingsLegacyDelete");
     if (save) save.disabled = locked;
     if (reset) reset.disabled = locked;
     if (avatar) avatar.disabled = locked;
     if (cover) cover.disabled = locked;
+    if (legacyDelete) legacyDelete.disabled = locked;
   }
 
   function paintSettingsPicture(kind, url) {
@@ -28142,9 +28223,26 @@ let CS77_FILTER_LOW_REP = 20;
       if (observer() !== user) return;
       applySavedProfile(user, metadata, json);
       const saved = copySettingsProfileFields(fields);
+      saved.legacyDelete = false;
+      let legacyNote = "";
+      if (fields.legacyDelete && legacyMetadataPresent(settingsLegacySource(user))) {
+        setSettingsStatus("Saving…", false);
+        try {
+          await deleteLegacyProfile(user);
+          if (observer() === user) clearSettingsLegacyField(user);
+        } catch (err) {
+          const cancelled = Boolean(err && err.ownerCancel);
+          legacyNote = cancelled
+            ? "Legacy profile data was not deleted."
+            : (err && err.message) || "Could not delete legacy profile data.";
+        }
+      }
       settingsProfileBaseline = Object.assign({ user }, saved);
       settingsProfileDraft = Object.assign({ user }, saved);
-      setSettingsStatus("Saved.", false);
+      if (parseRoute().name === "settings") {
+        if (legacyNote) setSettingsStatus("Saved. " + legacyNote, true);
+        else setSettingsStatus("Saved.", false);
+      }
     } catch (err) {
       if (parseRoute().name === "settings") {
         setSettingsStatus((err && err.message) || "Could not save profile.", true);
@@ -28155,15 +28253,46 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // An empty json_metadata string is not written. "{}" replaces the Steem-era
+  // object. posting_json_metadata stays unchanged because that string is empty.
+  async function deleteLegacyProfile(user) {
+    await signWithDialog(
+      user,
+      [
+        [
+          "account_update2",
+          {
+            account: user,
+            json_metadata: "{}",
+            posting_json_metadata: "",
+            extensions: [],
+          },
+        ],
+      ],
+      {
+        authority: "Active",
+        source: "profile",
+        title: "Delete legacy profile data",
+        lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+        cancelMessage: "Legacy profile data was not deleted.",
+        failMessage: "Could not delete legacy profile data.",
+      }
+    );
+  }
+
   async function loadSettingsMetadata(user) {
     if (!ownAccountReady(user)) await loadAccountResources();
     if (observer() !== user) return null;
-    if (ownAccountReady(user)) return accountState.metadata || metadataFromAccount(accountState.account);
+    if (ownAccountReady(user)) {
+      rememberSettingsLegacy(user, accountState.account);
+      return accountState.metadata || metadataFromAccount(accountState.account);
+    }
     const rows = await HiveApi.getAccounts([user]);
     const account = rows && rows[0];
     if (!account || String(account.name || "").toLowerCase() !== user) {
       throw new Error("Could not load this account.");
     }
+    rememberSettingsLegacy(user, account);
     return metadataFromAccount(account);
   }
 
