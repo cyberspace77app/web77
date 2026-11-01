@@ -3569,8 +3569,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function scrollTargetIntoView(el, behavior) {
     if (!el) return false;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const chosen = behavior || (reduce.matches ? "auto" : "smooth");
+    const chosen = behavior || (prefersReducedMotion() ? "auto" : "smooth");
     quietSmartHeader();
     const layer = document.getElementById("postLayer");
     if (layer && postLayer.open && layer.contains(el)) {
@@ -3946,6 +3945,17 @@ let CS77_FILTER_LOW_REP = 20;
 
   function isMobileViewport() {
     return window.matchMedia("(max-width: 720px)").matches;
+  }
+
+  function prefersReducedMotion() {
+    return Boolean(
+      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  // Phone keyboards open on focus. Desktop dialogs still land in the field.
+  function focusDesktop(el) {
+    if (el && !isMobileViewport()) el.focus();
   }
 
   // "hide" collapses the banner on mobile. "show" removes that collapse.
@@ -8313,8 +8323,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closeLocationDialog() {
     hideLocationDialog();
-    const btn = $("#publishLocationBtn");
-    if (btn && !isMobileViewport()) btn.focus();
+    focusDesktop($("#publishLocationBtn"));
   }
 
   function setLocationStatus(msg, isError) {
@@ -8798,7 +8807,7 @@ let CS77_FILTER_LOW_REP = 20;
     const session = locSession;
     showLocationMap(session);
     if (locPicked && locDescAuto) fillDescriptionFor(locCenter.lat, locCenter.lng);
-    if (!isMobileViewport() && search) search.focus();
+    focusDesktop(search);
   }
 
   function saveLocationFromDialog() {
@@ -13005,7 +13014,7 @@ let CS77_FILTER_LOW_REP = 20;
       nameCopy.addEventListener("click", () => copySubspaceMasterKey(name, nameCopy));
     }
     if (copy) copy.addEventListener("click", () => copySubspaceMasterKey($("#subspaceCreateKey"), copy));
-    if (title && !isMobileViewport()) title.focus();
+    focusDesktop(title);
     loadSubspaceCreateFee(gen);
     fillFreeSubspaceNumber(gen);
   }
@@ -13031,8 +13040,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     host.innerHTML = subspacesSearchHtml();
     paintFavoriteCommunities();
-    const searchInput = $("#communitySearchInput");
-    if (searchInput && !isMobileViewport()) searchInput.focus();
+    focusDesktop($("#communitySearchInput"));
     if (observer()) await loadSubscribedCommunities(gen);
   }
 
@@ -15599,8 +15607,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintPollBars(section, state);
     syncPollControls(section, state);
     paintPollFooter(section, state);
-    const reduce =
-      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduce = prefersReducedMotion();
     pollSectionsOf(state).forEach((el) => {
       if (!animate || reduce || el.classList.contains("is-results")) {
         el.classList.add("is-results");
@@ -18595,13 +18602,9 @@ let CS77_FILTER_LOW_REP = 20;
     }).format(x);
   }
 
-  function formatLowerAsset(amount, symbol) {
+  function formatHiveAsset(amount, symbol) {
     const dec = symbol === "vests" ? 6 : 3;
     return formatGroupedNumber(amount, dec) + " " + symbol;
-  }
-
-  function formatHiveLike(amount, symbol) {
-    return formatLowerAsset(amount, symbol);
   }
 
   function parseAmountInput(raw) {
@@ -18636,11 +18639,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (!Number.isFinite(amount)) return "";
     if (sym === "VESTS") {
       const hive = HiveApi.vestsToHive(amount, props);
-      return formatHiveLike(hive, "hp");
+      return formatHiveAsset(hive, "hp");
     }
-    if (sym === "HIVE" || sym === "TESTS") return formatHiveLike(amount, "hive");
-    if (sym === "HBD" || sym === "TBD") return formatHiveLike(amount, "hbd");
-    return formatHiveLike(amount, String(m[2] || "").toLowerCase());
+    if (sym === "HIVE" || sym === "TESTS") return formatHiveAsset(amount, "hive");
+    if (sym === "HBD" || sym === "TBD") return formatHiveAsset(amount, "hbd");
+    return formatHiveAsset(amount, String(m[2] || "").toLowerCase());
   }
 
   function walletHasRewards(wallet) {
@@ -19365,17 +19368,17 @@ let CS77_FILTER_LOW_REP = 20;
     const rows = [];
     if (wallet.rewardHive > 0) {
       rows.push(
-        `<div class="wallet-row"><span class="wallet-label">hive</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveLike(wallet.rewardHive, "hive"))}</span></div>`
+        `<div class="wallet-row"><span class="wallet-label">hive</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveAsset(wallet.rewardHive, "hive"))}</span></div>`
       );
     }
     if (wallet.rewardHbd > 0) {
       rows.push(
-        `<div class="wallet-row"><span class="wallet-label">hbd</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveLike(wallet.rewardHbd, "hbd"))}</span></div>`
+        `<div class="wallet-row"><span class="wallet-label">hbd</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveAsset(wallet.rewardHbd, "hbd"))}</span></div>`
       );
     }
     if (wallet.rewardVests > 0) {
       rows.push(
-        `<div class="wallet-row"><span class="wallet-label">staked hive</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveLike(wallet.rewardVestingHive, "hive"))}</span></div>`
+        `<div class="wallet-row"><span class="wallet-label">staked hive</span><span class="wallet-value">${HiveMd.escapeHtml(formatHiveAsset(wallet.rewardVestingHive, "hive"))}</span></div>`
       );
     }
     return `
@@ -19545,7 +19548,7 @@ let CS77_FILTER_LOW_REP = 20;
   // stake both use this. prefers-reduced-motion paints the final numbers.
   function animateWalletBalances(wallet, from, to, receiveLabels, done) {
     const token = ++walletAnimToken;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = prefersReducedMotion();
     const countMs = reduced ? 0 : 1500;
     clearWalletReceive(view.querySelectorAll(".wallet-table tr.is-balance-in"));
     const rows = walletReceiveRows(receiveLabels);
@@ -19712,7 +19715,7 @@ let CS77_FILTER_LOW_REP = 20;
     const hive = HiveApi.vestsToHive(vests, props);
     const shown = roundAsset(hive, 3);
     if (!(shown > 0) && vests > 0) return "<0.001 hive";
-    return formatHiveLike(shown, "hive");
+    return formatHiveAsset(shown, "hive");
   }
 
   function powerDownSchedule(wallet) {
@@ -19762,7 +19765,7 @@ let CS77_FILTER_LOW_REP = 20;
     const done = HiveApi.vestsToHive(wallet.withdrawnVests, wallet.props);
     const left = Math.max(0, total - done);
     if (left <= 0) return "";
-    const text = "Powering down " + formatHiveLike(left, "hive") + " remaining.";
+    const text = "Powering down " + formatHiveAsset(left, "hive") + " remaining.";
     const schedule = powerDownSchedule(wallet);
     const body = schedule
       ? '<span class="wallet-powerdown" tabindex="0" aria-describedby="walletPowerDownTip">' +
@@ -19837,7 +19840,7 @@ let CS77_FILTER_LOW_REP = 20;
       initiated: initiated,
       remains: formatPowerDownRemain(completeMs - Date.now()),
       payout: payout,
-      amountText: formatHiveLike(roundAsset(row.amount, 3), "hbd"),
+      amountText: formatHiveAsset(roundAsset(row.amount, 3), "hbd"),
     };
   }
 
@@ -19863,7 +19866,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function walletHbdUnstakeNote(row, own) {
-    const text = "Unstaking " + formatHiveLike(roundAsset(row.amount, 3), "hbd") + " remaining.";
+    const text = "Unstaking " + formatHiveAsset(roundAsset(row.amount, 3), "hbd") + " remaining.";
     const schedule = hbdUnstakeSchedule(row);
     const tipId = "walletHbdUnstakeTip-" + row.requestId;
     const body = schedule
@@ -20049,14 +20052,14 @@ let CS77_FILTER_LOW_REP = 20;
             ["initiated", schedule.initiated],
             ["remains", schedule.remains],
             ["settles", schedule.when],
-            ["collateral", formatHiveLike(roundAsset(row.amount, 3), "hive")],
-            ["received", row.received == null ? "hbd paid now" : formatHiveLike(roundAsset(row.received, 3), "hbd")],
+            ["collateral", formatHiveAsset(roundAsset(row.amount, 3), "hive")],
+            ["received", row.received == null ? "hbd paid now" : formatHiveAsset(roundAsset(row.received, 3), "hbd")],
           ]
         : [
             ["initiated", schedule.initiated],
             ["remains", schedule.remains],
             ["converts", schedule.when],
-            ["amount", formatHiveLike(roundAsset(row.amount, 3), "hbd")],
+            ["amount", formatHiveAsset(roundAsset(row.amount, 3), "hbd")],
             ["receives", "hive at the median price"],
           ]
       : null;
@@ -20751,7 +20754,7 @@ let CS77_FILTER_LOW_REP = 20;
           "Use hive keychain (recommended) or enter the active key of @" +
           user +
           ". Stops the unstake of " +
-          formatHiveLike(amount, "hbd") +
+          formatHiveAsset(amount, "hbd") +
           ". The hbd stays staked.",
         cancelMessage: "The unstake was not cancelled.",
         failMessage: "Could not cancel this unstake.",
@@ -20759,7 +20762,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const unstake = kind.indexOf("unstake") === 0;
     const symbol = kind.indexOf("hbd") === -1 ? "hive" : "hbd";
-    const shown = formatHiveLike(amount, symbol);
+    const shown = formatHiveAsset(amount, symbol);
     let detail = "Moves " + shown + " into staked hive.";
     if (kind === "unstake-hive") detail = "Powers down " + shown + ". This takes 13 weeks.";
     else if (kind === "stake-hbd") detail = "Moves " + shown + " into staked hbd.";
@@ -20955,14 +20958,14 @@ let CS77_FILTER_LOW_REP = 20;
     const lead = $("#walletOpLead");
     if (lead) {
       lead.textContent = hbdRow
-        ? "Stop the unstake of " + formatHiveLike(hbdRow.amount, "hbd") + ". The hbd stays staked."
+        ? "Stop the unstake of " + formatHiveAsset(hbdRow.amount, "hbd") + ". The hbd stays staked."
         : copy.lead;
     }
     const available = $("#walletOpAvailable");
     if (available) {
       available.innerHTML = confirmOnly
         ? ""
-        : "Available: " + availableAmountButton(formatHiveLike(max, copy.symbol)) + ".";
+        : "Available: " + availableAmountButton(formatHiveAsset(max, copy.symbol)) + ".";
     }
     const input = $("#walletAmount");
     if (input) {
@@ -21058,7 +21061,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       const max = roundAsset(walletMaxFor(kind, wallet), 3);
       if (amount > max + 0.0000001) {
-        setWalletOpStatus("That is more than " + formatHiveLike(max, walletOpState.symbol) + ".", true);
+        setWalletOpStatus("That is more than " + formatHiveAsset(max, walletOpState.symbol) + ".", true);
         return;
       }
     }
@@ -21209,7 +21212,7 @@ let CS77_FILTER_LOW_REP = 20;
     const asset = sendAssetName(sendState.asset);
     const max = roundAsset(sendMaxFor(asset, profileState.wallet), 3);
     const disabled = sendState.pending || !(max >= 0.001);
-    el.innerHTML = "Available: " + availableAmountButton(formatHiveLike(Math.max(0, max), asset), disabled) + ".";
+    el.innerHTML = "Available: " + availableAmountButton(formatHiveAsset(Math.max(0, max), asset), disabled) + ".";
     const maxBtn = $("#sendMax");
     if (maxBtn) maxBtn.disabled = disabled;
   }
@@ -21332,7 +21335,7 @@ let CS77_FILTER_LOW_REP = 20;
     setSendAsset(asset);
     const ov = $("#sendOverlay");
     if (ov) ov.hidden = false;
-    if (to && !isMobileViewport()) to.focus();
+    focusDesktop(to);
   }
 
   function fillSendMax() {
@@ -21413,7 +21416,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const max = roundAsset(sendMaxFor(asset, wallet), 3);
     if (amount > max + 0.0000001) {
-      setSendStatus("That is more than " + formatHiveLike(max, asset) + ".", true);
+      setSendStatus("That is more than " + formatHiveAsset(max, asset) + ".", true);
       return;
     }
     const typedMemo = ($("#sendMemo") && $("#sendMemo").value) || "";
@@ -21519,7 +21522,7 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
     }
-    const shown = formatHiveLike(amount, asset);
+    const shown = formatHiveAsset(amount, asset);
     const chainSymbol = asset === "hbd" ? "HBD" : "HIVE";
     const operations = [
       [
@@ -21604,7 +21607,7 @@ let CS77_FILTER_LOW_REP = 20;
     const max = roundAsset(sendMaxFor(asset, profileState.wallet), 3);
     const disabled = convertState.pending || !(max >= 0.001);
     el.innerHTML =
-      "Available: " + availableAmountButton(formatHiveLike(Math.max(0, max), asset), disabled) + ".";
+      "Available: " + availableAmountButton(formatHiveAsset(Math.max(0, max), asset), disabled) + ".";
     const maxBtn = $("#convertMax");
     if (maxBtn) maxBtn.disabled = disabled;
   }
@@ -21695,7 +21698,7 @@ let CS77_FILTER_LOW_REP = 20;
     setConvertAsset(asset);
     const ov = $("#convertOverlay");
     if (ov) ov.hidden = false;
-    if (amount && !isMobileViewport()) amount.focus();
+    focusDesktop(amount);
   }
 
   function fillConvertMax() {
@@ -21750,7 +21753,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const max = roundAsset(sendMaxFor(asset, wallet), 3);
     if (amount > max + 0.0000001) {
-      setConvertStatus("That is more than " + formatHiveLike(max, asset) + ".", true);
+      setConvertStatus("That is more than " + formatHiveAsset(max, asset) + ".", true);
       return;
     }
     convertDialogBusy(true);
@@ -21769,7 +21772,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (ov && !ov.hidden) convertDialogBusy(false);
       return;
     }
-    const shown = formatHiveLike(amount, asset);
+    const shown = formatHiveAsset(amount, asset);
     const operations = [
       [
         dir.op,
@@ -21964,7 +21967,7 @@ let CS77_FILTER_LOW_REP = 20;
     setClaimStatus("");
     const ov = $("#claimTokensOverlay");
     if (ov) ov.hidden = false;
-    if (amount && !isMobileViewport()) amount.focus();
+    focusDesktop(amount);
     loadClaimQuote();
   }
 
@@ -22278,7 +22281,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (keyCopy) keyCopy.textContent = "Copy";
     const ov = $("#createAccountOverlay");
     if (ov) ov.hidden = false;
-    if (name && !isMobileViewport()) name.focus();
+    focusDesktop(name);
     loadCreateAccountFee();
   }
 
@@ -22443,7 +22446,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!Number.isFinite(vests) || vests <= 0) return "";
     const hive = HiveApi.vestsToHive(vests, props);
     if (!(hive >= 0.001)) return "";
-    return "About " + formatHiveLike(hive, "hive") + ".";
+    return "About " + formatHiveAsset(hive, "hive") + ".";
   }
 
   function delegateHpCapVests(target) {
@@ -22497,7 +22500,7 @@ let CS77_FILTER_LOW_REP = 20;
     const maxHive = HiveApi.vestsToHive(delegateHpCapVests(target), wallet.props);
     let text =
       "Available: " +
-      availableAmountButton(formatHiveLike(floorAsset(maxHive, 3), "hive"), delegateState.pending) +
+      availableAmountButton(formatHiveAsset(floorAsset(maxHive, 3), "hive"), delegateState.pending) +
       ".";
     if (target) {
       const current = outgoingHpVests(target);
@@ -22875,7 +22878,7 @@ let CS77_FILTER_LOW_REP = 20;
         const maxHive = floorAsset(HiveApi.vestsToHive(cap, wallet.props), 3);
         if (amount > maxHive + 0.0000001) {
           delegateDialogBusy(false);
-          setDelegateStatus("That is more than " + formatHiveLike(maxHive, "hive") + ".", true);
+          setDelegateStatus("That is more than " + formatHiveAsset(maxHive, "hive") + ".", true);
           return;
         }
         nextVests = Math.min(hiveToDelegatedVests(amount, wallet.props), floorAsset(cap, 6));
@@ -22890,7 +22893,7 @@ let CS77_FILTER_LOW_REP = 20;
           setDelegateStatus("That matches the current delegation to @" + target + ".", true);
           return;
         }
-        detail = "Sets the hive power delegation to @" + target + " to " + formatHiveLike(amount, "hive") + ".";
+        detail = "Sets the hive power delegation to @" + target + " to " + formatHiveAsset(amount, "hive") + ".";
         if (nextVests < prevVests) detail += " The difference returns after 5 days.";
         operations = [hpDelegateOp(user, target, nextVests)];
       }
@@ -28697,8 +28700,10 @@ let CS77_FILTER_LOW_REP = 20;
   function scrollToFeed() {
     const feed = document.querySelector("#view .feed-nav") || $("#view");
     if (!feed) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    feed.scrollIntoView({ behavior: reduce.matches ? "auto" : "smooth", block: "start" });
+    feed.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "start",
+    });
   }
 
   function bindWelcome() {
@@ -30566,8 +30571,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function scrollActiveToTop() {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const behavior = reduce.matches ? "auto" : "smooth";
+    const behavior = prefersReducedMotion() ? "auto" : "smooth";
     window.scrollTo({ top: 0, behavior });
   }
 
@@ -30779,16 +30783,15 @@ let CS77_FILTER_LOW_REP = 20;
   function bindLogoSpin() {
     const logo = $(".app-logo");
     if (!logo) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     let angle = 0;
 
     logo.addEventListener("pointerenter", () => {
-      if (reduce.matches) return;
+      if (prefersReducedMotion()) return;
       logo.classList.add("is-spinning");
     });
 
     logo.addEventListener("pointermove", (e) => {
-      if (reduce.matches) return;
+      if (prefersReducedMotion()) return;
       angle += e.movementX;
       logo.style.transform = "rotate(" + angle + "deg)";
     });
@@ -30801,7 +30804,6 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function bindEmbedLogoSpin() {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     let card = null;
     let angle = 0;
 
@@ -30815,11 +30817,11 @@ let CS77_FILTER_LOW_REP = 20;
       card = next;
       angle = 0;
       const logo = logoOf(card);
-      if (logo && !reduce.matches) logo.classList.add("is-spinning");
+      if (logo && !prefersReducedMotion()) logo.classList.add("is-spinning");
     });
 
     document.addEventListener("pointermove", (e) => {
-      if (!card || reduce.matches) return;
+      if (!card || prefersReducedMotion()) return;
       if (!card.contains(e.target)) return;
       const logo = logoOf(card);
       if (!logo) return;
@@ -31002,8 +31004,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!el) return;
     beginOwnedFeedScroll();
     quietSmartHeader();
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const chosen = behavior || (reduce ? "instant" : "smooth");
+    const chosen = behavior || (prefersReducedMotion() ? "instant" : "smooth");
     const top = Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
     try {
       window.scrollTo({
