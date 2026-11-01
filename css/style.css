@@ -9687,7 +9687,7 @@ body.is-dao #view {
 .witness-split::before {
   content: "";
   display: block;
-  height: calc(var(--witness-check) * 4);
+  height: calc(var(--witness-check) * 3);
   margin-bottom: 0.55rem;
   background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--witness-check) * 2) calc(var(--witness-check) * 2);
 }
