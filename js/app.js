@@ -28714,10 +28714,18 @@ let CS77_FILTER_LOW_REP = 20;
     return nav;
   }
 
-  // Comments and replies keep their cards when another profile is opened.
-  // Posts and wallet still load again.
+  // Comments, replies, and the wallet keep their place when another profile
+  // is opened. The posts tab still loads again.
   function isProfileListKey(key) {
-    return !!key && key.indexOf("profile:") === 0 && (key.endsWith(":comments") || key.endsWith(":replies"));
+    return (
+      !!key &&
+      key.indexOf("profile:") === 0 &&
+      (key.endsWith(":comments") || key.endsWith(":replies") || key.endsWith(":wallet"))
+    );
+  }
+
+  function isWalletProfileKey(key) {
+    return !!key && key.indexOf("profile:") === 0 && key.endsWith(":wallet");
   }
 
   function isRestorableFeedKey(key) {
@@ -28982,6 +28990,48 @@ let CS77_FILTER_LOW_REP = 20;
     if (section) view.appendChild(section);
   }
 
+  function snapshotDelegationView() {
+    return {
+      loadGen: delegationView.loadGen,
+      account: delegationView.account,
+      open: delegationView.open,
+      loading: delegationView.loading,
+      loaded: delegationView.loaded,
+      hasError: delegationView.hasError,
+      outgoingHp: delegationView.outgoingHp,
+      incomingHp: delegationView.incomingHp,
+      outgoingRc: delegationView.outgoingRc,
+      incomingRc: delegationView.incomingRc,
+      hpTruncated: delegationView.hpTruncated,
+      rcTruncated: delegationView.rcTruncated,
+      errors: Object.assign({}, delegationView.errors),
+      rcAccount: delegationView.rcAccount,
+      receivedRc: delegationView.receivedRc,
+    };
+  }
+
+  function applyDelegationSnapshot(snap) {
+    if (!snap) return;
+    // Keep a generation bumped while this wallet was parked, so the load that
+    // was in flight cannot paint over the lists just put back.
+    const gen = delegationView.loadGen;
+    delegationView.account = snap.account;
+    delegationView.open = snap.open;
+    delegationView.loading = snap.loading;
+    delegationView.loaded = snap.loaded;
+    delegationView.hasError = snap.hasError;
+    delegationView.outgoingHp = snap.outgoingHp;
+    delegationView.incomingHp = snap.incomingHp;
+    delegationView.outgoingRc = snap.outgoingRc;
+    delegationView.incomingRc = snap.incomingRc;
+    delegationView.hpTruncated = snap.hpTruncated;
+    delegationView.rcTruncated = snap.rcTruncated;
+    delegationView.errors = snap.errors;
+    delegationView.rcAccount = snap.rcAccount;
+    delegationView.receivedRc = snap.receivedRc;
+    delegationView.loadGen = Math.max(gen, Number(snap.loadGen) || 0);
+  }
+
   function snapshotProfileState() {
     return {
       author: profileState.author,
@@ -29088,6 +29138,9 @@ let CS77_FILTER_LOW_REP = 20;
     // Read this before the list leaves the document. Detaching it shrinks the
     // page and the browser clamps the window back to the top.
     const scrollY = postLayer.open && postLayer.heldScroll ? Number(postLayer.scrollY) || 0 : scrollYNow();
+    // A claim or stake count skips rows that are not on screen. Write the
+    // final amounts first, while the table is still connected.
+    settleParkedWallet();
     armInstantScroll();
     feedState.gen += 1;
     feedState.loading = false;
@@ -29110,8 +29163,16 @@ let CS77_FILTER_LOW_REP = 20;
         pending: communityState.pending,
       },
       profile: isProfileListKey(currentViewKey) ? snapshotProfileState() : null,
+      delegation: isWalletProfileKey(currentViewKey) ? snapshotDelegationView() : null,
       expanded,
     });
+    // A history or delegation request still in flight must not paint after
+    // this wallet is parked. The snapshot keeps the loaded rows and lists.
+    if (isWalletProfileKey(currentViewKey)) {
+      profileState.walletTx = null;
+      delegationView.loadGen += 1;
+      delegationLoadPromise = null;
+    }
     liveFeedNav = 0;
     const between = postLayer.open ? feedStackDepth : 0;
     feedStackDepth = 0;
@@ -29148,6 +29209,7 @@ let CS77_FILTER_LOW_REP = 20;
     communityState.subscribed = park.community.subscribed;
     communityState.pending = park.community.pending;
     applyProfileSnapshot(park.profile);
+    applyDelegationSnapshot(park.delegation);
     expandedCardExcerpts.clear();
     park.expanded.forEach((k) => expandedCardExcerpts.add(k));
     queueFeedVideoSync();
@@ -29170,6 +29232,47 @@ let CS77_FILTER_LOW_REP = 20;
     feedFillBusy = false;
     feedFillToken += 1;
     moreBtn.click();
+  }
+
+  // Claim and stake write the new balances, then count toward them. Parking
+  // detaches the table, so the count never reaches the last frame.
+  function settleParkedWallet() {
+    if (!isWalletProfileKey(currentViewKey) || !profileState.wallet) return;
+    cancelWalletBalanceAnim();
+    paintWalletBalanceAmounts(profileState.wallet);
+  }
+
+  // The parked wallet keeps the rows already painted. A request that was
+  // still running is dropped, then scrolling loads the next page again.
+  function resumeParkedWallet() {
+    const name = profileState.author;
+    if (!name || profileState.page !== "wallet") return;
+    if (!profileState.wallet || !view.querySelector(".wallet-page")) {
+      fillProfileWallet(name, "wallet", false);
+      return;
+    }
+    const tx = profileState.walletTx;
+    if (tx && tx.loading) {
+      tx.loading = false;
+      if (!tx.started) tx.started = true;
+      paintWalletHistory();
+    }
+    maybeLoadMoreWallet();
+    if (delegationView.open && !delegationView.loaded && !delegationView.hasError) {
+      delegationView.loading = false;
+      loadDelegationLists(name);
+    }
+    if (!profileState.wallet.stakeApr) {
+      const wallet = profileState.wallet;
+      HiveApi.getStakeApr()
+        .then(function (rates) {
+          if (!rates || profileState.wallet !== wallet) return;
+          if (!profileRouteStill(name, "wallet")) return;
+          wallet.stakeApr = rates;
+          paintWalletApr(rates);
+        })
+        .catch(function () {});
+    }
   }
 
   function embedFrameUrl(author, permlink) {
@@ -29568,6 +29671,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!ownerSignBusy) {
       closeDelegateOverlay();
+      closeWalletOverlay();
       closeSendOverlay();
       closeConvertOverlay();
       closeCreateAccountOverlay();
@@ -29708,6 +29812,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (r.name === "feed" && !r.tag && !(showWelcome && isHomePath())) storeFeedView(r.sort);
         if (restored.feed.loading) resumeParkedFeedLoad();
         else queueFeedInfinite();
+        if (isWalletProfileKey(key)) resumeParkedWallet();
       } else if (isRestorableFeedKey(key)) {
         // This entry now shows the mounted feed. A profile opened next parks
         // under this id, so Back and the logo find the same list.
@@ -29757,7 +29862,7 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       currentViewKey = key;
-      // Comments and replies can be parked. Posts and wallet load again.
+      // Comments, replies, and the wallet can be parked. Posts load again.
       liveFeedNav = isProfileListKey(key) ? nav : 0;
       accountMenuSubNav = false;
       accountMenuProfile = false;
