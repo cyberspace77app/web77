@@ -1,5 +1,6 @@
 /**
- * DAO pages. Loaded only for /dao, /witnesses, /proposals, and /witness/@name.
+ * DAO pages. Loaded only for /witnesses, /proposals, and /witness/@name.
+ * /dao opens the witness list.
  * Witness pay follows database::process_funds after HF28: inflation is minted
  * from HIVE supply plus non-treasury HBD, and the witness slice is multiplied
  * by 21 before the schedule weight is applied.
@@ -19,6 +20,7 @@
   var SEARCH_PAGE = 20;
   var RANK_SCAN_PAGE = 100;
   var RANK_SCAN_PAGES = 5;
+  var SUPPORTER_PAGE = 1000;
   var NEAR_PX = 700;
 
   var state = {
@@ -27,6 +29,10 @@
     listGen: 0,
     mode: "",
     listMode: "rank",
+    witnessFilter: "all",
+    votedKey: "",
+    votedRows: [],
+    votedLoading: false,
     props: null,
     schedule: null,
     rewards: null,
@@ -41,6 +47,10 @@
     detailName: "",
     detailWitness: null,
     detailAccount: null,
+    supporterSerial: 0,
+    supporterRows: [],
+    supporterReady: false,
+    supporterError: "",
   };
 
   function emptyBucket() {
@@ -221,6 +231,34 @@
     return !key || key === NULL_KEY;
   }
 
+  // PeakD's Active filter. A node is running when its signing key is set and
+  // its last block is within 7 days times (floor(rank / 100) + 1). No last
+  // block is not stale. Rank 0 means the vote rank is not loaded yet.
+  function isStale(witness, rank) {
+    if (!rank || rank < 1 || isDisabled(witness)) return false;
+    var props = state.props;
+    var head = Number(props && props.head_block_number);
+    var last = Number(witness && witness.last_confirmed_block_num);
+    if (!head || !last) return false;
+    var days = 7 * (Math.floor(rank / 100) + 1);
+    return 3 * (head - last) > days * 86400;
+  }
+
+  function isRunning(witness, rank) {
+    return !isDisabled(witness) && !isStale(witness, rank);
+  }
+
+  function rankOf(witness, listMode, index) {
+    if (listMode === "rank") return index + 1;
+    var name = witnessName(witness);
+    var rows = state.ranked.rows;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (witnessName(rows[i]) === name) return i + 1;
+    }
+    return 0;
+  }
+
   function witnessName(witness) {
     return String((witness && witness.owner) || "").toLowerCase();
   }
@@ -263,7 +301,6 @@
   function navHtml(active) {
     var current = active === "witness" ? "witnesses" : active;
     var items = [
-      ["dao", "/dao", "DAO"],
       ["witnesses", "/witnesses", "Witnesses"],
       ["proposals", "/proposals", "Proposals"],
     ];
@@ -363,7 +400,7 @@
     if (fund <= 0n || vest <= 0n) return { compact: "—", full: "", milli: null };
     var milli = divRound(micro * fund, vest);
     var text = formatHiveMilli(milli);
-    return { compact: compactHp(milli), full: text + " HP", exact: text + " hp", milli: milli };
+    return { compact: compactHp(milli), exact: text + " hp", milli: milli };
   }
 
   function lastBlockOf(witness) {
@@ -500,7 +537,7 @@
       esc(name) +
       '">' +
       '<span class="witness-rank">' +
-      (listMode === "rank" && rank > 0 ? esc(String(rank)) : "") +
+      (rank > 0 ? esc(String(rank)) : "") +
       "</span>" +
       '<a class="witness-who" href="' +
       esc(state.host.appHref("/witness/@" + name)) +
@@ -548,11 +585,26 @@
     );
   }
 
+  function witnessFilter() {
+    if (state.witnessFilter === "active" || state.witnessFilter === "voted") return state.witnessFilter;
+    return "all";
+  }
+
+  function votedKeyOf() {
+    return Array.from(state.votes.names).sort().join("\n");
+  }
+
   function rowsHtml(rows, listMode) {
     var html = [];
+    var filter = witnessFilter();
+    var split = false;
     rows.forEach(function (witness, index) {
-      var rank = listMode === "rank" ? index + 1 : 0;
-      if (listMode === "rank" && rank === 21) {
+      var rank = listMode === "rank" ? index + 1 : listMode === "voted" ? rankOf(witness, listMode, index) : 0;
+      var name = witnessName(witness);
+      if (filter === "active" && !isRunning(witness, rank)) return;
+      if (filter === "voted" && !state.votes.names.has(name)) return;
+      if (!split && (filter === "all" || filter === "active") && listMode === "rank" && rank > 20) {
+        split = true;
         html.push(
           '<p class="witness-split"><span>Below the top 20, one backup witness produces the next block in each round.</span></p>'
         );
@@ -560,6 +612,20 @@
       html.push(rowHtml(witness, rank, listMode));
     });
     return html.join("");
+  }
+
+  function paintWitnessFilter() {
+    var buttons = document.querySelectorAll(".witness-filter [data-witness-filter]");
+    var current = witnessFilter();
+    buttons.forEach(function (btn) {
+      var on = btn.getAttribute("data-witness-filter") === current;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function emptyListHtml(message) {
+    return '<p class="feed-hint witness-empty">' + esc(message) + "</p>";
   }
 
   function setStatus(message, isError) {
@@ -644,21 +710,52 @@
     });
   }
 
+  function paintVotedList(list) {
+    if (!state.votes.user) {
+      list.innerHTML = emptyListHtml("Log in to see the witnesses you vote for.");
+      return;
+    }
+    if (!state.votes.ready || state.votedLoading) {
+      list.innerHTML = "";
+      return;
+    }
+    if (state.votes.proxy && !state.votes.names.size) {
+      list.innerHTML = emptyListHtml("Witness votes follow @" + state.votes.proxy + ".");
+      return;
+    }
+    if (!state.votedRows.length) {
+      list.innerHTML = emptyListHtml("You are not voting for any witnesses.");
+      return;
+    }
+    list.innerHTML = rowsHtml(state.votedRows, "voted");
+    paintVoteButtons();
+  }
+
   function paintCurrentList() {
     if (state.mode !== "witnesses") return;
     var list = document.getElementById("witnessList");
     if (!list) return;
+    paintWitnessFilter();
+    if (witnessFilter() === "voted" && state.listMode !== "search") {
+      paintVotedList(list);
+      return;
+    }
     var mode = state.listMode === "search" ? "search" : "rank";
     var bucket = mode === "search" ? state.search : state.ranked;
     if (bucket.error && !bucket.rows.length) {
       list.innerHTML = "";
       return;
     }
-    if (!bucket.rows.length && bucket.done && mode === "search") {
-      list.innerHTML = '<p class="feed-hint witness-empty">No witnesses matched that search.</p>';
+    var html = rowsHtml(bucket.rows, mode);
+    if (!html) {
+      if (bucket.done && !bucket.loading) {
+        list.innerHTML = emptyListHtml(
+          mode === "search" ? "No witnesses matched that search." : "No witnesses to show."
+        );
+      } else list.innerHTML = "";
       return;
     }
-    list.innerHTML = rowsHtml(bucket.rows, mode);
+    list.innerHTML = html;
     paintVoteButtons();
   }
 
@@ -674,6 +771,7 @@
     if (state.mode !== "witnesses" || !document.getElementById("witnessList")) return;
     var bucket = state.listMode === "search" ? state.search : state.ranked;
     if (bucket.loading || bucket.done || bucket.hold) return;
+    if (witnessFilter() === "voted" && state.listMode !== "search") return;
     if (!listNearEnd()) return;
     if (state.listMode === "search") fillSearch(state.gen, state.listGen, false);
     else fillRank(state.gen, state.listGen, false);
@@ -701,10 +799,18 @@
     state.majority = "";
     state.ranked = emptyBucket();
     state.search = emptyBucket();
+    state.witnessFilter = "all";
+    state.votedKey = "";
+    state.votedRows = [];
+    state.votedLoading = false;
     state.pending = new Set();
     state.detailName = "";
     state.detailWitness = null;
     state.detailAccount = null;
+    state.supporterSerial += 1;
+    state.supporterRows = [];
+    state.supporterReady = false;
+    state.supporterError = "";
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
@@ -739,7 +845,10 @@
       state.interest = Number.isFinite(interest) ? interest : null;
       paintStats();
       if (state.mode === "witnesses") paintCurrentList();
-      if (state.mode === "witness" && state.detailWitness) paintDetailFacts();
+      if (state.mode === "witness" && state.detailWitness) {
+        paintDetailFacts();
+        paintSupporters();
+      }
     } catch (err) {
       if (!alive(gen)) return;
       var status = document.getElementById("daoStatus");
@@ -754,6 +863,7 @@
       state.votes.ready = true;
       paintVoteNote();
       paintVoteButtons();
+      if (witnessFilter() === "voted") paintCurrentList();
       return;
     }
     try {
@@ -777,6 +887,81 @@
     }
     paintVoteNote();
     paintVoteButtons();
+    if (witnessFilter() === "voted") ensureVoted(gen);
+  }
+
+  async function ensureVoted(gen) {
+    if (state.mode !== "witnesses" || witnessFilter() !== "voted") return;
+    if (state.listMode === "search") {
+      paintCurrentList();
+      return;
+    }
+    if (!state.votes.user || !state.votes.ready) {
+      paintCurrentList();
+      return;
+    }
+    var key = votedKeyOf();
+    if (state.votedLoading && state.votedKey === key) return;
+    if (state.votedKey === key && !state.votedLoading) {
+      paintCurrentList();
+      return;
+    }
+    var names = key ? key.split("\n") : [];
+    state.votedKey = key;
+    state.votedRows = [];
+    state.votedLoading = true;
+    paintCurrentList();
+    setMore(Boolean(names.length));
+    if (!names.length) {
+      state.votedLoading = false;
+      setMore(false);
+      paintCurrentList();
+      return;
+    }
+    try {
+      var rows = await Promise.all(
+        names.map(function (name) {
+          return api()
+            .hiveRpc("condenser_api.get_witness_by_account", [name], true)
+            .catch(function () {
+              return null;
+            });
+        })
+      );
+      if (!alive(gen) || state.votedKey !== key || witnessFilter() !== "voted") return;
+      var list = [];
+      rows.forEach(function (row) {
+        if (row && witnessName(row)) list.push(row);
+      });
+      list.sort(function (a, b) {
+        var av = bigIntOf(a.votes, 0n);
+        var bv = bigIntOf(b.votes, 0n);
+        if (av === bv) return 0;
+        return av > bv ? -1 : 1;
+      });
+      state.votedRows = list;
+      state.votedLoading = false;
+    } catch (err) {
+      if (!alive(gen) || state.votedKey !== key) return;
+      state.votedLoading = false;
+      state.votedRows = [];
+      setStatus((err && err.message) || "Could not load voted witnesses.", true);
+    }
+    setMore(false);
+    if (witnessFilter() === "voted") paintCurrentList();
+  }
+
+  function setWitnessFilter(next) {
+    if (next !== "all" && next !== "active" && next !== "voted") return;
+    if (witnessFilter() === next) return;
+    state.witnessFilter = next;
+    paintWitnessFilter();
+    if (next === "voted") ensureVoted(state.gen);
+    else {
+      paintCurrentList();
+      setMore(false);
+      maybeMore();
+    }
   }
 
   async function fillRank(gen, listGen, first) {
@@ -1014,32 +1199,29 @@
         }
       );
       if (!alive(gen)) return;
-      if (voted) state.votes.names.delete(name);
-      else state.votes.names.add(name);
+      if (voted) {
+        state.votes.names.delete(name);
+        state.votedRows = state.votedRows.filter(function (row) {
+          return witnessName(row) !== name;
+        });
+        state.votedKey = votedKeyOf();
+      } else {
+        state.votes.names.add(name);
+        state.votedKey = "";
+      }
       state.votes.expired = false;
       paintVoteNote();
+      if (witnessFilter() === "voted" && !voted) ensureVoted(gen);
     } catch (err) {
       if (!(err && err.ownerCancel) && host.still()) {
         host.showError((err && err.message) || (voted ? "Could not remove that witness vote." : "Could not vote for that witness."));
       }
     } finally {
       state.pending.delete(name);
-      if (alive(gen)) paintVoteButtons();
-    }
-  }
-
-  async function copyWitnessLink() {
-    var name = state.detailName;
-    if (!name || !state.host) return;
-    var url = location.origin + "/witness/@" + name;
-    try {
-      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("copy failed");
-      await navigator.clipboard.writeText(url);
-      if (state.mode === "witness" && state.detailName === name && state.host.still()) {
-        setStatus("Link copied.", false);
+      if (alive(gen)) {
+        paintVoteButtons();
+        if (witnessFilter() === "voted") paintCurrentList();
       }
-    } catch (err) {
-      if (state.host.still()) state.host.showError("Could not copy the witness link.");
     }
   }
 
@@ -1066,14 +1248,14 @@
     var fee = String(witness.account_creation_fee || witness.props && witness.props.account_creation_fee || "").trim();
     var size = witness.props && witness.props.maximum_block_size;
     box.innerHTML = [
-      fact("Votes", esc(hp.full || "—")),
+      fact("Votes", esc(hp.exact || "—")),
       fact("Version", versionHtml),
       fact("Missed", esc(formatCount(witness.total_missed))),
       fact("Last block", esc(last.text || last.label || "—")),
       fact("Price feed", esc(feed.text || feed.label || "—")),
       fact("APR", esc(aprOf(witness))),
       fact("Block size", size ? esc(formatCount(size)) : ""),
-      fact("Account fee", fee ? esc(fee) : ""),
+      fact("Account fee", fee ? esc(fee.replace(/\bHIVE\b/g, "hive").replace(/\bHP\b/g, "hp")) : ""),
       fact("Witness since", esc(monthYear(witness.created))),
       fact("Site", urlHtml),
     ].join("");
@@ -1104,6 +1286,11 @@
       '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search witnesses">' +
       glassHtml() +
       "</form>" +
+      '<div class="witness-filter" role="radiogroup" aria-label="Filter witnesses">' +
+      '<button type="button" role="radio" data-witness-filter="all" aria-checked="true" class="is-active">All</button>' +
+      '<button type="button" role="radio" data-witness-filter="active" aria-checked="false">Active</button>' +
+      '<button type="button" role="radio" data-witness-filter="voted" aria-checked="false">Voted</button>' +
+      "</div>" +
       '<p class="tags-status" id="daoStatus" hidden></p>' +
       '<div class="witness-table" id="witnessTable">' +
       '<div class="witness-head"><span>Rank</span><span>Witness</span><span>Votes</span><span title="Last block produced">Last</span><span>Miss</span><span>Feed</span><span>Version</span><span title="HBD interest this witness votes for">APR</span><span></span></div>' +
@@ -1126,29 +1313,6 @@
     loadChain(gen);
     loadVotes(gen);
     fillRank(gen, state.listGen, true);
-  }
-
-  function renderHub(gen) {
-    state.mode = "dao";
-    state.host.setPageMeta(
-      "DAO — CyberSpace77",
-      "Witnesses produce Hive blocks. Proposals spend the decentralized fund."
-    );
-    writeView(
-      gen,
-      '<section class="cs77-page dao-page">' +
-        navHtml("dao") +
-        '<h2 class="page-title">DAO</h2>' +
-        '<div class="dao-copy"><p>Witnesses produce the blocks. Proposals are how the decentralized fund pays for work.</p></div>' +
-        '<div class="dao-choices">' +
-        '<a class="dao-choice" href="' +
-        esc(state.host.appHref("/witnesses")) +
-        '"><span>Witnesses</span><small>Block producers</small></a>' +
-        '<a class="dao-choice" href="' +
-        esc(state.host.appHref("/proposals")) +
-        '"><span>Proposals</span><small>Decentralized fund</small></a>' +
-        "</div></section>"
-    );
   }
 
   function renderProposals(gen) {
@@ -1207,7 +1371,6 @@
         '<p class="dao-rank" id="witnessRank">Checking rank…</p>' +
           '<div class="dao-actions">' +
           voteButtonHtml(name) +
-          '<button type="button" class="btn-ghost" id="witnessCopy">Copy link</button>' +
           '<a class="btn-ghost" href="' +
           esc(state.host.profileHref(name)) +
           '">Profile</a></div>' +
@@ -1215,7 +1378,13 @@
           '<p class="tags-status" id="daoStatus" hidden></p>' +
           (about ? '<p class="dao-about">' + esc(about) + "</p>" : "") +
           (disabled ? '<p class="dao-note dao-disabled">This witness is not signing blocks.</p>' : "") +
-          '<dl class="dao-facts" id="witnessFacts"></dl>'
+          '<dl class="dao-facts" id="witnessFacts"></dl>' +
+          '<section class="witness-supporters">' +
+          '<h3 class="dao-kicker">Supporters</h3>' +
+          '<p class="dao-note" id="witnessSupporterStatus">Loading supporters…</p>' +
+          '<div id="witnessSupporterList"></div>' +
+          '<button type="button" class="btn-ghost" id="witnessSupporterRetry" hidden>Try again</button>' +
+          "</section>"
       )
     );
     paintDetailFacts();
@@ -1250,6 +1419,182 @@
     if (!alive(gen) || state.detailName !== name) return;
     var rankEl = document.getElementById("witnessRank");
     if (rankEl) rankEl.textContent = "Outside the top 500";
+  }
+
+  function supporterHtml(row, rank) {
+    var hp = hpOf(row.raw);
+    var extra = "";
+    if (row.proxied > 0n) {
+      var proxiedHp = hpOf(row.proxied);
+      if (proxiedHp.exact) extra = "includes " + proxiedHp.exact + " from proxies";
+    }
+    var who =
+      '<a href="' + esc(state.host.profileHref(row.name)) + '">@' + esc(row.name) + "</a>";
+    if (extra) who += "<small>" + esc(extra) + "</small>";
+    return (
+      '<div class="witness-supporter">' +
+      '<span class="witness-supporter-rank">' +
+      rank +
+      "</span>" +
+      '<span class="witness-supporter-who">' +
+      who +
+      "</span>" +
+      '<span class="witness-supporter-hp">' +
+      esc(hp.exact || "—") +
+      "</span></div>"
+    );
+  }
+
+  function paintSupporters() {
+    if (!state.supporterReady) return;
+    var status = document.getElementById("witnessSupporterStatus");
+    var list = document.getElementById("witnessSupporterList");
+    var retry = document.getElementById("witnessSupporterRetry");
+    if (!status || !list) return;
+    if (retry) retry.hidden = !state.supporterError;
+    if (state.supporterError) {
+      status.textContent = state.supporterError;
+      list.innerHTML = "";
+      return;
+    }
+    var rows = state.supporterRows;
+    var count = rows.length;
+    status.textContent = count
+      ? formatCount(count) + (count === 1 ? " supporter." : " supporters.")
+      : "No supporters yet.";
+    if (!count) {
+      list.innerHTML = "";
+      return;
+    }
+    var html = [
+      '<div class="witness-supporter-head"><span>Rank</span><span>Account</span><span>Stake</span></div>',
+    ];
+    var i;
+    for (i = 0; i < count; i += 1) html.push(supporterHtml(rows[i], i + 1));
+    list.innerHTML = html.join("");
+  }
+
+  function supporterStatus(gen, name, serial, text) {
+    if (!alive(gen) || state.mode !== "witness" || state.detailName !== name || state.supporterSerial !== serial) {
+      return;
+    }
+    var status = document.getElementById("witnessSupporterStatus");
+    if (status) status.textContent = text;
+  }
+
+  function hafOrigin(node) {
+    try {
+      var url = new URL(node);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+      return url.protocol + "//" + url.host;
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function voterNodes() {
+    var hive = api();
+    var list = hive.getNodes ? hive.getNodes() : [hive.getActiveNode()];
+    var out = [];
+    var i;
+    for (i = 0; i < list.length; i += 1) {
+      var origin = hafOrigin(list[i]);
+      if (origin && out.indexOf(origin) === -1) out.push(origin);
+    }
+    return out;
+  }
+
+  async function fetchVoterPage(name, page, node, current) {
+    var nodes = node ? [node] : voterNodes();
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (!current()) return null;
+      try {
+        var res = await fetch(
+          nodes[i] +
+            "/hafbe-api/witnesses/" +
+            encodeURIComponent(name) +
+            "/voters?page=" +
+            page +
+            "&page-size=" +
+            SUPPORTER_PAGE +
+            "&sort=vests&direction=desc"
+        );
+        if (!current()) return null;
+        if (!res.ok) continue;
+        var data = await res.json();
+        if (!data || !Array.isArray(data.voters)) continue;
+        return { data: data, node: nodes[i] };
+      } catch (err) {
+        /* try the next Hive node */
+      }
+    }
+    throw new Error("Could not load supporters.");
+  }
+
+  async function loadSupporters(gen, name) {
+    state.supporterSerial += 1;
+    var serial = state.supporterSerial;
+    state.supporterRows = [];
+    state.supporterReady = false;
+    state.supporterError = "";
+    function current() {
+      return alive(gen) && state.mode === "witness" && state.detailName === name && state.supporterSerial === serial;
+    }
+    var list = document.getElementById("witnessSupporterList");
+    var retry = document.getElementById("witnessSupporterRetry");
+    if (list) list.innerHTML = "";
+    if (retry) retry.hidden = true;
+    supporterStatus(gen, name, serial, "Loading supporters…");
+    if (!current()) return;
+    try {
+      var rows = [];
+      var seen = new Set();
+      var node = "";
+      var page;
+      for (page = 1; page <= 20; page += 1) {
+        var pack = await fetchVoterPage(name, page, node, current);
+        if (!current()) return;
+        node = pack.node;
+        var data = pack.data;
+        var voters = data && Array.isArray(data.voters) ? data.voters : [];
+        var total = Number(data && data.total_votes);
+        var i;
+        for (i = 0; i < voters.length; i += 1) {
+          var account = accountName(voters[i] && voters[i].voter_name);
+          if (!account || seen.has(account)) continue;
+          seen.add(account);
+          rows.push({
+            name: account,
+            raw: bigIntOf(voters[i].vests, 0n),
+            proxied: bigIntOf(voters[i].proxied_vests, 0n),
+          });
+        }
+        if (rows.length) {
+          supporterStatus(
+            gen,
+            name,
+            serial,
+            "Loading supporters… " +
+              formatCount(rows.length) +
+              (Number.isFinite(total) && total > rows.length ? " of " + formatCount(total) : "")
+          );
+        }
+        var pages = Number(data && data.total_pages);
+        if (!voters.length || voters.length < SUPPORTER_PAGE || (Number.isFinite(pages) && page >= pages)) break;
+      }
+      if (!current()) return;
+      state.supporterRows = rows;
+      state.supporterReady = true;
+      paintSupporters();
+    } catch (err) {
+      if (!current()) return;
+      state.supporterSerial += 1;
+      state.supporterRows = [];
+      state.supporterError = "Could not load supporters.";
+      state.supporterReady = true;
+      paintSupporters();
+    }
   }
 
   async function renderWitness(gen, name) {
@@ -1288,6 +1633,7 @@
       state.detailAccount = pack[1] && pack[1][0];
       paintDetail(gen);
       scanRank(gen, name);
+      loadSupporters(gen, name);
     } catch (err) {
       if (!alive(gen) || state.detailName !== name) return;
       writeView(
@@ -1303,16 +1649,22 @@
   }
 
   function onClick(event) {
+    var filterBtn = event.target.closest && event.target.closest("[data-witness-filter]");
+    if (filterBtn && filterBtn.closest(".witness-filter")) {
+      event.preventDefault();
+      setWitnessFilter(filterBtn.getAttribute("data-witness-filter") || "");
+      return;
+    }
     var retry = event.target.closest && event.target.closest("#witnessRetry");
     if (retry) {
       event.preventDefault();
       retryList();
       return;
     }
-    var copy = event.target.closest && event.target.closest("#witnessCopy");
-    if (copy) {
+    var supporterRetry = event.target.closest && event.target.closest("#witnessSupporterRetry");
+    if (supporterRetry) {
       event.preventDefault();
-      copyWitnessLink();
+      if (state.mode === "witness" && state.detailName) loadSupporters(state.gen, state.detailName);
       return;
     }
     var vote = event.target.closest && event.target.closest(".witness-vote[data-vote]");
@@ -1375,7 +1727,7 @@
     var gen = state.gen;
     var route = (ctx && ctx.route) || {};
     if (route.name === "dao") {
-      renderHub(gen);
+      renderWitnesses(gen);
       return;
     }
     if (route.name === "proposals") {

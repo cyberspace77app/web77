@@ -9205,7 +9205,8 @@ body.is-dao #view {
 .dao-choices,
 .dao-facts,
 .dao-actions,
-.dao-rank {
+.dao-rank,
+.witness-supporters {
   max-width: 40rem;
 }
 
@@ -9328,7 +9329,7 @@ body.is-dao #view {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem 0.15rem;
+  gap: 0.75rem;
   margin: 0 0 0.85rem;
 }
 
@@ -9354,6 +9355,115 @@ body.is-dao #view {
 
 .dao-disabled {
   color: var(--red-bright);
+}
+
+.witness-supporters {
+  margin-top: 1.7rem;
+}
+
+.witness-supporters .dao-kicker {
+  margin-bottom: 0.45rem;
+}
+
+.witness-supporters .dao-note {
+  margin-bottom: 0.75rem;
+}
+
+.witness-supporter-head,
+.witness-supporter {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr) auto;
+  column-gap: 0.75rem;
+  align-items: baseline;
+}
+
+.witness-supporter-head {
+  padding-bottom: 0.4rem;
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-dim);
+}
+
+.witness-supporter-head span:first-child,
+.witness-supporter-head span:last-child {
+  text-align: right;
+}
+
+.witness-supporter {
+  padding: 0.42rem 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+}
+
+.witness-supporter-rank {
+  color: var(--text);
+  text-align: right;
+}
+
+.witness-supporter-who {
+  min-width: 0;
+}
+
+.witness-supporter-who a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--yellow);
+}
+
+.witness-supporter-who small {
+  display: block;
+  margin-top: 0.12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--gray);
+}
+
+.witness-supporter-hp {
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.witness-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  margin: 1.15rem 0 1.15rem;
+}
+
+.witness-filter button {
+  margin: 0;
+  padding: 0.15rem 0 0.28rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.witness-filter button.is-active {
+  border-bottom-color: var(--text);
+}
+
+.witness-filter button:hover {
+  color: var(--yellow);
+}
+
+.witness-filter button.is-active:hover {
+  color: var(--text);
 }
 
 .witness-table {
@@ -9426,13 +9536,9 @@ body.is-dao #view {
 .witness-rank {
   grid-column: 1;
   font-family: var(--font-mono);
-  color: var(--gray-dim);
+  color: var(--text);
   text-align: right;
-}
-
-.witness-row.is-top .witness-rank {
-  color: var(--yellow);
-  text-shadow: var(--glow-yellow);
+  text-shadow: none;
 }
 
 .witness-who {
@@ -9566,44 +9672,40 @@ body.is-dao #view {
 
 .witness-split {
   --witness-check: 0.35rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-  margin: 0.85rem 0 0.4rem;
+  display: block;
+  margin: 0.85rem 0 0.35rem;
   padding: 0;
   border: 0;
   background: none;
-  color: var(--yellow);
+  color: var(--text);
   font-family: var(--font-body);
-  font-size: 0.95rem;
-  line-height: 1.35;
-  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  text-align: left;
 }
 
-.witness-split::before,
-.witness-split::after {
+.witness-split::before {
   content: "";
-  flex: 1 1 auto;
-  align-self: center;
+  display: block;
   height: calc(var(--witness-check) * 4);
-  min-width: calc(var(--witness-check) * 4);
+  margin-bottom: 0.55rem;
   background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--witness-check) * 2) calc(var(--witness-check) * 2);
 }
 
 .witness-split span {
-  flex: 0 1 auto;
-  max-width: min(36rem, calc(100% - 4.2rem));
-  padding: 0 0.7rem;
-  background: var(--bg);
-  color: var(--yellow);
+  display: block;
+  padding: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
 }
 
 .witness-empty {
   margin: 0.35rem 0 1rem;
 }
 
-.dao-page #witnessRetry {
+.dao-page #witnessRetry,
+.dao-page #witnessSupporterRetry {
   margin-top: 0.25rem;
 }
 

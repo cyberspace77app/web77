@@ -5789,7 +5789,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
-    if (dao) dao.setAttribute("href", appHref("/dao"));
+    if (dao) dao.setAttribute("href", appHref("/witnesses"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
     if (search) search.setAttribute("href", appHref("/search"));
@@ -30433,7 +30433,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.6";
+      script.src = "/js/dao.js?v=0.19.16";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
@@ -30860,6 +30860,10 @@ let CS77_FILTER_LOW_REP = 20;
       liveFeedNav = 0;
       renderAbout();
       currentViewKey = key;
+      return;
+    }
+    if (r.name === "dao") {
+      navigate(appHref("/witnesses"), true);
       return;
     }
     if (isDaoRoute(r)) {
