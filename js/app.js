@@ -177,6 +177,10 @@ let CS77_FILTER_LOW_REP = 20;
   // History entry id for the feed currently mounted in #view. Leaving that
   // feed parks the list under this id. Back, Forward, and the logo mount it again.
   let liveFeedNav = 0;
+  // Window scroll of the page a post was opened over. The post then owns the
+  // window, so a later park of that same page reads this instead of the post.
+  let coveredFeedNav = 0;
+  let coveredFeedScroll = 0;
   let historyNavSeq = 0;
   const feedParks = new Map();
   const FEED_PARK_MAX = 8;
@@ -28976,13 +28980,16 @@ let CS77_FILTER_LOW_REP = 20;
     return nav;
   }
 
-  // Comments, replies, and the wallet keep their place when another profile
-  // is opened. The posts tab still loads again.
+  // Posts, comments, replies, and the wallet keep their list and scroll when
+  // another page is opened over them.
   function isProfileListKey(key) {
     return (
       !!key &&
       key.indexOf("profile:") === 0 &&
-      (key.endsWith(":comments") || key.endsWith(":replies") || key.endsWith(":wallet"))
+      (key.endsWith(":posts") ||
+        key.endsWith(":comments") ||
+        key.endsWith(":replies") ||
+        key.endsWith(":wallet"))
     );
   }
 
@@ -29013,10 +29020,22 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(nestedFeedLayerId(route));
   }
 
+  // A profile that is still fetching its account is a loading row. Parking
+  // that shell would restore the spinner instead of the list.
+  function profileShellReady() {
+    if (!isProfileListKey(currentViewKey)) return true;
+    if (!view || !view.querySelector(".profile-banner") || !view.querySelector(".profile-nav")) {
+      return false;
+    }
+    if (isWalletProfileKey(currentViewKey)) return Boolean(view.querySelector(".wallet-page"));
+    return Boolean(view.querySelector("#feedList"));
+  }
+
   function canParkLiveFeed() {
     return Boolean(
       liveFeedNav &&
       isRestorableFeedKey(currentViewKey) &&
+      profileShellReady() &&
       view &&
       view.firstElementChild &&
       !feedParks.has(liveFeedNav)
@@ -29711,8 +29730,12 @@ let CS77_FILTER_LOW_REP = 20;
     const feed = snapshotFeedState();
     const expanded = new Set(expandedCardExcerpts);
     // Read this before the list leaves the document. Detaching it shrinks the
-    // page and the browser clamps the window back to the top.
-    const scrollY = postLayer.open && postLayer.heldScroll ? Number(postLayer.scrollY) || 0 : scrollYNow();
+    // page and the browser clamps the window back to the top. A post owns the
+    // window, so the page it covers keeps the scroll from when it was covered.
+    let scrollY = scrollYNow();
+    if (postLayer.open && coveredFeedNav && coveredFeedNav === nav) scrollY = coveredFeedScroll;
+    else if (postLayer.open && postLayer.heldScroll) scrollY = Number(postLayer.scrollY) || 0;
+    coveredFeedNav = 0;
     // A claim or stake count skips rows that are not on screen. Write the
     // final amounts first, while the table is still connected.
     settleParkedWallet();
@@ -29754,8 +29777,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (fromPop) return;
     parkedNavForLayer = nav;
     parkedNavForLayerSteps = 1 + between;
-    // A comments or replies list parked under the next profile is not the
-    // feed that opened this profile stack.
+    // A profile list parked under the next profile is not the feed that
+    // opened this profile stack.
     if (nextRoute && nextRoute.name === "profile" && !isProfileListKey(currentViewKey)) {
       profileReturnNav = nav;
       profileReturnSteps = 1 + between;
@@ -30267,6 +30290,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (!fromAccountProfile) accountMenuProfile = false;
     syncAccountMenuBanner(accountBannerMode(r, fromAccountMenu, fromAccountProfile, fromProfileNav));
     if (r.name === "post") {
+      if (!postLayer.open && liveFeedNav && isRestorableFeedKey(currentViewKey)) {
+        coveredFeedNav = liveFeedNav;
+        coveredFeedScroll = scrollYNow();
+      }
       HiveMd.whenMarkdownReady();
       ensureHistoryNav();
       ensureShellStamp(r);
@@ -30444,7 +30471,7 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       currentViewKey = key;
-      // Comments, replies, and the wallet can be parked. Posts load again.
+      // Posts, comments, replies, and the wallet can be parked.
       liveFeedNav = isProfileListKey(key) ? nav : 0;
       accountMenuSubNav = false;
       accountMenuProfile = false;
