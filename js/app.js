@@ -29074,6 +29074,8 @@ let CS77_FILTER_LOW_REP = 20;
         : null,
       done: feedState.done,
       loading: feedState.loading,
+      // The lock belongs to this list. The next page has its own feedState.
+      holdAuto: feedState.holdAuto,
     };
   }
 
@@ -29087,6 +29089,7 @@ let CS77_FILTER_LOW_REP = 20;
     feedState.cursor = snap.cursor;
     feedState.loading = false;
     feedState.done = snap.done;
+    feedState.holdAuto = Boolean(snap && snap.holdAuto);
     // Stay ahead of a profile load that captured the previous generation.
     feedState.gen += 1;
   }
@@ -29806,6 +29809,10 @@ let CS77_FILTER_LOW_REP = 20;
         accountMenuSubNav = false;
       }
       if (fromAccountProfile) accountMenuProfile = false;
+      // A parked subspace returns here, before renderCommunity. The visible
+      // tab still belongs to this history entry, so the next tab switch
+      // stashes it under this nav.
+      if (r.name === "community") lastCommittedNav = nav;
       if (restored) {
         if (restored.hadWelcome) revealParkedWelcome();
         scrollWindowInstant(restored.scrollY);
