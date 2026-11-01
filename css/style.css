@@ -7844,6 +7844,15 @@ body:has(#pollVotesOverlay:not([hidden])) {
     padding:1.5rem 0 0 0;
   }
 
+  /* Publish meets the top of the screen. margin:auto would center a short card. */
+  #publishOverlay {
+    padding-top: 0;
+  }
+
+  #publishOverlay .publish-card {
+    margin-top: 0;
+  }
+
   #peopleOverlay,
   #pollVotesOverlay {
     flex-direction: column;
