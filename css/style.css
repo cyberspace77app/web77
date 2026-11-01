@@ -8960,7 +8960,7 @@ min-height: 0;
   width: 100%;
   min-height: 8.5rem;
   padding: 0.8rem 0.95rem;
-  margin: 0 0 0.35rem;
+  margin: 0 0 1rem;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
