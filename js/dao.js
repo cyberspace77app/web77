@@ -249,6 +249,13 @@
     return text + "%";
   }
 
+  // Chain hbd_interest_rate is basis points. Same scale and bounds as the wallet staked hbd apr.
+  function hbdAprText(rate) {
+    var n = Number(rate);
+    if (!Number.isFinite(n) || n < 0 || n > 10000) return "—";
+    return (n / 100).toFixed(2);
+  }
+
   function glassHtml() {
     return '<button type="submit" class="community-search-glass" aria-label="Search"><svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"><path d="M3.9 7.15V3.9h3.25"/><path d="M12.85 3.9h3.25v3.25"/><path d="M7.15 16.1H3.9v-3.25"/><circle cx="10" cy="10" r="5.15"/><path d="M10 6.55v1.25M10 12.2v1.25M6.55 10h1.25M12.2 10h1.25"/><circle cx="10" cy="10" r="0.7" fill="currentColor" stroke="none"/></g><path class="community-search-handle" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square" d="M16 16 21.15 21.15"/></svg></button>';
   }
@@ -355,8 +362,8 @@
     var vest = assetInt(props.total_vesting_shares, 6);
     if (fund <= 0n || vest <= 0n) return { compact: "—", full: "", milli: null };
     var milli = divRound(micro * fund, vest);
-    var full = formatHiveMilli(milli) + " HP";
-    return { compact: compactHp(milli), full: full, milli: milli };
+    var text = formatHiveMilli(milli);
+    return { compact: compactHp(milli), full: text + " HP", exact: text + " hp", milli: milli };
   }
 
   function lastBlockOf(witness) {
@@ -436,6 +443,15 @@
     }
   }
 
+  var WITNESS_VOTE_CHECK =
+    '<svg class="witness-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
+
+  function voteButtonFace(proxy, voted) {
+    if (proxy) return "Proxy";
+    if (voted) return WITNESS_VOTE_CHECK;
+    return "Vote";
+  }
+
   function voteButtonHtml(name) {
     var user = state.votes.user;
     var proxy = user && state.votes.proxy;
@@ -443,7 +459,6 @@
     var pending = state.pending.has(name);
     var waiting = Boolean(user) && !state.votes.ready;
     var disabled = Boolean(proxy) || pending || waiting;
-    var label = proxy ? "Proxy" : voted ? "Voted" : "Vote";
     var aria = proxy
       ? "Witness votes follow @" + proxy
       : (voted ? "Remove vote for @" : "Vote for @") + name;
@@ -461,7 +476,7 @@
       (pending ? ' aria-busy="true"' : "") +
       (disabled ? " disabled" : "") +
       ">" +
-      label +
+      voteButtonFace(proxy, voted) +
       "</button>"
     );
   }
@@ -497,10 +512,13 @@
       esc(name) +
       "</span></a>" +
       '<span class="witness-cells">' +
-      '<span class="witness-cell" data-label="Votes"' +
-      (hp.full ? ' title="' + esc(hp.full) + '"' : "") +
+      '<span class="witness-cell witness-votes" data-label="Votes"' +
+      (hp.exact ? ' tabindex="0"' : "") +
       ">" +
       esc(hp.compact) +
+      (hp.exact
+        ? '<span class="session-stat-tip" role="tooltip">' + esc(hp.exact) + "</span>"
+        : "") +
       "</span>" +
       '<span class="witness-cell" data-label="Last block"' +
       (last.title ? ' title="' + esc(last.title) + '"' : "") +
@@ -536,7 +554,7 @@
       var rank = listMode === "rank" ? index + 1 : 0;
       if (listMode === "rank" && rank === 21) {
         html.push(
-          '<p class="witness-split">Below the top 20, one backup witness produces the next block in each round.</p>'
+          '<p class="witness-split"><span>Below the top 20, one backup witness produces the next block in each round.</span></p>'
         );
       }
       html.push(rowHtml(witness, rank, listMode));
@@ -573,25 +591,13 @@
     var block = document.getElementById("daoBlock");
     var daily = document.getElementById("daoDaily");
     var avg = document.getElementById("daoAvg");
-    if (!block || !daily || !avg || !rewards) return;
-    block.textContent = formatHiveMilli(rewards.elected);
-    daily.textContent = formatHiveMilli(rewards.daily);
-    avg.textContent = formatHiveMilli(rewards.avg);
-  }
-
-  function paintInterest() {
-    var el = document.getElementById("witnessInterest");
-    if (!el) return;
-    if (state.interest == null) {
-      el.hidden = true;
-      el.textContent = "";
-      return;
+    if (block && daily && avg && rewards) {
+      block.textContent = formatHiveMilli(rewards.elected);
+      daily.textContent = formatHiveMilli(rewards.daily);
+      avg.textContent = formatHiveMilli(rewards.avg);
     }
-    el.hidden = false;
-    el.textContent =
-      "The HBD savings rate is the median of the top 20. It is " +
-      percentText(state.interest) +
-      " now. The APR column is the rate each witness is voting for.";
+    var apr = document.getElementById("daoApr");
+    if (apr) apr.textContent = hbdAprText(state.interest);
   }
 
   function voteNoteText() {
@@ -627,12 +633,11 @@
       btn.setAttribute("aria-pressed", voted ? "true" : "false");
       if (pending) btn.setAttribute("aria-busy", "true");
       else btn.removeAttribute("aria-busy");
+      btn.innerHTML = voteButtonFace(proxy, voted);
       if (proxy) {
-        btn.textContent = "Proxy";
         btn.title = "Witness votes follow @" + proxy;
         btn.setAttribute("aria-label", btn.title);
       } else {
-        btn.textContent = voted ? "Voted" : "Vote";
         btn.removeAttribute("title");
         btn.setAttribute("aria-label", (voted ? "Remove vote for @" : "Vote for @") + name);
       }
@@ -733,7 +738,6 @@
       var interest = Number(props.hbd_interest_rate);
       state.interest = Number.isFinite(interest) ? interest : null;
       paintStats();
-      paintInterest();
       if (state.mode === "witnesses") paintCurrentList();
       if (state.mode === "witness" && state.detailWitness) paintDetailFacts();
     } catch (err) {
@@ -1086,13 +1090,13 @@
       "<p>Each round is 21 blocks. The top 20 witnesses each produce one block. The extra block goes to one backup witness, picked at random in proportion to the votes outside the top 20.</p>" +
       "<p>An account can vote for up to 30 witnesses. The weight of each vote is that account's Hive Power, counted in full for every witness. It is not split across the 30.</p>" +
       "</div>" +
-      '<p class="dao-note" id="witnessInterest" hidden></p>' +
+      '<p class="dao-note" id="witnessInterest">The HBD savings rate is the median of the top 20. The APR column is the rate each witness is voting for.</p>' +
       '<div class="dao-stats">' +
-      '<div class="dao-stat"><span class="dao-stat-label">Block reward</span><strong id="daoBlock">—</strong><span class="dao-stat-unit">HIVE</span></div>' +
-      '<div class="dao-stat"><span class="dao-stat-label">Daily rewards</span><strong id="daoDaily">—</strong><span class="dao-stat-unit">HIVE</span></div>' +
-      '<div class="dao-stat"><span class="dao-stat-label">Avg top 20 daily</span><strong id="daoAvg">—</strong><span class="dao-stat-unit">HIVE</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">block reward</span><strong id="daoBlock">—</strong><span class="dao-stat-unit">hive</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">daily rewards</span><strong id="daoDaily">—</strong><span class="dao-stat-unit">hive</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">avg top 20 daily</span><strong id="daoAvg">—</strong><span class="dao-stat-unit">hive</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">hbd interest</span><strong id="daoApr">—</strong><span class="dao-stat-unit">%</span></div>' +
       "</div>" +
-      '<p class="dao-note">A top-20 witness earns the block reward about once every 21 blocks. Daily rewards add up every producer in that round. The average is one top witness who misses none. A backup witness earns more for each block and produces far fewer blocks. Rewards are paid as Hive Power and shown in HIVE.</p>' +
       '<p class="dao-note" id="daoVoteNote" hidden></p>' +
       '<form class="tags-add search-form" id="witnessSearchForm">' +
       '<input id="witnessSearch" type="text" maxlength="32" placeholder="Search witnesses" value="' +
@@ -1119,8 +1123,6 @@
       "Hive witnesses are the block producers. Each account can vote for 30 of them with its Hive Power."
     );
     if (!writeView(gen, witnessShell(gen, ""))) return;
-    var input = document.getElementById("witnessSearch");
-    if (input) state.host.focus(input);
     loadChain(gen);
     loadVotes(gen);
     fillRank(gen, state.listGen, true);

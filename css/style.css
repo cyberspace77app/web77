@@ -9240,6 +9240,10 @@ body.is-dao #view {
   margin: -0.35rem 0 1rem;
 }
 
+.dao-page #witnessSearchForm {
+  max-width: 14rem;
+}
+
 .dao-stats,
 .dao-choices,
 .dao-facts {
@@ -9248,9 +9252,8 @@ body.is-dao #view {
   margin: 0 0 1.15rem;
 }
 
-.dao-stats,
-.dao-choices {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.dao-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .dao-choices {
@@ -9280,6 +9283,11 @@ body.is-dao #view {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--gray-dim);
+}
+
+.dao-stat-label,
+.dao-stat-unit {
+  text-transform: none;
 }
 
 .dao-stat strong {
@@ -9457,6 +9465,40 @@ body.is-dao #view {
   font-variant-numeric: tabular-nums;
 }
 
+.witness-votes {
+  position: relative;
+  cursor: default;
+}
+
+.witness-votes:focus {
+  outline: none;
+}
+
+.witness-votes:focus-visible {
+  outline: 1px solid var(--gray);
+  outline-offset: 2px;
+}
+
+.witness-votes .session-stat-tip {
+  left: auto;
+  right: 0;
+  z-index: 8;
+}
+
+.witness-votes:hover .session-stat-tip,
+.witness-votes:focus .session-stat-tip,
+.witness-votes:focus-visible .session-stat-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.witness-row:has(.witness-votes:hover),
+.witness-row:has(.witness-votes:focus),
+.witness-row:has(.witness-votes:focus-visible) {
+  position: relative;
+  z-index: 8;
+}
+
 .witness-cell.is-behind {
   color: var(--gray-dim);
 }
@@ -9473,13 +9515,40 @@ body.is-dao #view {
 .btn-primary.witness-vote.is-voted,
 .btn-primary.witness-vote.is-voted:hover:not(:disabled),
 .btn-primary.witness-vote.is-voted:active:not(:disabled) {
+  width: auto;
+  height: auto;
+  min-width: 0;
+  border-color: transparent;
   background: transparent;
   color: var(--yellow);
-  border-color: rgba(255, 225, 74, 0.55);
   box-shadow: none;
   filter: none;
   transform: none;
   text-shadow: none;
+}
+
+.btn-primary.witness-vote.is-voted::before {
+  content: "Vote";
+  visibility: hidden;
+}
+
+.btn-primary.witness-vote.is-voted::after {
+  content: none;
+}
+
+.btn-primary.witness-vote.is-voted:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 3px;
+}
+
+.witness-vote-check {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: 1.85rem;
+  height: 1.85rem;
+  transform: translate(-50%, -50%);
 }
 
 .btn-primary.witness-vote:disabled {
@@ -9496,13 +9565,38 @@ body.is-dao #view {
 }
 
 .witness-split {
-  margin: 0.45rem 0 0.15rem;
-  padding: 0.75rem 0 0.35rem;
-  border-top: 1px solid var(--border-hot);
+  --witness-check: 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  margin: 0.85rem 0 0.4rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--yellow);
   font-family: var(--font-body);
-  font-size: 1.05rem;
-  line-height: 1.5;
-  color: var(--gray);
+  font-size: 0.95rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.witness-split::before,
+.witness-split::after {
+  content: "";
+  flex: 1 1 auto;
+  align-self: center;
+  height: calc(var(--witness-check) * 4);
+  min-width: calc(var(--witness-check) * 4);
+  background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--witness-check) * 2) calc(var(--witness-check) * 2);
+}
+
+.witness-split span {
+  flex: 0 1 auto;
+  max-width: min(36rem, calc(100% - 4.2rem));
+  padding: 0 0.7rem;
+  background: var(--bg);
+  color: var(--yellow);
 }
 
 .witness-empty {
@@ -9584,6 +9678,11 @@ body.is-dao #view {
     text-align: left;
   }
 
+  .witness-votes .session-stat-tip {
+    left: 0;
+    right: auto;
+  }
+
   .witness-cell::before {
     content: attr(data-label);
     display: block;
@@ -9597,7 +9696,6 @@ body.is-dao #view {
   }
 
   .witness-split {
-    margin: 0.15rem 0;
-    padding: 0.15rem 0 0.15rem;
+    margin: 0.35rem 0;
   }
 }
