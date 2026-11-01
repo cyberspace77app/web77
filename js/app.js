@@ -4537,6 +4537,89 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // Feed, profile, and subspace tabs. Settings, search, and the subspaces
+  // directory use .subpage-nav and stay put when the current tab is clicked.
+  function isLiveSectionNav(a) {
+    const nav = a && a.closest && a.closest("nav.feed-nav");
+    return Boolean(nav && !nav.classList.contains("subpage-nav"));
+  }
+
+  // /created and /latest are one feed. /@name/posts and /@name are one profile
+  // tab. Match the route, not the exact address.
+  function isSameSectionNav(a, href) {
+    if (!isLiveSectionNav(a)) return false;
+    const here = parseRoute();
+    if (!here || (here.name !== "feed" && here.name !== "profile" && here.name !== "community")) {
+      return false;
+    }
+    const key = routeKey(here);
+    return Boolean(key && key === routeKey(parseRoute(hrefToPath(href))));
+  }
+
+  function beginSectionReload() {
+    closeLogoMenu();
+    hideVoteSlider();
+    closeProfileMore();
+    closeContentMore();
+    closeWalletMore();
+    hidePayoutPanel();
+    hideContentDelete(true);
+    hideCrossPost(true);
+    hideEmbed();
+    stopEmbedSizeWatch();
+    clearError();
+    if (ownerSignSession && !ownerSignBusy) {
+      const signSource = ownerSignSession.source;
+      if (signSource === "wallet" || signSource === "memo") {
+        cancelOwnerSign();
+        if (signSource === "wallet") {
+          closeWalletOverlay();
+          closeSendOverlay();
+          closeConvertOverlay();
+          closeCreateAccountOverlay();
+          closeClaimTokensOverlay();
+        }
+      }
+    }
+    if (!ownerSignBusy) {
+      closeDelegateOverlay();
+      closeWalletOverlay();
+      closeSendOverlay();
+      closeConvertOverlay();
+      closeCreateAccountOverlay();
+      closeClaimTokensOverlay();
+    }
+    quietSmartHeader();
+    const r = parseRoute();
+    if (r.name === "feed") {
+      // The welcome flyer owns the top of "/". Reloading Latest stays on the feed.
+      if (!(document.body.classList.contains("has-welcome") && isHomePath())) {
+        scrollWindowInstant(0);
+      }
+      renderFeed(r.sort, true, r.tag || "");
+      return;
+    }
+    if (r.name === "profile") {
+      renderProfile(r.author, r.page);
+      return;
+    }
+    if (r.name === "community") renderCommunity(r.community, r.page);
+  }
+
+  // Clicking the open Feed, Latest, Posts, About, Members, or Wallet tab
+  // loads that section again. The address and the history entry stay.
+  function reloadCurrentSection() {
+    if (peopleHistoryOn) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHistoryOn = false;
+      pendingPeopleNav = { reloadSection: true };
+      history.back();
+      return;
+    }
+    if (peopleList.open) closePeoplePanel({ skipHistory: true });
+    beginSectionReload();
+  }
+
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
@@ -4672,6 +4755,13 @@ let CS77_FILTER_LOW_REP = 20;
         accountMenuProfile = true;
       }
     }
+    if (isSameSectionNav(a, href)) {
+      e.preventDefault();
+      accountMenuSubNav = false;
+      accountMenuProfile = false;
+      reloadCurrentSection();
+      return;
+    }
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
@@ -4729,6 +4819,10 @@ let CS77_FILTER_LOW_REP = 20;
       pendingPeopleNav = null;
       closePeoplePanel({ skipHistory: true });
       peopleHistoryOn = false;
+      if (job.reloadSection) {
+        beginSectionReload();
+        return;
+      }
       navigate(job.href, job.replace);
       return;
     }
