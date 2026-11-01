@@ -2685,6 +2685,7 @@ let CS77_FILTER_LOW_REP = 20;
           currentPost.reblogs = nextCount;
         }
         syncReblogButtons(author, permlink, { mine, pending: false, count: nextCount });
+        noteReplay(author, permlink, { reblogs: nextCount, reblogMine: mine });
         if (
           openVoters &&
           openVoters.kind === "reblog" &&
@@ -3161,6 +3162,13 @@ let CS77_FILTER_LOW_REP = 20;
         localVotes.set(key, next);
         syncVoteButtons(author, permlink, next);
         repaintOpenVoters(author, permlink);
+        const paid = payoutByKey.get(key);
+        noteReplay(author, permlink, {
+          voteSign: expectSign,
+          upCount: next.upCount,
+          downCount: next.downCount,
+          payout: paid ? paid.payout : undefined,
+        });
         if (!chainMoved && attempt < 7) continue;
         return;
       }
@@ -3310,6 +3318,13 @@ let CS77_FILTER_LOW_REP = 20;
         localVotes.set(key, done);
         syncVoteButtons(author, permlink, done);
         repaintOpenVoters(author, permlink);
+        const paid = payoutByKey.get(key);
+        noteReplay(author, permlink, {
+          voteSign: nextSign,
+          upCount: nextUp,
+          downCount: nextDown,
+          payout: paid ? paid.payout : undefined,
+        });
         refreshVoteValue(author, permlink, nextSign, before, weight, basis);
       })
       .catch((err) => {
@@ -9184,12 +9199,20 @@ let CS77_FILTER_LOW_REP = 20;
       }
 
       if (editing) {
+        const edited = {
+          author: user,
+          permlink: permlink,
+          title: title,
+          body: body,
+          json_metadata: jsonMetadata,
+        };
         if (currentPost && currentPost.permlink === permlink && isOwnAuthor(currentPost.author)) {
           currentPost.title = title;
           currentPost.body = body;
           currentPost.json_metadata = jsonMetadata;
-          rememberContent(currentPost);
         }
+        rememberContent(edited);
+        noteReplay(user, permlink, { title: title, body: body, jsonMetadata: jsonMetadata });
         applyPostEditToView(title, body);
         hidePublishOverlay();
         // The dialog locks the page where the reader left it. Bring the
@@ -9646,6 +9669,8 @@ let CS77_FILTER_LOW_REP = 20;
       contentDeleteBusy = false;
       hideContentDelete();
       applyDeletedContent(target.author, target.permlink);
+      noteReplay(target.author, target.permlink, { deleted: true });
+      noteReplayCommentCount();
     } catch (err) {
       contentDeleteBusy = false;
       if (confirmBtn) confirmBtn.disabled = false;
@@ -14667,6 +14692,7 @@ let CS77_FILTER_LOW_REP = 20;
       });
       appendPostedComment(parentAuthor, parentPermlink, html);
       bumpCommentCount(1);
+      noteReplayCommentCount();
       composerStatus(composer, "");
       const slot = composer.closest(".comment-reply-slot");
       if (slot) {
@@ -16687,11 +16713,17 @@ let CS77_FILTER_LOW_REP = 20;
     mountCommentPolls(pv);
     if (snap.root) {
       currentPost = snap.root;
-      rememberContent(snap.root);
+      const rec = replayQueue.get(snapKey(snap.root.author, snap.root.permlink));
+      const newerEdit =
+        rec &&
+        ((rec.title != null && rec.title !== snap.root.title) ||
+          (rec.body != null && rec.body !== snap.root.body));
+      if (!newerEdit) rememberContent(snap.root);
       setPostTitle(snap.root);
     } else if (snap.title) {
       setPageMeta(snap.title);
     }
+    replaySaved(pv);
     restoreCommentDraft();
     return true;
   }
@@ -28980,6 +29012,313 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // Broadcasts Hive accepted. Back and Forward apply these onto a parked
+  // view when it is shown. Optimistic clicks and failed broadcasts stay out.
+  const replayQueue = new Map();
+  const REPLAY_MAX = 40;
+
+  function noteReplay(author, permlink, patch) {
+    const name = String(author || "").replace(/^@/, "");
+    const link = String(permlink || "");
+    if (!name || !link || !patch) return;
+    const key = snapKey(name, link);
+    const prev = replayQueue.get(key) || { author: name, permlink: link };
+    if (prev.deleted && !patch.deleted) return;
+    const fields = Object.keys(patch);
+    for (let i = 0; i < fields.length; i++) {
+      if (patch[fields[i]] !== undefined) prev[fields[i]] = patch[fields[i]];
+    }
+    replayQueue.delete(key);
+    replayQueue.set(key, prev);
+    while (replayQueue.size > REPLAY_MAX) {
+      let victim = "";
+      replayQueue.forEach((rec, id) => {
+        if (!victim && !rec.deleted) victim = id;
+      });
+      if (!victim) victim = replayQueue.keys().next().value;
+      replayQueue.delete(victim);
+    }
+  }
+
+  function noteReplayCommentCount() {
+    const section = document.getElementById("comments");
+    if (!section) return;
+    const author = section.getAttribute("data-root-author");
+    const permlink = section.getAttribute("data-root-permlink");
+    const n = Number(section.getAttribute("data-count"));
+    if (!author || !permlink || !Number.isFinite(n)) return;
+    noteReplay(author, permlink, { children: n });
+  }
+
+  function replayWriteNode(node, rec) {
+    if (!node || rec.deleted) return;
+    if (rec.children != null) node.children = rec.children;
+    if (rec.reblogs != null) node.reblogs = rec.reblogs;
+    if (rec.payout != null && Number.isFinite(Number(rec.payout))) {
+      node.payout = Number(rec.payout);
+      if (!node.is_paidout) node.pending_payout_value = Number(rec.payout).toFixed(3) + " HBD";
+    }
+    if (rec.title != null) node.title = rec.title;
+    if (rec.body != null) node.body = rec.body;
+    if (rec.jsonMetadata != null) node.json_metadata = rec.jsonMetadata;
+  }
+
+  function replayWriteItems(rec) {
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item) continue;
+      if (samePostId(item, rec.author, rec.permlink)) replayWriteNode(item, rec);
+      if (item.original_entry && samePostId(item.original_entry, rec.author, rec.permlink)) {
+        replayWriteNode(item.original_entry, rec);
+      }
+    }
+    if (currentPost && samePostId(currentPost, rec.author, rec.permlink)) replayWriteNode(currentPost, rec);
+  }
+
+  function replayDropItems(author, permlink) {
+    const items = feedState.items || [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (!item) continue;
+      if (
+        samePostId(item, author, permlink) ||
+        (item.original_entry && samePostId(item.original_entry, author, permlink))
+      ) {
+        items.splice(i, 1);
+      }
+    }
+  }
+
+  function replayFeedItem(author, permlink) {
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item) continue;
+      if (samePostId(item, author, permlink)) return item;
+      if (item.original_entry && samePostId(item.original_entry, author, permlink)) return item;
+    }
+    return null;
+  }
+
+  function replayPatchScope(scope, rec) {
+    if (rec.upCount != null || rec.downCount != null || rec.voteSign != null) {
+      scope.querySelectorAll(".vote-wrap, .vote-counts").forEach((voteRoot) => {
+        const author = voteRoot.getAttribute("data-vote-author");
+        if (
+          author &&
+          !samePostId(
+            { author: author, permlink: voteRoot.getAttribute("data-vote-permlink") },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          return;
+        }
+        if (rec.upCount != null) {
+          voteRoot.querySelectorAll(".vote-n").forEach((el) => {
+            el.textContent = String(rec.upCount);
+          });
+        }
+        if (rec.downCount != null) {
+          voteRoot.querySelectorAll(".downvote-n").forEach((el) => {
+            el.textContent = String(rec.downCount);
+          });
+        }
+        if (rec.voteSign == null) return;
+        const up = voteRoot.querySelector(".vote-btn");
+        const down = voteRoot.querySelector(".downvote-btn");
+        if (up) {
+          up.classList.toggle("is-voted", rec.voteSign === 1);
+          up.classList.remove("is-pending");
+          up.disabled = false;
+          up.setAttribute("aria-pressed", rec.voteSign === 1 ? "true" : "false");
+          up.setAttribute("aria-label", rec.voteSign === 1 ? "Remove upvote" : "Upvote");
+        }
+        if (down) {
+          down.classList.toggle("is-voted", rec.voteSign === -1);
+          down.classList.remove("is-pending");
+          down.disabled = false;
+          down.setAttribute("aria-pressed", rec.voteSign === -1 ? "true" : "false");
+          down.setAttribute("aria-label", rec.voteSign === -1 ? "Remove downvote" : "Downvote");
+        }
+      });
+    }
+    if (rec.payout != null && Number.isFinite(Number(rec.payout))) {
+      scope.querySelectorAll(".payout").forEach((el) => {
+        const author = el.getAttribute("data-payout-author");
+        if (
+          author &&
+          !samePostId(
+            { author: author, permlink: el.getAttribute("data-payout-permlink") },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          return;
+        }
+        applyPayoutEl(el, { payout: Number(rec.payout) });
+      });
+    }
+    if (rec.children != null) {
+      const label = "C " + rec.children;
+      scope.querySelectorAll(".comment-n").forEach((el) => {
+        el.textContent = label;
+      });
+      const section = scope.querySelector("#comments");
+      if (
+        section &&
+        samePostId(
+          {
+            author: section.getAttribute("data-root-author"),
+            permlink: section.getAttribute("data-root-permlink"),
+          },
+          rec.author,
+          rec.permlink
+        )
+      ) {
+        section.setAttribute("data-count", String(rec.children));
+      }
+    }
+    if (rec.reblogs != null || rec.reblogMine != null) {
+      scope.querySelectorAll(".reblog-wrap").forEach((wrap) => {
+        if (
+          !samePostId(
+            {
+              author: wrap.getAttribute("data-reblog-author"),
+              permlink: wrap.getAttribute("data-reblog-permlink"),
+            },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          return;
+        }
+        const btn = wrap.querySelector(".reblog-btn");
+        if (!btn) return;
+        if (rec.reblogs != null) {
+          const n = btn.querySelector(".reblog-n");
+          if (n) n.textContent = String(rec.reblogs);
+        }
+        if (rec.reblogMine != null) {
+          btn.classList.toggle("is-reblogged", Boolean(rec.reblogMine));
+          btn.classList.remove("is-pending");
+          btn.disabled = false;
+          btn.setAttribute("aria-pressed", rec.reblogMine ? "true" : "false");
+          btn.setAttribute("aria-label", rec.reblogMine ? "Undo reblog" : "Reblog");
+        }
+      });
+    }
+  }
+
+  function replaySaved(root) {
+    if (!root || !replayQueue.size) return;
+    replayQueue.forEach((rec) => {
+      if (rec.deleted) {
+        replayDropItems(rec.author, rec.permlink);
+        root.querySelectorAll("article.post-card, article.comment").forEach((el) => {
+          if (
+            !samePostId(
+              { author: el.getAttribute("data-author"), permlink: el.getAttribute("data-permlink") },
+              rec.author,
+              rec.permlink
+            )
+          ) {
+            return;
+          }
+          const wrap = el.closest(".feed-item") || el;
+          wrap.remove();
+        });
+        const section = root.querySelector("#comments");
+        if (
+          section &&
+          samePostId(
+            {
+              author: section.getAttribute("data-root-author"),
+              permlink: section.getAttribute("data-root-permlink"),
+            },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          root.replaceChildren();
+        }
+        return;
+      }
+      replayWriteItems(rec);
+      const edited = rec.title != null || rec.body != null;
+      root.querySelectorAll("article.post-card").forEach((card) => {
+        if (
+          !samePostId(
+            { author: card.getAttribute("data-author"), permlink: card.getAttribute("data-permlink") },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          return;
+        }
+        const item = replayFeedItem(rec.author, rec.permlink);
+        if (edited && item) {
+          replaceFeedCard(card, item);
+          return;
+        }
+        if (edited && rec.title != null) {
+          const h2 = card.querySelector("h2");
+          if (h2) h2.textContent = rec.title || "(untitled)";
+        }
+        replayPatchScope(card, rec);
+      });
+      root.querySelectorAll("article.comment").forEach((comment) => {
+        if (
+          !samePostId(
+            {
+              author: comment.getAttribute("data-author"),
+              permlink: comment.getAttribute("data-permlink"),
+            },
+            rec.author,
+            rec.permlink
+          )
+        ) {
+          return;
+        }
+        replayPatchScope(comment, rec);
+      });
+      const article = root.querySelector("article.article");
+      const section = article && article.querySelector("#comments");
+      if (
+        !article ||
+        !section ||
+        !samePostId(
+          {
+            author: section.getAttribute("data-root-author"),
+            permlink: section.getAttribute("data-root-permlink"),
+          },
+          rec.author,
+          rec.permlink
+        )
+      ) {
+        return;
+      }
+      if (rec.title != null) paintArticleTitle(article, currentPost || { title: rec.title });
+      if (rec.body != null) {
+        const bodyEl = article.querySelector(":scope > .post-body");
+        if (bodyEl && !bodyEl.querySelector(".nsfw-hold-post")) {
+          const paint = () => {
+            if (!bodyEl.isConnected) return;
+            bodyEl.innerHTML = HiveMd.renderMarkdown(rec.body || "");
+          };
+          if (HiveMd.markdownReady()) paint();
+          else HiveMd.whenMarkdownReady().then(paint, paint);
+        }
+      }
+      replayPatchScope(article, rec);
+      if (currentPost && samePostId(currentPost, rec.author, rec.permlink)) {
+        if (rec.title != null || rec.body != null) rememberContent(currentPost);
+        if (rec.title != null) setPostTitle(currentPost);
+      }
+    });
+  }
+
   function restoreCommunityTab(tab) {
     applyFeedSnapshot(tab.feed);
     expandedCardExcerpts.clear();
@@ -28988,6 +29327,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (existing) existing.remove();
     const section = tab.holder && tab.holder.firstElementChild;
     if (section) view.appendChild(section);
+    replaySaved(section || view);
   }
 
   function snapshotDelegationView() {
@@ -29215,6 +29555,7 @@ let CS77_FILTER_LOW_REP = 20;
     applyDelegationSnapshot(park.delegation);
     expandedCardExcerpts.clear();
     park.expanded.forEach((k) => expandedCardExcerpts.add(k));
+    replaySaved(view);
     queueFeedVideoSync();
   }
 
