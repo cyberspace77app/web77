@@ -3696,6 +3696,10 @@ let CS77_FILTER_LOW_REP = 20;
     about: true,
     imprint: true,
     settings: true,
+    dao: true,
+    witnesses: true,
+    proposals: true,
+    witness: true,
     c: true,
   };
 
@@ -4071,6 +4075,16 @@ let CS77_FILTER_LOW_REP = 20;
       }
       return { name: "notfound" };
     }
+    if (parts.length === 1 && first === "dao") return { name: "dao" };
+    if (parts.length === 1 && first === "witnesses") return { name: "witnesses" };
+    if (parts.length === 1 && first === "proposals") return { name: "proposals" };
+    if (first === "witness") {
+      if (parts.length === 2 && parts[1].charAt(0) === "@") {
+        const author = parts[1].slice(1).toLowerCase();
+        if (/^[a-z0-9.\-]{3,16}$/.test(author)) return { name: "witness", author };
+      }
+      return { name: "notfound" };
+    }
 
     if (first === "c" && parts.length >= 2) {
       const community = normalizeCommunityName(parts[1]);
@@ -4169,6 +4183,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "community") return "community:" + r.community + ":" + r.page;
     if (r.name === "settings") return "settings:" + (r.page || "general");
     if (r.name === "search") return "search:" + (r.page || "users");
+    if (r.name === "witness") return "witness:" + (r.author || "");
     if (r.name === "communities") {
       const page =
         r.page === "browse" || r.page === "newest" || r.page === "create" ? r.page : "search";
@@ -4182,6 +4197,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (key === "welcome") return "/welcome";
     if (key === "about") return "/about";
     if (key === "imprint") return "/imprint";
+    if (key === "dao") return "/dao";
+    if (key === "witnesses") return "/witnesses";
+    if (key === "proposals") return "/proposals";
+    if (key.indexOf("witness:") === 0) return "/witness/@" + key.slice(8);
     if (key === "settings" || key.indexOf("settings:") === 0) {
       return pathForSettings(key.indexOf("settings:") === 0 ? key.slice(9) : "general");
     }
@@ -4587,7 +4606,7 @@ let CS77_FILTER_LOW_REP = 20;
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
-      if (signSource === "wallet" || signSource === "memo") {
+      if (signSource === "wallet" || signSource === "memo" || signSource === "dao") {
         cancelOwnerSign();
         if (signSource === "wallet") {
           closeWalletOverlay();
@@ -5755,6 +5774,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function paintLogoMenu() {
     const about = $("#logoAboutLink");
+    const dao = $("#logoDaoLink");
     const welcome = $("#logoWelcomeLink");
     const feed = $("#logoFeedLink");
     const search = $("#logoSearchLink");
@@ -5765,10 +5785,11 @@ let CS77_FILTER_LOW_REP = 20;
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = "welcome, feed, search, spaces, subspaces, and about";
+    const menuLabel = "welcome, feed, search, spaces, subspaces, dao, and about";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
+    if (dao) dao.setAttribute("href", appHref("/dao"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
     if (search) search.setAttribute("href", appHref("/search"));
@@ -27916,6 +27937,16 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
+  function settingsProfileFieldsChanged(fields, baseline) {
+    if (!baseline) return true;
+    const keys = ["name", "about", "location", "website", "profile_image", "cover_image", "custom"];
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (String((fields && fields[key]) || "") !== String(baseline[key] || "")) return true;
+    }
+    return false;
+  }
+
   function clearSettingsProfileScratch() {
     settingsProfileDraft = null;
     settingsProfileBaseline = null;
@@ -28182,50 +28213,61 @@ let CS77_FILTER_LOW_REP = 20;
     rememberSettingsProfileDraft();
     const fields = readSettingsProfileFields();
     if (!fields) return;
-    let custom;
-    try {
-      custom = parseSettingsCustom(fields.custom);
-    } catch (err) {
-      setSettingsStatus((err && err.message) || "Custom settings are not valid JSON.", true);
+    const base = settingsProfileBaseline && settingsProfileBaseline.user === user ? settingsProfileBaseline : null;
+    const profileChanged = settingsProfileFieldsChanged(fields, base);
+    const deleteLegacy = Boolean(fields.legacyDelete && legacyMetadataPresent(settingsLegacySource(user)));
+    if (!profileChanged && !deleteLegacy) {
+      setSettingsStatus("Nothing to save.", false);
       return;
     }
-    const metadata = composeProfileMetadata(fields, custom);
-    const json = JSON.stringify(metadata);
-    if (json.length > SETTINGS_METADATA_MAX) {
-      setSettingsStatus("Profile settings are too long to save.", true);
-      return;
-    }
-    if (!hasSigner(user)) {
-      setSettingsStatus(signerNeededMessage(), true);
-      return;
+    let metadata = null;
+    let json = "";
+    if (profileChanged) {
+      let custom;
+      try {
+        custom = parseSettingsCustom(fields.custom);
+      } catch (err) {
+        setSettingsStatus((err && err.message) || "Custom settings are not valid JSON.", true);
+        return;
+      }
+      metadata = composeProfileMetadata(fields, custom);
+      json = JSON.stringify(metadata);
+      if (json.length > SETTINGS_METADATA_MAX) {
+        setSettingsStatus("Profile settings are too long to save.", true);
+        return;
+      }
+      if (!hasSigner(user)) {
+        setSettingsStatus(signerNeededMessage(), true);
+        return;
+      }
     }
     settingsBusy = true;
     setSettingsFormLocked(true);
     setSettingsStatus("Saving…", false);
-    const { promise } = ChainQueue.enqueue({
-      username: user,
-      key: "Posting",
-      operations: [
-        [
-          "account_update2",
-          {
-            account: user,
-            json_metadata: "",
-            posting_json_metadata: json,
-            extensions: [],
-          },
-        ],
-      ],
-      meta: { type: "profile" },
-    });
     try {
-      await promise;
-      if (observer() !== user) return;
-      applySavedProfile(user, metadata, json);
-      const saved = copySettingsProfileFields(fields);
-      saved.legacyDelete = false;
+      if (profileChanged) {
+        const { promise } = ChainQueue.enqueue({
+          username: user,
+          key: "Posting",
+          operations: [
+            [
+              "account_update2",
+              {
+                account: user,
+                json_metadata: "",
+                posting_json_metadata: json,
+                extensions: [],
+              },
+            ],
+          ],
+          meta: { type: "profile" },
+        });
+        await promise;
+        if (observer() !== user) return;
+        applySavedProfile(user, metadata, json);
+      }
       let legacyNote = "";
-      if (fields.legacyDelete && legacyMetadataPresent(settingsLegacySource(user))) {
+      if (deleteLegacy) {
         setSettingsStatus("Saving…", false);
         try {
           await deleteLegacyProfile(user);
@@ -28237,10 +28279,14 @@ let CS77_FILTER_LOW_REP = 20;
             : (err && err.message) || "Could not delete legacy profile data.";
         }
       }
+      if (observer() !== user) return;
+      const saved = copySettingsProfileFields(profileChanged ? fields : base || fields);
+      saved.legacyDelete = false;
       settingsProfileBaseline = Object.assign({ user }, saved);
       settingsProfileDraft = Object.assign({ user }, saved);
       if (parseRoute().name === "settings") {
-        if (legacyNote) setSettingsStatus("Saved. " + legacyNote, true);
+        if (legacyNote && profileChanged) setSettingsStatus("Saved. " + legacyNote, true);
+        else if (legacyNote) setSettingsStatus(legacyNote, true);
         else setSettingsStatus("Saved.", false);
       }
     } catch (err) {
@@ -28872,6 +28918,26 @@ let CS77_FILTER_LOW_REP = 20;
       setPageMeta("Search — CyberSpace77");
     } else if (r.name === "imprint") {
       setPageMeta("Imprint — CyberSpace77");
+    } else if (r.name === "dao") {
+      setPageMeta(
+        "DAO — CyberSpace77",
+        "Witnesses produce Hive blocks. Proposals spend the decentralized fund."
+      );
+    } else if (r.name === "witnesses") {
+      setPageMeta(
+        "Witnesses — CyberSpace77",
+        "Hive witnesses are the block producers. Each account can vote for 30 of them with its Hive Power."
+      );
+    } else if (r.name === "proposals") {
+      setPageMeta(
+        "Proposals — CyberSpace77",
+        "Proposals are how the decentralized Hive Fund pays for work the stakeholders approve."
+      );
+    } else if (r.name === "witness") {
+      setPageMeta(
+        "@" + r.author + " — Witness — CyberSpace77",
+        "Vote for @" + r.author + " as a Hive block producer."
+      );
     }
   }
 
@@ -28904,6 +28970,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (route.name === "settings") return "settings";
     if (route.name === "search") return "search";
     if (route.name === "communities") return "communities";
+    if (isDaoRoute(route)) return "dao";
     if (route.name === "feed" && route.tag) return "space:" + route.tag;
     return "";
   }
@@ -28944,6 +29011,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (route.name === "profile" && route.author) return { k: "u", id: "profile:" + route.author };
     if (route.name === "settings") return { k: "i", id: "settings" };
     if (route.name === "search") return { k: "i", id: "search" };
+    if (isDaoRoute(route)) return { k: "i", id: "dao" };
     if (route.name === "about") return { k: "i", id: "about" };
     if (route.name === "imprint") return { k: "i", id: "imprint" };
     if (route.name === "publish") return { k: "i", id: "publish" };
@@ -30346,6 +30414,100 @@ let CS77_FILTER_LOW_REP = 20;
     watchEmbedSize();
   }
 
+  function isDaoRoute(route) {
+    if (!route) return false;
+    return (
+      route.name === "dao" ||
+      route.name === "witnesses" ||
+      route.name === "proposals" ||
+      route.name === "witness"
+    );
+  }
+
+  let daoScriptPromise = null;
+
+  function loadDaoScript() {
+    if (window.DaoPage && typeof window.DaoPage.render === "function") {
+      return Promise.resolve(window.DaoPage);
+    }
+    if (daoScriptPromise) return daoScriptPromise;
+    daoScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/js/dao.js?v=0.19.1";
+      script.async = true;
+      script.onload = () => {
+        if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
+        else reject(new Error("DAO page did not load."));
+      };
+      script.onerror = () => reject(new Error("DAO page did not load."));
+      document.body.appendChild(script);
+    }).catch((err) => {
+      daoScriptPromise = null;
+      throw err;
+    });
+    return daoScriptPromise;
+  }
+
+  function daoContext(route, key) {
+    return {
+      route: route,
+      key: key,
+      still() {
+        return routeStill(key);
+      },
+      appHref: appHref,
+      profileHref: profileHref,
+      setPageMeta: setPageMeta,
+      user: observer,
+      openLogin: openLogin,
+      showError: showError,
+      mobile: isMobileViewport,
+      focus: focusDesktop,
+      signActive(name, operations, copy) {
+        return signWithDialog(
+          name,
+          operations,
+          Object.assign({ source: "dao", authority: "Active" }, copy || {})
+        );
+      },
+    };
+  }
+
+  async function renderDao(route, key) {
+    if (route.name === "witness") {
+      const canonical = "/witness/@" + route.author;
+      const here = currentPath().replace(/\/+$/, "") || "/";
+      if (here !== canonical) {
+        navigate(appHref(canonical), true);
+        return;
+      }
+    }
+    liveFeedNav = 0;
+    currentViewKey = key;
+    let page;
+    try {
+      page = await loadDaoScript();
+    } catch (err) {
+      if (!routeStill(key)) return;
+      setPageMeta("DAO — CyberSpace77");
+      view.innerHTML =
+        '<section class="cs77-page"><h2 class="page-title">DAO</h2><p class="feed-hint">The DAO page did not load.</p></section>';
+      currentViewKey = key;
+      return;
+    }
+    if (!routeStill(key)) return;
+    try {
+      await page.render(daoContext(route, key));
+    } catch (err) {
+      if (!routeStill(key)) return;
+      setPageMeta("DAO — CyberSpace77");
+      view.innerHTML =
+        '<section class="cs77-page"><h2 class="page-title">DAO</h2><p class="feed-hint">The DAO page did not load.</p></section>';
+    }
+    if (!routeStill(key)) return;
+    currentViewKey = key;
+  }
+
   function routeStill(key) {
     return routeKey(parseRoute()) === key;
   }
@@ -30386,7 +30548,7 @@ let CS77_FILTER_LOW_REP = 20;
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
-      if (signSource === "wallet" || signSource === "memo") {
+      if (signSource === "wallet" || signSource === "memo" || signSource === "dao") {
         cancelOwnerSign();
         if (signSource === "wallet") {
           closeWalletOverlay();
@@ -30491,6 +30653,7 @@ let CS77_FILTER_LOW_REP = 20;
         r.name === "profile" || r.name === "community"
       );
       document.body.classList.toggle("is-community", r.name === "community");
+      document.body.classList.toggle("is-dao", isDaoRoute(r));
     }
     if (restored) {
       mountFeedPark(restored);
@@ -30697,6 +30860,10 @@ let CS77_FILTER_LOW_REP = 20;
       liveFeedNav = 0;
       renderAbout();
       currentViewKey = key;
+      return;
+    }
+    if (isDaoRoute(r)) {
+      await renderDao(r, key);
       return;
     }
     if (r.name === "imprint") {

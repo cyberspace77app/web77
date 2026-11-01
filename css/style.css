@@ -9168,3 +9168,427 @@ html.is-embed .embed-card .card-thumb {
   width: 1.15em;
   height: 1.15em;
 }
+
+body.is-dao #view {
+  max-width: none;
+}
+
+.dao-page .page-title {
+  margin-bottom: 0.35rem;
+}
+
+.dao-kicker {
+  margin: 0 0 1.1rem;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--yellow);
+}
+
+.dao-copy,
+.dao-note,
+.dao-about,
+.dao-page .search-form,
+.dao-page .tags-status,
+.dao-stats,
+.dao-choices,
+.dao-facts,
+.dao-actions,
+.dao-rank {
+  max-width: 40rem;
+}
+
+.dao-copy p,
+.dao-note,
+.dao-about {
+  font-family: var(--font-body);
+  font-size: 1.15rem;
+  line-height: 1.65;
+  color: var(--gray);
+}
+
+.dao-copy p,
+.dao-note,
+.dao-about {
+  margin: 0 0 1.15rem;
+}
+
+.dao-about {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dao-rank {
+  margin: 0 0 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--yellow);
+}
+
+.dao-page .tags-status {
+  margin: -0.35rem 0 1rem;
+}
+
+.dao-stats,
+.dao-choices,
+.dao-facts {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0 0 1.15rem;
+}
+
+.dao-stats,
+.dao-choices {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dao-choices {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dao-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1.2rem;
+}
+
+.dao-stat,
+.dao-choice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.85rem;
+  min-width: 0;
+}
+
+.dao-stat-label,
+.dao-choice small,
+.dao-facts dt {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray-dim);
+}
+
+.dao-stat strong {
+  display: block;
+  margin-top: 0.28rem;
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--yellow);
+}
+
+.dao-stat-unit {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--gray-dim);
+}
+
+.dao-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--yellow);
+  font-family: var(--font-serif);
+  font-size: 1.55rem;
+  line-height: 1.15;
+}
+
+.dao-choice:hover {
+  border-color: var(--border-hot);
+  text-shadow: none;
+}
+
+.dao-choice small {
+  color: var(--gray);
+}
+
+.dao-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.15rem;
+  margin: 0 0 0.85rem;
+}
+
+.dao-facts {
+  margin: 0;
+}
+
+.dao-facts div {
+  min-width: 0;
+}
+
+.dao-facts dd {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--gray);
+  overflow-wrap: anywhere;
+}
+
+.dao-facts a {
+  color: var(--yellow);
+}
+
+.dao-disabled {
+  color: var(--red-bright);
+}
+
+.witness-table {
+  display: grid;
+  grid-template-columns:
+    2.1rem
+    minmax(0, 1.5fr)
+    minmax(4.4rem, 0.75fr)
+    minmax(3.1rem, 0.5fr)
+    minmax(2.5rem, 0.45fr)
+    minmax(3.6rem, 0.55fr)
+    minmax(4.6rem, 0.7fr)
+    minmax(2.6rem, 0.4fr)
+    5.5rem;
+  column-gap: 0.4rem;
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.witness-head,
+.witness-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.witness-head {
+  align-items: end;
+}
+
+.witness-head > span {
+  padding-bottom: 0.45rem;
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-dim);
+}
+
+.witness-head > span:nth-child(n + 3):nth-child(-n + 8) {
+  text-align: right;
+}
+
+#witnessList {
+  display: contents;
+}
+
+.witness-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.witness-cells {
+  display: grid;
+  grid-column: 3 / 9;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-width: 0;
+}
+
+.witness-rank,
+.witness-who,
+.witness-cell,
+.witness-vote {
+  padding-top: 0.55rem;
+  padding-bottom: 0.55rem;
+}
+
+.witness-rank {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  color: var(--gray-dim);
+  text-align: right;
+}
+
+.witness-row.is-top .witness-rank {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.witness-who {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--gray);
+  text-shadow: none;
+}
+
+.witness-who:hover {
+  color: var(--yellow);
+  text-shadow: none;
+}
+
+.witness-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.witness-cell {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  color: var(--gray);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.witness-cell.is-behind {
+  color: var(--gray-dim);
+}
+
+.witness-cell.is-disabled {
+  color: var(--red-bright);
+}
+
+.witness-vote {
+  grid-column: 9;
+  justify-self: end;
+}
+
+.btn-primary.witness-vote.is-voted,
+.btn-primary.witness-vote.is-voted:hover:not(:disabled),
+.btn-primary.witness-vote.is-voted:active:not(:disabled) {
+  background: transparent;
+  color: var(--yellow);
+  border-color: rgba(255, 225, 74, 0.55);
+  box-shadow: none;
+  filter: none;
+  transform: none;
+  text-shadow: none;
+}
+
+.btn-primary.witness-vote:disabled {
+  cursor: not-allowed;
+}
+
+.btn-primary.witness-vote[aria-busy="true"]:disabled {
+  cursor: wait;
+}
+
+.witness-split,
+.witness-empty {
+  grid-column: 1 / -1;
+}
+
+.witness-split {
+  margin: 0.45rem 0 0.15rem;
+  padding: 0.75rem 0 0.35rem;
+  border-top: 1px solid var(--border-hot);
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--gray);
+}
+
+.witness-empty {
+  margin: 0.35rem 0 1rem;
+}
+
+.dao-page #witnessRetry {
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .dao-stats,
+  .dao-choices,
+  .dao-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .witness-table {
+    display: block;
+  }
+
+  .witness-head {
+    display: none;
+  }
+
+  #witnessList {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .witness-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "rank who vote"
+      "cells cells cells";
+    gap: 0.45rem 0.65rem;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.75rem;
+  }
+
+  .witness-rank,
+  .witness-who {
+    grid-column: auto;
+    padding: 0;
+  }
+
+  .witness-vote {
+    grid-column: auto;
+  }
+
+  .witness-rank {
+    grid-area: rank;
+    text-align: left;
+  }
+
+  .witness-who {
+    grid-area: who;
+  }
+
+  .witness-vote {
+    grid-area: vote;
+    justify-self: end;
+  }
+
+  .witness-cells {
+    display: grid;
+    grid-area: cells;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem 0.6rem;
+    padding-top: 0.15rem;
+  }
+
+  .witness-cell {
+    padding: 0;
+    text-align: left;
+  }
+
+  .witness-cell::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.12rem;
+    font-family: var(--font-display);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gray-dim);
+  }
+
+  .witness-split {
+    margin: 0.15rem 0;
+    padding: 0.15rem 0 0.15rem;
+  }
+}

@@ -34,6 +34,10 @@
       about: 1,
       imprint: 1,
       settings: 1,
+      dao: 1,
+      witnesses: 1,
+      proposals: 1,
+      witness: 1,
       c: 1,
     };
     for (i = 0; i < parts.length; i++) {
@@ -52,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.67">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.70">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -65,7 +69,7 @@
       <header class="header" id="siteHeader">
         <div class="logo-wrap" id="logoWrap">
           <div class="logo-menu" id="logoMenu">
-            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open about, welcome, feed, search, spaces, and subspaces">
+            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open welcome, feed, search, spaces, subspaces, dao, and about">
               <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Cyber Space 77 hexagonal logo">
                 <polygon
                   points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
@@ -77,7 +81,7 @@
               </svg>
             </button>
             <div class="logo-dropdown" id="logoDropdown">
-              <nav class="logo-dropdown-panel" aria-label="welcome, feed, search, spaces, subspaces, and about">
+              <nav class="logo-dropdown-panel" aria-label="welcome, feed, search, spaces, subspaces, dao, and about">
                 <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
                 <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
                 <a class="logo-dropdown-link" id="logoSearchLink" href="/search">Search</a>
@@ -86,6 +90,7 @@
                 <div class="logo-dropdown-favs" id="logoFavUsers" hidden></div>
                 <div class="logo-dropdown-favs" id="logoFavTags" hidden></div>
                 <div class="logo-dropdown-favs" id="logoFavCommunities" hidden></div>
+                <a class="logo-dropdown-link" id="logoDaoLink" href="/dao">DAO</a>
                 <a class="logo-dropdown-link" id="logoAboutLink" href="/about">About</a>
                 <div class="node-menu node-menu-in-menu">
                   <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
@@ -722,6 +727,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.1"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.106"></script>
+  <script src="/js/app.js?v=0.19.108"></script>
 </body>
 </html>
