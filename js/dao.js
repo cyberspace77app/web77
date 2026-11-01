@@ -33,6 +33,12 @@
     votedKey: "",
     votedRows: [],
     votedLoading: false,
+    voteRanks: new Map(),
+    voteRankAt: 0,
+    voteRankCursor: "",
+    voteRankDone: false,
+    voteRankLoading: false,
+    voteRankAgain: false,
     props: null,
     schedule: null,
     rewards: null,
@@ -251,12 +257,79 @@
   function rankOf(witness, listMode, index) {
     if (listMode === "rank") return index + 1;
     var name = witnessName(witness);
+    if (name && state.voteRanks.has(name)) return state.voteRanks.get(name);
     var rows = state.ranked.rows;
     var i;
     for (i = 0; i < rows.length; i += 1) {
       if (witnessName(rows[i]) === name) return i + 1;
     }
     return 0;
+  }
+
+  function votedRankMissing() {
+    var missing = false;
+    state.votes.names.forEach(function (name) {
+      if (name && !state.voteRanks.has(name)) missing = true;
+    });
+    return missing;
+  }
+
+  // The ranked list is only the pages already scrolled in. Voted witnesses
+  // past that window still need the same get_witnesses_by_vote position.
+  function seedVoteRanksFromRanked() {
+    if (state.voteRankAt > 0 || state.voteRankDone) return;
+    var rows = state.ranked.rows;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var owner = witnessName(rows[i]);
+      if (!owner) return;
+      state.voteRanks.set(owner, i + 1);
+      state.voteRankAt = i + 1;
+      state.voteRankCursor = owner;
+    }
+    if (rows.length && state.ranked.done) state.voteRankDone = true;
+  }
+
+  async function ensureVoteRanks(gen) {
+    if (!state.votes.user || !state.votes.ready) return;
+    if (state.voteRankLoading) {
+      state.voteRankAgain = true;
+      return;
+    }
+    state.voteRankLoading = true;
+    try {
+      do {
+        state.voteRankAgain = false;
+        seedVoteRanksFromRanked();
+        var page;
+        for (page = 0; page < 50 && !state.voteRankDone && votedRankMissing(); page += 1) {
+          var batch = await api().hiveRpc(
+            "condenser_api.get_witnesses_by_vote",
+            [state.voteRankCursor, RANK_SCAN_PAGE],
+            true
+          );
+          if (!alive(gen)) return;
+          var list = Array.isArray(batch) ? batch : [];
+          var added = 0;
+          var start = state.voteRankCursor;
+          var i;
+          for (i = 0; i < list.length; i += 1) {
+            var owner = witnessName(list[i]);
+            if (!owner || owner === start) continue;
+            added += 1;
+            state.voteRankAt += 1;
+            state.voteRankCursor = owner;
+            state.voteRanks.set(owner, state.voteRankAt);
+            start = owner;
+          }
+          if (!added || list.length < RANK_SCAN_PAGE) state.voteRankDone = true;
+        }
+      } while (alive(gen) && state.voteRankAgain && !state.voteRankDone && votedRankMissing());
+    } catch (err) {
+      /* voted rows keep any ranks already found */
+    } finally {
+      state.voteRankLoading = false;
+    }
   }
 
   function witnessName(witness) {
@@ -803,6 +876,12 @@
     state.votedKey = "";
     state.votedRows = [];
     state.votedLoading = false;
+    state.voteRanks = new Map();
+    state.voteRankAt = 0;
+    state.voteRankCursor = "";
+    state.voteRankDone = false;
+    state.voteRankLoading = false;
+    state.voteRankAgain = false;
     state.pending = new Set();
     state.detailName = "";
     state.detailWitness = null;
@@ -903,7 +982,8 @@
     var key = votedKeyOf();
     if (state.votedLoading && state.votedKey === key) return;
     if (state.votedKey === key && !state.votedLoading) {
-      paintCurrentList();
+      await ensureVoteRanks(gen);
+      if (alive(gen) && witnessFilter() === "voted") paintCurrentList();
       return;
     }
     var names = key ? key.split("\n") : [];
@@ -941,12 +1021,14 @@
       });
       state.votedRows = list;
       state.votedLoading = false;
+      await ensureVoteRanks(gen);
     } catch (err) {
       if (!alive(gen) || state.votedKey !== key) return;
       state.votedLoading = false;
       state.votedRows = [];
       setStatus((err && err.message) || "Could not load voted witnesses.", true);
     }
+    if (!alive(gen)) return;
     setMore(false);
     if (witnessFilter() === "voted") paintCurrentList();
   }
