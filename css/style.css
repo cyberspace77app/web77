@@ -9974,7 +9974,13 @@ span.witness-vote.is-voted::before {
   display: block;
   height: calc(var(--dao-check) * 3);
   margin-bottom: 0.55rem;
-  background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--dao-check) * 2) calc(var(--dao-check) * 2);
+  background-image:
+    linear-gradient(90deg, #101010 50%, var(--yellow) 50%),
+    linear-gradient(90deg, var(--yellow) 50%, #101010 50%),
+    linear-gradient(90deg, #101010 50%, var(--yellow) 50%);
+  background-size: calc(var(--dao-check) * 2) var(--dao-check);
+  background-position: 0 0, 0 var(--dao-check), 0 calc(var(--dao-check) * 2);
+  background-repeat: repeat-x;
 }
 
 .dao-split span {
