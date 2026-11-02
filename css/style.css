@@ -10036,6 +10036,39 @@ body.is-dao #view {
   color: var(--text);
 }
 
+a.proposal-id {
+  color: var(--yellow);
+  text-shadow: none;
+}
+
+a.proposal-id:hover,
+a.proposal-id:focus-visible {
+  color: var(--yellow);
+  text-shadow: none;
+}
+
+.dao-detail .page-title {
+  overflow-wrap: anywhere;
+}
+
+.dao-detail .proposal-who {
+  max-width: 40rem;
+  margin: 0 0 0.95rem;
+}
+
+.dao-detail .proposal-who .avatar {
+  width: 40px;
+  height: 40px;
+}
+
+.dao-detail .proposal-action:empty {
+  display: none;
+}
+
+.dao-detail .dao-stat-unit + .dao-stat-unit {
+  margin-left: 0.35rem;
+}
+
 .proposal-cells {
   display: grid;
   grid-template-columns: repeat(4, max-content);

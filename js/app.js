@@ -4077,7 +4077,16 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (parts.length === 1 && first === "dao") return { name: "dao" };
     if (parts.length === 1 && first === "witnesses") return { name: "witnesses" };
-    if (parts.length === 1 && first === "proposals") return { name: "proposals" };
+    if (first === "proposals") {
+      if (parts.length === 1) return { name: "proposals" };
+      if (parts.length === 2 && /^[0-9]+$/.test(parts[1])) {
+        const proposalId = Number(parts[1]);
+        if (proposalId >= 0 && proposalId <= 2147483647 && String(proposalId) === parts[1]) {
+          return { name: "proposal", id: proposalId };
+        }
+      }
+      return { name: "notfound" };
+    }
     if (first === "witness") {
       if (parts.length === 2 && parts[1].charAt(0) === "@") {
         const author = parts[1].slice(1).toLowerCase();
@@ -4184,6 +4193,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name === "settings") return "settings:" + (r.page || "general");
     if (r.name === "search") return "search:" + (r.page || "users");
     if (r.name === "witness") return "witness:" + (r.author || "");
+    if (r.name === "proposal") return "proposal:" + String(r.id);
     if (r.name === "communities") {
       const page =
         r.page === "browse" || r.page === "newest" || r.page === "create" ? r.page : "search";
@@ -4200,6 +4210,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (key === "dao") return "/dao";
     if (key === "witnesses") return "/witnesses";
     if (key === "proposals") return "/proposals";
+    if (key.indexOf("proposal:") === 0) return "/proposals/" + key.slice(9);
     if (key.indexOf("witness:") === 0) return "/witness/@" + key.slice(8);
     if (key === "settings" || key.indexOf("settings:") === 0) {
       return pathForSettings(key.indexOf("settings:") === 0 ? key.slice(9) : "general");
@@ -28996,6 +29007,11 @@ let CS77_FILTER_LOW_REP = 20;
         "Proposals — CyberSpace77",
         "Proposals fund projects from the decentralized organization. Vote for the return proposal to decide what is paid and to slow inflation."
       );
+    } else if (r.name === "proposal") {
+      setPageMeta(
+        "Proposal #" + r.id + " — CyberSpace77",
+        "Proposal #" + r.id + " in the decentralized fund."
+      );
     } else if (r.name === "witness") {
       setPageMeta(
         "@" + r.author + " — Witness — CyberSpace77",
@@ -30493,6 +30509,7 @@ let CS77_FILTER_LOW_REP = 20;
       route.name === "dao" ||
       route.name === "witnesses" ||
       route.name === "proposals" ||
+      route.name === "proposal" ||
       route.name === "witness"
     );
   }
@@ -30506,7 +30523,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.26";
+      script.src = "/js/dao.js?v=0.19.27";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);

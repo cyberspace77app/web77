@@ -1,5 +1,5 @@
 /**
- * DAO pages. Loaded only for /witnesses, /proposals, and /witness/@name.
+ * DAO pages. Loaded only for /witnesses, /proposals, /proposals/id, and /witness/@name.
  * /dao opens the witness list.
  * A proposal is paid while it has more votes than proposal 0, the return
  * proposal. That proposal's own daily pay is a sink, not a project ask.
@@ -56,6 +56,10 @@
     detailName: "",
     detailWitness: null,
     detailAccount: null,
+    detailProposalId: null,
+    detailProposal: null,
+    detailReturnVotes: null,
+    proposalSupportersPartial: false,
     supporterSerial: 0,
     supporterRows: [],
     supporterReady: false,
@@ -912,6 +916,10 @@
     state.detailName = "";
     state.detailWitness = null;
     state.detailAccount = null;
+    state.detailProposalId = null;
+    state.detailProposal = null;
+    state.detailReturnVotes = null;
+    state.proposalSupportersPartial = false;
     state.supporterSerial += 1;
     state.supporterRows = [];
     state.supporterReady = false;
@@ -969,6 +977,10 @@
       if (state.mode === "witness" && state.detailWitness) {
         paintDetailFacts();
         paintSupporters();
+      }
+      if (state.mode === "proposal" && state.detailProposal) {
+        paintProposalFigures();
+        paintProposalSupporters();
       }
     } catch (err) {
       if (!alive(gen)) return;
@@ -1474,6 +1486,10 @@
     return "active";
   }
 
+  function onProposalPage() {
+    return state.mode === "proposals" || state.mode === "proposal";
+  }
+
   // Voting stays open through the end date, including before the proposal starts.
   // A vote on a proposal that has ended is kept as the check, not a button.
   // An ended proposal that was paid uses that same slot for a dollar mark.
@@ -1491,6 +1507,7 @@
   }
 
   function proposalById(id) {
+    if (state.detailProposal && proposalId(state.detailProposal) === id) return state.detailProposal;
     var rows = state.proposals.rows;
     var i;
     for (i = 0; i < rows.length; i += 1) {
@@ -1559,6 +1576,7 @@
   }
 
   function returnVotes() {
+    if (state.detailReturnVotes != null) return state.detailReturnVotes;
     var rows = state.proposals.rows;
     var i;
     for (i = 0; i < rows.length; i += 1) {
@@ -1735,15 +1753,11 @@
     );
   }
 
-  function proposalIdentityHtml(row) {
-    var creator = accountName(row.creator);
-    var receiver = accountName(row.receiver);
-    var subject = String((row && row.subject) || "").trim() || "Proposal";
-    var permlink = String((row && row.permlink) || "");
-    var href = creator && permlink ? state.host.appHref("/@" + creator + "/" + encodeURIComponent(permlink)) : "";
-    var subjectHtml = href
-      ? '<a class="proposal-subject" href="' + esc(href) + '" title="' + esc(subject) + '">' + esc(subject) + "</a>"
-      : '<span class="proposal-subject" title="' + esc(subject) + '">' + esc(subject) + "</span>";
+  function proposalAccountHtml(row, size) {
+    var creator = accountName(row && row.creator);
+    var receiver = accountName(row && row.receiver);
+    var dim = size === "medium" ? "medium" : "small";
+    var px = dim === "medium" ? 40 : 28;
     var user = creator
       ? '<a class="proposal-user" href="' + esc(state.host.profileHref(creator)) + '">@' + esc(creator) + "</a>"
       : "";
@@ -1757,10 +1771,46 @@
         : "";
     var avatar = creator
       ? '<img class="avatar" src="' +
-        esc(md().avatarUrl(creator, "small")) +
-        '" alt="" width="28" height="28" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
+        esc(md().avatarUrl(creator, dim)) +
+        '" alt="" width="' +
+        px +
+        '" height="' +
+        px +
+        '" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
       : "";
-    return '<div class="proposal-who">' + avatar + '<span class="proposal-copy">' + user + to + subjectHtml + "</span></div>";
+    return { creator: creator, receiver: receiver, user: user, to: to, avatar: avatar };
+  }
+
+  function proposalIdentityHtml(row) {
+    var who = proposalAccountHtml(row);
+    var subject = String((row && row.subject) || "").trim() || "Proposal";
+    var permlink = String((row && row.permlink) || "");
+    var href = who.creator && permlink ? state.host.appHref("/@" + who.creator + "/" + encodeURIComponent(permlink)) : "";
+    var subjectHtml = href
+      ? '<a class="proposal-subject" href="' + esc(href) + '" title="' + esc(subject) + '">' + esc(subject) + "</a>"
+      : '<span class="proposal-subject" title="' + esc(subject) + '">' + esc(subject) + "</span>";
+    return (
+      '<div class="proposal-who">' +
+      who.avatar +
+      '<span class="proposal-copy">' +
+      who.user +
+      who.to +
+      subjectHtml +
+      "</span></div>"
+    );
+  }
+
+  function proposalIdHtml(id) {
+    if (id == null) return '<span class="proposal-id">—</span>';
+    return (
+      '<a class="proposal-id" href="' +
+      esc(state.host.appHref("/proposals/" + id)) +
+      '" aria-label="Proposal ' +
+      esc(String(id)) +
+      '">#' +
+      esc(String(id)) +
+      "</a>"
+    );
   }
 
   function proposalFootHtml(row, phase, filter) {
@@ -1858,9 +1908,8 @@
       '<div class="proposal-body">' +
       '<div class="proposal-top">' +
       proposalIdentityHtml(row) +
-      '<span class="proposal-id">' +
-      esc(id == null ? "—" : "#" + String(id)) +
-      "</span></div>" +
+      proposalIdHtml(id) +
+      "</div>" +
       '<div class="proposal-cells">' +
       moneyCell("Total", pay.total, false) +
       moneyCell("Daily", pay.daily, false) +
@@ -2012,7 +2061,7 @@
   }
 
   function paintProposalActions() {
-    if (state.mode !== "proposals") return;
+    if (!onProposalPage()) return;
     var now = chainNow();
     var line = returnVotes();
     var slots = document.querySelectorAll(".proposal-action[data-proposal-action]");
@@ -2079,7 +2128,7 @@
     paintProposalActions();
     try {
       var ids = await fetchProposalVoteIds(user, function () {
-        return alive(gen) && state.mode === "proposals" && state.proposalVotes.user === user;
+        return alive(gen) && onProposalPage() && state.proposalVotes.user === user;
       });
       if (!ids) return;
       state.proposalVotes.ids = ids;
@@ -2088,7 +2137,7 @@
       if (!alive(gen) || state.proposalVotes.user !== user) return;
       state.proposalVotes.ready = true;
     }
-    if (alive(gen) && state.mode === "proposals") paintProposalActions();
+    if (alive(gen) && onProposalPage()) paintProposalActions();
   }
 
   async function castProposalVote(raw) {
@@ -2140,7 +2189,7 @@
       }
     } finally {
       state.proposalPending.delete(id);
-      if (alive(gen) && state.mode === "proposals") paintProposalActions();
+      if (alive(gen) && onProposalPage()) paintProposalActions();
     }
   }
 
@@ -2343,6 +2392,399 @@
     loadProposalVotes(gen);
   }
 
+  function proposalPhaseLabel(phase) {
+    if (phase === "active") return "Active";
+    if (phase === "upcoming") return "Upcoming";
+    if (phase === "past") return "Past";
+    return "";
+  }
+
+  function proposalStandingNote(row) {
+    if (!row) return "";
+    if (isReturnProposal(row)) {
+      return "Sets the funding line. A project is paid only while it has more votes than this proposal.";
+    }
+    if (proposalPhase(row, chainNow()) !== "active") return "";
+    var line = returnVotes();
+    if (line == null) return "";
+    if (bigIntOf(row.total_votes, 0n) > line) return "Above the return proposal.";
+    return "Below the return proposal.";
+  }
+
+  function proposalStatHtml(label, milli, estimated) {
+    var text = milli == null ? "—" : formatHiveMilli(milli);
+    var unit = text === "—" ? "" : '<span class="dao-stat-unit">hbd</span>';
+    var note = estimated && text !== "—" ? '<span class="dao-stat-unit">estimated</span>' : "";
+    return (
+      '<div class="dao-stat"><span class="dao-stat-label">' +
+      esc(label) +
+      "</span><strong>" +
+      esc(text) +
+      "</strong>" +
+      unit +
+      note +
+      "</div>"
+    );
+  }
+
+  function proposalDetailShell(title, kicker, body) {
+    return (
+      '<section class="cs77-page dao-page dao-detail">' +
+      navHtml("proposals") +
+      '<h2 class="page-title">' +
+      esc(title) +
+      "</h2>" +
+      '<p class="dao-kicker">' +
+      esc(kicker) +
+      "</p>" +
+      body +
+      "</section>"
+    );
+  }
+
+  function paintProposalFigures() {
+    var row = state.detailProposal;
+    if (state.mode !== "proposal" || !row) return;
+    var box = document.getElementById("proposalFigures");
+    if (!box) return;
+    var now = chainNow();
+    var pay = proposalPay(row, now, returnVotes());
+    box.innerHTML =
+      proposalStatHtml("total", pay.total, false) +
+      proposalStatHtml("daily", pay.daily, false) +
+      proposalStatHtml("paid", pay.paid, pay.estimated) +
+      proposalStatHtml("to pay", pay.toPay, false);
+    var phaseEl = document.getElementById("proposalPhase");
+    if (phaseEl) phaseEl.textContent = proposalPhaseLabel(proposalPhase(row, now));
+    var standing = document.getElementById("proposalStanding");
+    if (standing) {
+      var note = proposalStandingNote(row);
+      standing.textContent = note;
+      standing.hidden = !note;
+    }
+    var facts = document.getElementById("proposalFacts");
+    if (facts) {
+      var hp = hpOf(row.total_votes);
+      facts.innerHTML = [
+        fact("Votes", '<span id="proposalStake">' + esc(hp.exact || "—") + "</span>"),
+        fact("Dates", esc(dateRangeText(row) || "—")),
+      ].join("");
+    }
+  }
+
+  function paintProposalDetail(gen) {
+    var row = state.detailProposal;
+    var id = state.detailProposalId;
+    if (!row || !alive(gen) || state.mode !== "proposal") return;
+    var who = proposalAccountHtml(row, "medium");
+    var subject = String(row.subject || "").trim() || "Proposal";
+    var permlink = String(row.permlink || "");
+    var postHref =
+      who.creator && permlink ? state.host.appHref("/@" + who.creator + "/" + encodeURIComponent(permlink)) : "";
+    var postBtn = postHref ? '<a class="btn-ghost" href="' + esc(postHref) + '">Post</a>' : "";
+    var by = who.creator || who.receiver;
+    state.host.setPageMeta(
+      subject + " — CyberSpace77",
+      by ? "Proposal #" + id + " by @" + by + "." : "Proposal #" + id + " in the decentralized fund."
+    );
+    writeView(
+      gen,
+      proposalDetailShell(
+        subject,
+        "Proposal #" + id,
+        '<div class="proposal-who">' +
+          who.avatar +
+          '<span class="proposal-copy">' +
+          who.user +
+          who.to +
+          "</span></div>" +
+          '<div class="dao-actions">' +
+          '<div class="proposal-action" data-proposal-action="' +
+          esc(String(id)) +
+          '">' +
+          proposalActionHtml(row, chainNow(), returnVotes()) +
+          "</div>" +
+          postBtn +
+          "</div>" +
+          '<p class="dao-rank" id="proposalPhase"></p>' +
+          '<p class="dao-note" id="proposalStanding" hidden></p>' +
+          '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
+          '<dl class="dao-facts" id="proposalFacts"></dl>' +
+          '<section class="witness-supporters">' +
+          '<h3 class="dao-kicker">Supporters</h3>' +
+          '<p class="dao-note" id="proposalSupporterStatus">Loading supporters…</p>' +
+          '<div id="proposalSupporterList"></div>' +
+          '<button type="button" class="btn-ghost" id="proposalSupporterRetry" hidden>Try again</button>' +
+          "</section>"
+      )
+    );
+    paintProposalFigures();
+  }
+
+  function paintProposalMissing(gen, id) {
+    state.detailProposal = null;
+    state.host.setPageMeta("Proposal #" + id + " — CyberSpace77", "This proposal could not be found.");
+    writeView(
+      gen,
+      proposalDetailShell(
+        "Proposal #" + id,
+        "Proposal",
+        '<div class="dao-copy"><p>This proposal could not be found.</p></div>'
+      )
+    );
+  }
+
+  async function fetchProposalPaid(id, current) {
+    if (id === 0) return null;
+    var nodes = voterNodes();
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (!current()) return null;
+      try {
+        var res = await fetch(
+          nodes[i] + "/hafbe-api/proposals?proposal-ids=" + encodeURIComponent(String(id)) + "&page-size=1"
+        );
+        if (!current()) return null;
+        if (!res.ok) continue;
+        var data = await res.json();
+        var list = data && Array.isArray(data.proposals) ? data.proposals : null;
+        if (!list) continue;
+        var j;
+        for (j = 0; j < list.length; j += 1) {
+          if (proposalId(list[j]) === id) return paidMilli(list[j].paid_amount);
+        }
+      } catch (err) {
+        /* this node has no proposal index */
+      }
+    }
+    return null;
+  }
+
+  function paintProposalSupporters() {
+    if (state.mode !== "proposal" || !state.supporterReady) return;
+    var status = document.getElementById("proposalSupporterStatus");
+    var list = document.getElementById("proposalSupporterList");
+    var retry = document.getElementById("proposalSupporterRetry");
+    if (!status || !list) return;
+    if (retry) retry.hidden = !state.supporterError && !state.proposalSupportersPartial;
+    if (state.supporterError) {
+      status.textContent = state.supporterError;
+      list.innerHTML = "";
+      return;
+    }
+    var rows = state.supporterRows;
+    var count = rows.length;
+    var tail = state.proposalSupportersPartial ? " Some supporters did not load." : "";
+    status.textContent = count
+      ? formatCount(count) + (count === 1 ? " supporter." : " supporters.") + tail
+      : "No supporters yet.";
+    if (!count) {
+      list.innerHTML = "";
+      return;
+    }
+    var html = [
+      '<div class="witness-supporter-head"><span>Rank</span><span>Account</span><span>Stake</span></div>',
+    ];
+    var i;
+    for (i = 0; i < count; i += 1) html.push(supporterHtml(rows[i], i + 1));
+    list.innerHTML = html.join("");
+  }
+
+  function proposalSupporterStatus(gen, id, serial, text) {
+    if (!alive(gen) || state.mode !== "proposal" || state.detailProposalId !== id || state.supporterSerial !== serial) {
+      return;
+    }
+    var status = document.getElementById("proposalSupporterStatus");
+    if (status) status.textContent = text;
+  }
+
+  // Current approvals. voter_vests is the stake that counts, including proxies.
+  // The endpoint orders by name, so the page sorts by that stake after it loads.
+  // A large proposal can hit the node's statement timeout, so a failed node is skipped
+  // and the node that already answered is tried once more before the others.
+  async function fetchProposalSupporterPage(id, page, node, current) {
+    var passes = node ? [[node], voterNodes()] : [voterNodes()];
+    var pass;
+    for (pass = 0; pass < passes.length; pass += 1) {
+      var nodes = passes[pass];
+      var i;
+      for (i = 0; i < nodes.length; i += 1) {
+        if (!current()) return null;
+        var origin = nodes[i];
+        var url =
+          origin +
+          "/hafbe-api/proposals/votes?proposal-id=" +
+          encodeURIComponent(String(id)) +
+          "&page=" +
+          page +
+          "&page-size=" +
+          SUPPORTER_PAGE +
+          "&sort=by_proposal_voter&direction=asc";
+        try {
+          var res = await fetch(url);
+          if (!current()) return null;
+          if (res.status === 500 || res.status === 503) {
+            res = await fetch(url);
+            if (!current()) return null;
+          }
+          if (!res.ok) continue;
+          var data = await res.json();
+          if (!data || !Array.isArray(data.votes)) continue;
+          return { data: data, node: origin };
+        } catch (err) {
+          /* try the next Hive node */
+        }
+      }
+    }
+    throw new Error("Could not load supporters.");
+  }
+
+  async function loadProposalSupporters(gen, id) {
+    state.supporterSerial += 1;
+    var serial = state.supporterSerial;
+    state.supporterRows = [];
+    state.supporterReady = false;
+    state.supporterError = "";
+    state.proposalSupportersPartial = false;
+    function current() {
+      return alive(gen) && state.mode === "proposal" && state.detailProposalId === id && state.supporterSerial === serial;
+    }
+    var list = document.getElementById("proposalSupporterList");
+    var retry = document.getElementById("proposalSupporterRetry");
+    if (list) list.innerHTML = "";
+    if (retry) retry.hidden = true;
+    proposalSupporterStatus(gen, id, serial, "Loading supporters…");
+    if (!current()) return;
+    try {
+      var rows = [];
+      var seen = new Set();
+      var node = "";
+      var partial = false;
+      var page;
+      for (page = 1; page <= 20; page += 1) {
+        var pack;
+        try {
+          pack = await fetchProposalSupporterPage(id, page, node, current);
+        } catch (err) {
+          if (!rows.length) throw err;
+          partial = true;
+          break;
+        }
+        if (!current() || !pack) return;
+        node = pack.node;
+        var data = pack.data;
+        var votes = data && Array.isArray(data.votes) ? data.votes : [];
+        var total = Number(data && data.total_votes);
+        var i;
+        for (i = 0; i < votes.length; i += 1) {
+          var account = accountName(votes[i] && votes[i].voter_name);
+          if (!account || seen.has(account)) continue;
+          seen.add(account);
+          rows.push({
+            name: account,
+            raw: bigIntOf(votes[i].voter_vests, 0n),
+            proxied: bigIntOf(votes[i].proxied_vests, 0n),
+            proxy: accountName(votes[i].proxy),
+          });
+        }
+        if (rows.length) {
+          proposalSupporterStatus(
+            gen,
+            id,
+            serial,
+            "Loading supporters… " +
+              formatCount(rows.length) +
+              (Number.isFinite(total) && total > rows.length ? " of " + formatCount(total) : "")
+          );
+        }
+        var pages = Number(data && data.total_pages);
+        if (!votes.length || votes.length < SUPPORTER_PAGE || (Number.isFinite(pages) && page >= pages)) break;
+      }
+      if (!current()) return;
+      rows.sort(function (a, b) {
+        if (a.raw !== b.raw) return a.raw > b.raw ? -1 : 1;
+        if (a.name < b.name) return -1;
+        if (a.name > b.name) return 1;
+        return 0;
+      });
+      state.supporterRows = rows;
+      state.proposalSupportersPartial = partial;
+      state.supporterReady = true;
+      paintProposalSupporters();
+    } catch (err) {
+      if (!current()) return;
+      state.supporterSerial += 1;
+      state.supporterRows = [];
+      state.supporterError = "Could not load supporters.";
+      state.supporterReady = true;
+      paintProposalSupporters();
+    }
+  }
+
+  async function renderProposal(gen, id) {
+    state.mode = "proposal";
+    state.detailProposalId = id;
+    state.detailProposal = null;
+    state.detailReturnVotes = null;
+    state.host.setPageMeta(
+      "Proposal #" + id + " — CyberSpace77",
+      "Proposal #" + id + " in the decentralized fund."
+    );
+    if (
+      !writeView(
+        gen,
+        proposalDetailShell("Proposal #" + id, "Proposal", '<p class="feed-hint" id="daoStatus">Loading proposal…</p>')
+      )
+    ) {
+      return;
+    }
+    loadChain(gen);
+    loadProposalVotes(gen);
+    function current() {
+      return alive(gen) && state.mode === "proposal" && state.detailProposalId === id;
+    }
+    try {
+      var pack = await Promise.all([
+        api().hiveRpc("condenser_api.find_proposals", [id === 0 ? [0] : [id, 0]], true),
+        fetchProposalPaid(id, current),
+      ]);
+      if (!current()) return;
+      var found = Array.isArray(pack[0]) ? pack[0] : [];
+      var row = null;
+      var i;
+      for (i = 0; i < found.length; i += 1) {
+        if (proposalId(found[i]) === 0) state.detailReturnVotes = bigIntOf(found[i].total_votes, 0n);
+        if (proposalId(found[i]) === id) row = found[i];
+      }
+      if (!row) {
+        paintProposalMissing(gen, id);
+        return;
+      }
+      state.detailProposal = row;
+      if (id === 0) state.detailReturnVotes = bigIntOf(row.total_votes, 0n);
+      if (pack[1] != null && id !== 0) {
+        var paid = new Map();
+        paid.set(id, pack[1]);
+        state.proposals.paid = paid;
+        state.proposals.paidReady = true;
+      }
+      paintProposalDetail(gen);
+      loadProposalSupporters(gen, id);
+    } catch (err) {
+      if (!current()) return;
+      writeView(
+        gen,
+        proposalDetailShell(
+          "Proposal #" + id,
+          "Proposal",
+          '<p class="tags-status is-error" id="daoStatus">' +
+            esc((err && err.message) || "Could not load this proposal.") +
+            "</p>"
+        )
+      );
+    }
+  }
+
   function detailShell(name, body) {
     return (
       '<section class="cs77-page dao-page dao-detail">' +
@@ -2434,14 +2876,15 @@
 
   function supporterHtml(row, rank) {
     var hp = hpOf(row.raw);
-    var extra = "";
+    var notes = [];
     if (row.proxied > 0n) {
       var proxiedHp = hpOf(row.proxied);
-      if (proxiedHp.exact) extra = "includes " + proxiedHp.exact + " from proxies";
+      if (proxiedHp.exact) notes.push("includes " + proxiedHp.exact + " from proxies");
     }
+    if (row.proxy) notes.push("uses @" + row.proxy);
     var who =
       '<a href="' + esc(state.host.profileHref(row.name)) + '">@' + esc(row.name) + "</a>";
-    if (extra) who += "<small>" + esc(extra) + "</small>";
+    if (notes.length) who += "<small>" + esc(notes.join(" · ")) + "</small>";
     return (
       '<div class="witness-supporter">' +
       '<span class="witness-supporter-rank">' +
@@ -2672,6 +3115,14 @@
       if (state.mode === "proposals") loadProposals(state.gen);
       return;
     }
+    var proposalSupporterRetry = event.target.closest && event.target.closest("#proposalSupporterRetry");
+    if (proposalSupporterRetry) {
+      event.preventDefault();
+      if (state.mode === "proposal" && state.detailProposalId != null) {
+        loadProposalSupporters(state.gen, state.detailProposalId);
+      }
+      return;
+    }
     var proposalVote = event.target.closest && event.target.closest(".proposal-vote[data-proposal-vote]");
     if (proposalVote) {
       event.preventDefault();
@@ -2785,6 +3236,10 @@
     }
     if (route.name === "proposals") {
       renderProposals(gen);
+      return;
+    }
+    if (route.name === "proposal") {
+      await renderProposal(gen, Number(route.id));
       return;
     }
     if (route.name === "witness") {
