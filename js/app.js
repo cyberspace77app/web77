@@ -4635,6 +4635,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeProposalOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();
@@ -6072,6 +6073,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (overlay && !overlay.hidden) {
       closeLogin();
+      return;
+    }
+    const proposalOv = $("#proposalOverlay");
+    if (proposalOv && !proposalOv.hidden) {
+      closeProposalOverlay();
       return;
     }
     const delegateOv = $("#delegateOverlay");
@@ -22230,6 +22236,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (Number.isFinite(fee) && fee > 0) applyWalletSend(wallet, "hive", fee);
   }
 
+  function closeProposalOverlay() {
+    if (ownerSignBusy && ownerSignSession && ownerSignSession.source === "dao") return;
+    if (window.DaoPage && typeof window.DaoPage.closeCreateProposal === "function") {
+      window.DaoPage.closeCreateProposal();
+      return;
+    }
+    const ov = $("#proposalOverlay");
+    if (ov) ov.hidden = true;
+  }
+
   function closeCreateAccountOverlay() {
     if (ownerSignSession && ownerSignSession.source === "wallet") {
       const ov = $("#createAccountOverlay");
@@ -25914,8 +25930,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   // One signer for subspace owner settings, role changes, creating a subspace,
   // wallet stake, unstake, send, convert, claim, or account creation,
-  // delegations, and encrypting or decrypting a transfer memo. Pass the
-  // account, operations, authority, and the dialog copy. A stored posting
+  // delegations, creating a proposal, and encrypting or decrypting a transfer
+  // memo. Pass the account, operations, authority, and the dialog copy. A stored posting
   // key signs Posting with no dialog. A Keychain login signs Posting,
   // Active, Owner, and Memo through Keychain with no dialog, when the
   // account is the one that is logged in. A private-key login asked for
@@ -30523,7 +30539,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.36";
+      script.src = "/js/dao.js?v=0.19.37";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
@@ -30656,6 +30672,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeProposalOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();

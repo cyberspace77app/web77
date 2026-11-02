@@ -5511,7 +5511,8 @@ a.wallet-tx-time:hover {
 #sendStatus:empty,
 #convertStatus:empty,
 #claimTokensStatus:empty,
-#createAccountStatus:empty {
+#createAccountStatus:empty,
+#proposalCreateStatus:empty {
   display: none;
 }
 
@@ -5520,6 +5521,7 @@ a.wallet-tx-time:hover {
 #convertStatus.is-error,
 #claimTokensStatus.is-error,
 #createAccountStatus.is-error,
+#proposalCreateStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }
@@ -5556,6 +5558,51 @@ a.wallet-tx-time:hover {
 @media (max-width: 720px) {
   #createAccountOverlay .overlay-card {
     max-height: calc(100dvh - 1.5rem - env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* The card is taller than the viewport. .panel clips overflow, so this one scrolls. */
+#proposalOverlay .login-card {
+  width: min(36rem, 100%);
+}
+
+#proposalOverlay .overlay-card {
+  margin-bottom: 0;
+  max-height: calc(100dvh - 3rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#proposalOverlay .overlay-card input:has(+ .login-hint) {
+  margin-bottom: 0.35rem;
+}
+
+#proposalOverlay input[type="datetime-local"] {
+  color-scheme: dark;
+  min-width: 0;
+}
+
+#proposalCreateFee {
+  color: var(--yellow);
+}
+
+.proposal-create-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 0.85rem;
+}
+
+.proposal-create-dates > div {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  #proposalOverlay .overlay-card {
+    max-height: calc(100dvh - 1.5rem - env(safe-area-inset-bottom, 0px));
+  }
+
+  .proposal-create-dates {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -9207,7 +9254,8 @@ body.is-dao #view {
 .dao-facts,
 .dao-actions,
 .dao-rank,
-.dao-supporters {
+.dao-supporters,
+.dao-create {
   max-width: 40rem;
 }
 
@@ -9443,6 +9491,14 @@ body.is-dao #view {
   font-size: 0.85rem;
   line-height: 1.45;
   color: var(--gray);
+}
+
+.dao-create {
+  margin: 0 0 1.15rem;
+}
+
+.dao-page .dao-create + .dao-filter {
+  margin-top: 0;
 }
 
 .dao-filter {

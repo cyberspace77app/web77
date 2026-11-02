@@ -72,6 +72,8 @@
     proposals: emptyProposals(),
     proposalVotes: emptyProposalVotes(),
     proposalPending: new Set(),
+    proposalCreateTicket: 0,
+    proposalCreateBusy: false,
   };
 
   function emptyBucket() {
@@ -931,6 +933,7 @@
     state.proposals = emptyProposals();
     state.proposalVotes = emptyProposalVotes();
     state.proposalPending = new Set();
+    closeCreateProposal();
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
@@ -2355,6 +2358,454 @@
     }
   }
 
+  function fieldValue(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || "") : "";
+  }
+
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  function localInputValue(date) {
+    return (
+      date.getFullYear() +
+      "-" +
+      pad2(date.getMonth() + 1) +
+      "-" +
+      pad2(date.getDate()) +
+      "T" +
+      pad2(date.getHours()) +
+      ":" +
+      pad2(date.getMinutes())
+    );
+  }
+
+  // Hive time_point_sec is UTC. hive-tx appends Z when it serializes the string.
+  function hiveStamp(date) {
+    return (
+      date.getUTCFullYear() +
+      "-" +
+      pad2(date.getUTCMonth() + 1) +
+      "-" +
+      pad2(date.getUTCDate()) +
+      "T" +
+      pad2(date.getUTCHours()) +
+      ":" +
+      pad2(date.getUTCMinutes()) +
+      ":" +
+      pad2(date.getUTCSeconds())
+    );
+  }
+
+  function readLocalDate(value) {
+    if (!value) return NaN;
+    var t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : NaN;
+  }
+
+  function utf8Bytes(text) {
+    var s = String(text || "");
+    var n = 0;
+    var i;
+    for (i = 0; i < s.length; i += 1) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) n += 1;
+      else if (c < 0x800) n += 2;
+      else if (c >= 0xd800 && c <= 0xdbff) {
+        n += 4;
+        i += 1;
+      } else n += 3;
+    }
+    return n;
+  }
+
+  function proposalSubject(raw) {
+    var s = String(raw || "").trim();
+    if (!s) return { error: "Enter a subject." };
+    if (s.length > 80 || utf8Bytes(s) > 80) return { error: "Subject is too long." };
+    return { subject: s };
+  }
+
+  function proposalPermlink(raw) {
+    var s = String(raw || "").trim();
+    if (!s) return { error: "Enter the permlink of the post." };
+    s = s.split("?")[0].split("#")[0].replace(/\/+$/, "");
+    var slash = s.lastIndexOf("/");
+    if (slash !== -1) s = s.slice(slash + 1);
+    s = s.replace(/^@+/, "").toLowerCase();
+    if (!s) return { error: "Enter the permlink of the post." };
+    if (s.length > 255 || !/^[a-z0-9-]+$/.test(s)) return { error: "That permlink is not valid." };
+    return { permlink: s };
+  }
+
+  function parseDailyMilli(raw) {
+    var s = String(raw || "")
+      .trim()
+      .replace(/\s*hbd\s*$/i, "")
+      .trim();
+    if (!s || s.indexOf(",") !== -1 || !/^\d+(\.\d+)?$/.test(s)) {
+      return { error: "Enter a daily amount in hbd." };
+    }
+    var bits = s.split(".");
+    var frac = bits[1] || "";
+    if (frac.length > 3) return { error: "Use at most 3 decimal places." };
+    var whole = bits[0].replace(/^0+(?=\d)/, "");
+    if (!whole) whole = "0";
+    if (whole.length > 15) return { error: "Daily pay is too large." };
+    while (frac.length < 3) frac += "0";
+    var milli;
+    try {
+      milli = BigInt(whole + frac);
+    } catch (err) {
+      return { error: "Enter a daily amount in hbd." };
+    }
+    if (milli <= 0n) return { error: "Daily pay has to be greater than 0." };
+    return { milli: milli };
+  }
+
+  function chainHbd(milli) {
+    var n = milli < 0n ? -milli : milli;
+    var whole = (n / 1000n).toString();
+    var frac = (n % 1000n).toString();
+    while (frac.length < 3) frac = "0" + frac;
+    return (milli < 0n ? "-" : "") + whole + "." + frac + " HBD";
+  }
+
+  // create_proposal is an active-authority operation. The fee is 10 hbd,
+  // plus 1 hbd for each whole day of the scheduled length past 60 days.
+  function proposalFeeHbd(startMs, endMs) {
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 10;
+    var days = Math.floor((endMs - startMs) / 86400000);
+    if (days <= 60) return 10;
+    return 10 + (days - 60);
+  }
+
+  function setProposalCreateStatus(message, isError) {
+    var el = document.getElementById("proposalCreateStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setProposalCreateLocked(on) {
+    state.proposalCreateBusy = Boolean(on);
+    var ids = [
+      "proposalCreateSubject",
+      "proposalCreatePermlink",
+      "proposalCreateDaily",
+      "proposalCreateStart",
+      "proposalCreateEnd",
+      "proposalCreateReceiver",
+      "proposalCreateSubmit",
+    ];
+    var i;
+    for (i = 0; i < ids.length; i += 1) {
+      var el = document.getElementById(ids[i]);
+      if (el) el.disabled = Boolean(on);
+    }
+    var submit = document.getElementById("proposalCreateSubmit");
+    if (!submit) return;
+    if (on) submit.setAttribute("aria-busy", "true");
+    else submit.removeAttribute("aria-busy");
+  }
+
+  function proposalCreateCurrent(ticket, gen) {
+    return ticket === state.proposalCreateTicket && alive(gen) && state.mode === "proposals";
+  }
+
+  function proposalPostMissing(err) {
+    var msg = String((err && err.message) || err || "");
+    return /not found|does not exist|unable to find|unknown post|no such post|could not find/i.test(msg);
+  }
+
+  async function readProposalPost(author, permlink) {
+    try {
+      var post = await api().getPost(author, permlink);
+      if (
+        post &&
+        String(post.author || "").toLowerCase() === author &&
+        String(post.permlink || "").toLowerCase() === permlink
+      ) {
+        return post;
+      }
+      return null;
+    } catch (err) {
+      if (proposalPostMissing(err)) return null;
+      throw err;
+    }
+  }
+
+  async function findProposalPost(creator, receiver, permlink) {
+    var post = await readProposalPost(creator, permlink);
+    if (post || receiver === creator) return post;
+    return readProposalPost(receiver, permlink);
+  }
+
+  function paintProposalCreateFigures() {
+    var startMs = readLocalDate(fieldValue("proposalCreateStart"));
+    var endMs = readLocalDate(fieldValue("proposalCreateEnd"));
+    var feeEl = document.getElementById("proposalCreateFee");
+    if (feeEl) {
+      var fee = proposalFeeHbd(startMs, endMs);
+      feeEl.textContent = "Creation fee: " + formatHiveMilli(BigInt(fee) * 1000n) + " hbd";
+    }
+    var totalEl = document.getElementById("proposalCreateTotal");
+    if (!totalEl) return;
+    var daily = parseDailyMilli(fieldValue("proposalCreateDaily"));
+    if (daily.error || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      totalEl.value = "";
+      return;
+    }
+    var total = payOver(daily.milli, BigInt(Math.round(endMs - startMs)));
+    totalEl.value = formatHiveMilli(total) + " hbd";
+  }
+
+  function syncProposalEndFloor() {
+    var startEl = document.getElementById("proposalCreateStart");
+    var endEl = document.getElementById("proposalCreateEnd");
+    if (!startEl || !endEl) return;
+    if (startEl.value) endEl.min = startEl.value;
+    else endEl.removeAttribute("min");
+    if (startEl.value && endEl.value && endEl.value <= startEl.value) endEl.value = "";
+  }
+
+  function closeCreateProposal() {
+    var sign = document.getElementById("ownerSignOverlay");
+    if (sign && !sign.hidden) return;
+    state.proposalCreateTicket += 1;
+    setProposalCreateLocked(false);
+    var ov = document.getElementById("proposalOverlay");
+    if (ov) ov.hidden = true;
+    setProposalCreateStatus("");
+  }
+
+  function openCreateProposal() {
+    var host = state.host;
+    if (!host) return;
+    var user = host.user() || "";
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    var sign = document.getElementById("ownerSignOverlay");
+    if ((sign && !sign.hidden) || state.proposalCreateBusy) return;
+    var ov = document.getElementById("proposalOverlay");
+    if (ov && !ov.hidden) return;
+    state.proposalCreateTicket += 1;
+    setProposalCreateLocked(false);
+    var creator = document.getElementById("proposalCreateCreator");
+    if (creator) creator.value = user;
+    var subject = document.getElementById("proposalCreateSubject");
+    if (subject) subject.value = "";
+    var link = document.getElementById("proposalCreatePermlink");
+    if (link) link.value = "";
+    var daily = document.getElementById("proposalCreateDaily");
+    if (daily) daily.value = "";
+    var receiver = document.getElementById("proposalCreateReceiver");
+    if (receiver) receiver.value = "";
+    var total = document.getElementById("proposalCreateTotal");
+    if (total) total.value = "";
+    var now = new Date();
+    var start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    var end = new Date(start.getTime() + 30 * 86400000);
+    var startEl = document.getElementById("proposalCreateStart");
+    var endEl = document.getElementById("proposalCreateEnd");
+    if (startEl) startEl.value = localInputValue(start);
+    if (endEl) {
+      endEl.value = localInputValue(end);
+      if (startEl && startEl.value) endEl.min = startEl.value;
+    }
+    setProposalCreateStatus("");
+    paintProposalCreateFigures();
+    if (ov) {
+      ov.hidden = false;
+      var card = ov.querySelector(".overlay-card");
+      if (card) card.scrollTop = 0;
+    }
+    if (host.focus) host.focus(subject);
+  }
+
+  async function submitCreateProposal() {
+    if (state.proposalCreateBusy) return;
+    var host = state.host;
+    if (!host) return;
+    var user = host.user() || "";
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    var subject = proposalSubject(fieldValue("proposalCreateSubject"));
+    if (subject.error) {
+      setProposalCreateStatus(subject.error, true);
+      return;
+    }
+    var link = proposalPermlink(fieldValue("proposalCreatePermlink"));
+    if (link.error) {
+      setProposalCreateStatus(link.error, true);
+      return;
+    }
+    var daily = parseDailyMilli(fieldValue("proposalCreateDaily"));
+    if (daily.error) {
+      setProposalCreateStatus(daily.error, true);
+      return;
+    }
+    var startMs = readLocalDate(fieldValue("proposalCreateStart"));
+    var endMs = readLocalDate(fieldValue("proposalCreateEnd"));
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      setProposalCreateStatus("Choose a start and an end.", true);
+      return;
+    }
+    if (endMs <= startMs) {
+      setProposalCreateStatus("The end has to be after the start.", true);
+      return;
+    }
+    if (endMs <= chainNow()) {
+      setProposalCreateStatus("The end has to be in the future.", true);
+      return;
+    }
+    var receiverRaw = fieldValue("proposalCreateReceiver").trim();
+    var receiver = user;
+    if (receiverRaw) {
+      receiver = accountName(receiverRaw);
+      if (!receiver) {
+        setProposalCreateStatus("That receiver is not a hive account name.", true);
+        return;
+      }
+    }
+    var subjectEl = document.getElementById("proposalCreateSubject");
+    if (subjectEl) subjectEl.value = subject.subject;
+    var linkEl = document.getElementById("proposalCreatePermlink");
+    if (linkEl) linkEl.value = link.permlink;
+    var ticket = state.proposalCreateTicket;
+    var gen = state.gen;
+    setProposalCreateLocked(true);
+    setProposalCreateStatus("Checking the post…", false);
+    try {
+      if (receiver !== user) {
+        var accounts = await api().getAccounts([receiver]);
+        if (!proposalCreateCurrent(ticket, gen)) return;
+        var found = false;
+        var rows = accounts || [];
+        var i;
+        for (i = 0; i < rows.length; i += 1) {
+          if (String((rows[i] && rows[i].name) || "").toLowerCase() === receiver) found = true;
+        }
+        if (!found) {
+          setProposalCreateStatus("That receiver account was not found.", true);
+          return;
+        }
+      }
+      var post = await findProposalPost(user, receiver, link.permlink);
+      if (!proposalCreateCurrent(ticket, gen)) return;
+      if (!post) {
+        setProposalCreateStatus("That post was not found under the creator or the receiver.", true);
+        return;
+      }
+      setProposalCreateStatus("", false);
+      await host.signActive(
+        user,
+        [
+          [
+            "create_proposal",
+            {
+              creator: user,
+              receiver: receiver,
+              start_date: hiveStamp(new Date(startMs)),
+              end_date: hiveStamp(new Date(endMs)),
+              daily_pay: chainHbd(daily.milli),
+              subject: subject.subject,
+              permlink: link.permlink,
+              extensions: [],
+            },
+          ],
+        ],
+        {
+          title: "Create proposal",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: "Proposal was not created.",
+          failMessage: "Could not create that proposal.",
+        }
+      );
+      if (ticket !== state.proposalCreateTicket) return;
+      closeCreateProposal();
+      if (!alive(gen) || state.mode !== "proposals") return;
+      state.proposalQuery = "";
+      var search = document.getElementById("proposalSearch");
+      if (search) search.value = "";
+      var now = chainNow();
+      var nextFilter = "active";
+      if (now < startMs) nextFilter = "upcoming";
+      else if (now > endMs) nextFilter = "past";
+      state.proposalFilter = nextFilter;
+      paintProposalFilter();
+      loadProposals(state.gen);
+    } catch (err) {
+      if (ticket !== state.proposalCreateTicket) return;
+      if (err && err.ownerCancel) return;
+      var ov = document.getElementById("proposalOverlay");
+      if (!ov || ov.hidden) return;
+      setProposalCreateStatus((err && err.message) || "Could not create that proposal.", true);
+    } finally {
+      if (ticket === state.proposalCreateTicket) setProposalCreateLocked(false);
+    }
+  }
+
+  var proposalDialogBound = false;
+  function bindProposalDialog() {
+    if (proposalDialogBound) return;
+    var ov = document.getElementById("proposalOverlay");
+    if (!ov) return;
+    proposalDialogBound = true;
+    ov.addEventListener("click", function (event) {
+      if (event.target !== ov) return;
+      var active = document.activeElement;
+      if (active && ov.contains(active)) return;
+      closeCreateProposal();
+    });
+    var cancel = document.getElementById("proposalCreateCancel");
+    if (cancel) {
+      cancel.addEventListener("click", function () {
+        closeCreateProposal();
+      });
+    }
+    var submit = document.getElementById("proposalCreateSubmit");
+    if (submit) {
+      submit.addEventListener("click", function () {
+        submitCreateProposal();
+      });
+    }
+    ov.addEventListener("input", function (event) {
+      var t = event.target;
+      if (!t || !t.id) return;
+      if (t.id === "proposalCreateReceiver") {
+        var raw = String(t.value || "");
+        var next = raw.replace(/^@+/, "").toLowerCase();
+        if (next !== raw) {
+          var pos = t.selectionStart;
+          var cut = raw.length - next.length;
+          t.value = next;
+          if (pos != null && t.setSelectionRange) {
+            var at = pos - cut;
+            if (at < 0) at = 0;
+            if (at > next.length) at = next.length;
+            t.setSelectionRange(at, at);
+          }
+        }
+      }
+      if (
+        t.id !== "proposalCreateDaily" &&
+        t.id !== "proposalCreateStart" &&
+        t.id !== "proposalCreateEnd" &&
+        t.id !== "proposalCreateReceiver"
+      ) {
+        return;
+      }
+      if (t.id === "proposalCreateStart" || t.id === "proposalCreateEnd") syncProposalEndFloor();
+      paintProposalCreateFigures();
+    });
+  }
+
   function proposalShell() {
     return (
       '<section class="cs77-page dao-page">' +
@@ -2371,6 +2822,9 @@
       '<div class="dao-stat"><span class="dao-stat-label">daily pay</span><strong id="proposalDaily">—</strong><span class="dao-stat-unit">hbd</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span></div>' +
+      "</div>" +
+      '<div class="dao-create">' +
+      '<button type="button" class="btn-primary btn-compact" id="proposalCreate">Create proposal</button>' +
       "</div>" +
       '<div class="dao-filter" role="radiogroup" aria-label="Filter proposals">' +
       '<button type="button" role="radio" data-proposal-filter="active" aria-checked="true" class="is-active">Active</button>' +
@@ -3131,6 +3585,12 @@
   }
 
   function onClick(event) {
+    var createProposal = event.target.closest && event.target.closest("#proposalCreate");
+    if (createProposal) {
+      event.preventDefault();
+      openCreateProposal();
+      return;
+    }
     var proposalBtn = event.target.closest && event.target.closest("[data-proposal-filter]");
     if (proposalBtn && proposalBtn.closest(".dao-filter")) {
       event.preventDefault();
@@ -3254,17 +3714,19 @@
 
   var bound = false;
   function bind() {
-    if (bound) return;
-    var view = document.getElementById("view");
-    if (!view) return;
-    bound = true;
-    view.addEventListener("click", onClick);
-    view.addEventListener("submit", onSubmit);
-    view.addEventListener("input", onInput);
-    view.addEventListener("compositionstart", onComposeStart);
-    view.addEventListener("compositionend", onComposeEnd);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
+    if (!bound) {
+      var view = document.getElementById("view");
+      if (!view) return;
+      bound = true;
+      view.addEventListener("click", onClick);
+      view.addEventListener("submit", onSubmit);
+      view.addEventListener("input", onInput);
+      view.addEventListener("compositionstart", onComposeStart);
+      view.addEventListener("compositionend", onComposeEnd);
+      window.addEventListener("scroll", onScroll, { passive: true });
+      window.addEventListener("resize", onScroll);
+    }
+    bindProposalDialog();
   }
 
   async function render(ctx) {
@@ -3291,5 +3753,5 @@
     renderWitnesses(gen);
   }
 
-  global.DaoPage = { render: render };
+  global.DaoPage = { render: render, closeCreateProposal: closeCreateProposal };
 })(window);

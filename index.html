@@ -56,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.19.120">
+  <link rel="stylesheet" href="/css/style.css?v=0.19.121">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -453,6 +453,45 @@
     </div>
   </div>
 
+  <div class="overlay" id="proposalOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="proposalCreateTitle">
+      <h2 id="proposalCreateTitle">Create proposal</h2>
+      <p class="login-lead" id="proposalCreateLead">Fill the required details. There is a fee to create a proposal: 10 hbd, plus 1 hbd for each day it lasts over 60 days. The fee is paid in hbd by the creator.</p>
+      <label class="login-label" for="proposalCreateCreator">Creator</label>
+      <input id="proposalCreateCreator" type="text" readonly autocomplete="off" spellcheck="false">
+      <label class="login-label" for="proposalCreateSubject">Subject</label>
+      <input id="proposalCreateSubject" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="A short description">
+      <p class="login-hint">Up to 80 characters.</p>
+      <label class="login-label" for="proposalCreatePermlink">Permlink</label>
+      <input id="proposalCreatePermlink" type="text" maxlength="255" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="permlink of the linked post">
+      <p class="login-hint">The post must already exist, written by the creator or the receiver.</p>
+      <label class="login-label" for="proposalCreateDaily">Daily amount</label>
+      <input id="proposalCreateDaily" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false">
+      <label class="login-label" for="proposalCreateTotal">Total if fully funded</label>
+      <input id="proposalCreateTotal" type="text" readonly tabindex="-1" placeholder="Fill the amount and the dates">
+      <div class="proposal-create-dates">
+        <div>
+          <label class="login-label" for="proposalCreateStart">Start</label>
+          <input id="proposalCreateStart" type="datetime-local" step="60">
+        </div>
+        <div>
+          <label class="login-label" for="proposalCreateEnd">End</label>
+          <input id="proposalCreateEnd" type="datetime-local" step="60">
+        </div>
+      </div>
+      <label class="login-label" for="proposalCreateReceiver">Receiver</label>
+      <input id="proposalCreateReceiver" type="text" maxlength="17" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="username">
+      <p class="login-hint">Account that is paid. Leave it empty to pay the creator.</p>
+      <p class="login-hint" id="proposalCreateFee">Creation fee: 10.000 hbd</p>
+      <p class="login-hint">This is signed with the active key.</p>
+      <p id="proposalCreateStatus" role="status"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="proposalCreateSubmit">Create</button>
+        <button type="button" class="btn-ghost" id="proposalCreateCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="delegateOverlay" hidden>
     <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="delegateTitle">
       <h2 id="delegateTitle">Delegate</h2>
@@ -727,6 +766,6 @@
   <script src="/js/hive-auth.js?v=0.19.1"></script>
   <script src="/js/chain-queue.js?v=0.19.1"></script>
   <script src="/js/blacklist.js?v=0.19.0"></script>
-  <script src="/js/app.js?v=0.19.151"></script>
+  <script src="/js/app.js?v=0.19.152"></script>
 </body>
 </html>
