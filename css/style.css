@@ -10474,7 +10474,7 @@ a.proposal-id:focus-visible {
   font-family: var(--font-body);
   font-size: 0.82rem;
   line-height: 1.35;
-  color: var(--gray);
+  color: var(--gray-dim);
   text-align: left;
 }
 
