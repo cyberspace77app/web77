@@ -4063,9 +4063,99 @@ a.tag:hover {
 
 .profile-more-item:disabled,
 .content-more-item:disabled,
-.wallet-more-item:disabled {
+.wallet-more-item:disabled,
+.dao-more-item:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+
+.dao-more {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.dao-more.is-open {
+  z-index: 9;
+}
+
+.dao-more-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-height: 2.15rem;
+  padding: 0.45rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.77rem;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.dao-more-btn:hover,
+.dao-more.is-open .dao-more-btn {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.dao-more-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.dao-more-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: min(12.5rem, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-red), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.dao-more-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 1.05rem;
+  border: none;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: left;
+  text-decoration: none;
+  color: var(--gray);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dao-more-item:hover,
+.dao-more-item:focus-visible {
+  color: var(--yellow);
+  background: rgba(227, 19, 55, 0.12);
+  text-shadow: var(--glow-yellow);
+}
+
+@media (max-width: 720px) {
+  .dao-more-menu {
+    left: auto;
+    right: 0;
+  }
 }
 
 .content-more-delete {
@@ -5513,7 +5603,8 @@ a.wallet-tx-time:hover {
 #claimTokensStatus:empty,
 #createAccountStatus:empty,
 #proposalCreateStatus:empty,
-#proposalCancelStatus:empty {
+#proposalCancelStatus:empty,
+#proxyStatus:empty {
   display: none;
 }
 
@@ -5524,6 +5615,7 @@ a.wallet-tx-time:hover {
 #createAccountStatus.is-error,
 #proposalCreateStatus.is-error,
 #proposalCancelStatus.is-error,
+#proxyStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }
@@ -9499,6 +9591,26 @@ body.is-dao #view {
   margin: 0 0 1.15rem;
 }
 
+.dao-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 40rem;
+  margin: 0 0 1.75rem;
+}
+
+.dao-page .dao-tools #witnessSearchForm,
+.dao-page .dao-tools #proposalSearchForm {
+  flex: 0 1 14rem;
+  width: 14rem;
+  max-width: calc(100% - 2.4rem);
+  margin: 0;
+}
+
+.dao-tools:has(#proposalSearchForm) {
+  margin-bottom: 1.15rem;
+}
+
 .proposal-own {
   margin-top: 0.85rem;
 }
@@ -9728,9 +9840,41 @@ body.is-dao #view {
   color: var(--red-bright);
 }
 
+.witness-action {
+  display: contents;
+}
+
 .witness-vote {
   grid-column: 9;
   justify-self: end;
+}
+
+span.witness-vote.is-voted {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  padding: 0.55rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--yellow);
+  box-shadow: none;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  line-height: normal;
+  text-transform: uppercase;
+  cursor: default;
+}
+
+span.witness-vote.is-voted::before {
+  content: "Vote";
+  visibility: hidden;
 }
 
 .btn-primary.witness-vote.is-voted,
@@ -10322,6 +10466,18 @@ a.proposal-id:focus-visible {
   grid-column: 4;
 }
 
+.proposal-approved-note {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: start;
+  margin: 0.45rem 0 0;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  color: var(--gray);
+  text-align: left;
+}
+
 @media (max-width: 720px) {
   .dao-stats.proposal-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10471,5 +10627,10 @@ a.proposal-id:focus-visible {
   .proposal-totals .proposal-cell[data-label="To pay"] {
     grid-column: 2;
     grid-row: 2;
+  }
+
+  .proposal-approved-note {
+    grid-row: 3;
+    margin-top: 0;
   }
 }

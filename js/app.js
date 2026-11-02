@@ -4609,6 +4609,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeProfileMore();
     closeContentMore();
     closeWalletMore();
+    closeDaoProxyMenu();
     hidePayoutPanel();
     hideContentDelete(true);
     hideCrossPost(true);
@@ -4636,6 +4637,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
       closeProposalOverlay();
+      closeProxyOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();
@@ -6073,6 +6075,15 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (overlay && !overlay.hidden) {
       closeLogin();
+      return;
+    }
+    if (window.DaoPage && typeof window.DaoPage.proxyMenuOpen === "function" && window.DaoPage.proxyMenuOpen()) {
+      window.DaoPage.closeProxyMenu();
+      return;
+    }
+    const proxyOv = $("#proxyOverlay");
+    if (proxyOv && !proxyOv.hidden) {
+      closeProxyOverlay();
       return;
     }
     const proposalCancelOv = $("#proposalCancelOverlay");
@@ -22262,6 +22273,22 @@ let CS77_FILTER_LOW_REP = 20;
     closeProposalCancelOverlay();
   }
 
+  function closeProxyOverlay() {
+    if (ownerSignBusy && ownerSignSession && ownerSignSession.source === "dao") return;
+    if (window.DaoPage && typeof window.DaoPage.closeProxy === "function") {
+      window.DaoPage.closeProxy();
+      return;
+    }
+    const ov = $("#proxyOverlay");
+    if (ov) ov.hidden = true;
+  }
+
+  function closeDaoProxyMenu() {
+    if (window.DaoPage && typeof window.DaoPage.closeProxyMenu === "function") {
+      window.DaoPage.closeProxyMenu();
+    }
+  }
+
   function closeCreateAccountOverlay() {
     if (ownerSignSession && ownerSignSession.source === "wallet") {
       const ov = $("#createAccountOverlay");
@@ -30555,7 +30582,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.38";
+      script.src = "/js/dao.js?v=0.19.41";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
@@ -30663,6 +30690,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeProfileMore();
     closeContentMore();
     closeWalletMore();
+    closeDaoProxyMenu();
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
@@ -30689,6 +30717,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
       closeProposalOverlay();
+      closeProxyOverlay();
     }
     quietSmartHeader();
     const r = parseRoute();

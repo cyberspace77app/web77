@@ -1,11 +1,5 @@
 /**
- * DAO pages. Loaded only for /witnesses, /proposals, /proposals/id, and /witness/@name.
- * /dao opens the witness list.
- * A proposal is paid while it has more votes than proposal 0, the return
- * proposal. That proposal's own daily pay is a sink, not a project ask.
- * Witness pay follows database::process_funds after HF28: inflation is minted
- * from HIVE supply plus non-treasury HBD, and the witness slice is multiplied
- * by 21 before the schedule weight is applied.
+ * DAO pages. /witnesses, /proposals, /proposals/id, and /witness/@name.
  */
 (function (global) {
   "use strict";
@@ -77,6 +71,10 @@
     proposalCancelId: null,
     proposalCancelBusy: false,
     proposalCancelTicket: 0,
+    votesSerial: 0,
+    votesInflight: null,
+    proxyBusy: false,
+    proxyTicket: 0,
   };
 
   function emptyBucket() {
@@ -92,7 +90,7 @@
   }
 
   function emptyVotes() {
-    return { user: "", names: new Set(), proxy: "", expired: false, ready: true };
+    return { user: "", names: new Set(), proxy: "", proxyVoter: "", expired: false, ready: true };
   }
 
   function emptyProposals() {
@@ -591,22 +589,34 @@
   var WITNESS_VOTE_CHECK =
     '<svg class="dao-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
 
-  function voteButtonFace(proxy, voted) {
-    if (proxy) return "Proxy";
+  function voteButtonFace(voted) {
     if (voted) return WITNESS_VOTE_CHECK;
     return "Vote";
+  }
+
+  function proxyWitnessMark(name) {
+    var voter = state.votes.proxyVoter || state.votes.proxy;
+    return (
+      '<span class="witness-vote is-voted" role="img" aria-label="' +
+      esc("@" + voter + " votes for @" + name) +
+      '">' +
+      WITNESS_VOTE_CHECK +
+      "</span>"
+    );
   }
 
   function voteButtonHtml(name) {
     var user = state.votes.user;
     var proxy = user && state.votes.proxy;
-    var voted = !proxy && state.votes.names.has(name);
+    var voted = state.votes.names.has(name);
+    if (proxy) {
+      if (!state.votes.ready || !voted) return "";
+      return proxyWitnessMark(name);
+    }
     var pending = state.pending.has(name);
     var waiting = Boolean(user) && !state.votes.ready;
-    var disabled = Boolean(proxy) || pending || waiting;
-    var aria = proxy
-      ? "Witness votes follow @" + proxy
-      : (voted ? "Remove vote for @" : "Vote for @") + name;
+    var disabled = pending || waiting;
+    var aria = (voted ? "Remove vote for @" : "Vote for @") + name;
     return (
       '<button type="button" class="btn-primary btn-compact witness-vote' +
       (voted ? " is-voted" : "") +
@@ -617,12 +627,17 @@
       '" aria-label="' +
       esc(aria) +
       '"' +
-      (proxy ? ' title="Witness votes follow @' + esc(proxy) + '"' : "") +
       (pending ? ' aria-busy="true"' : "") +
       (disabled ? " disabled" : "") +
       ">" +
-      voteButtonFace(proxy, voted) +
+      voteButtonFace(voted) +
       "</button>"
+    );
+  }
+
+  function witnessActionHtml(name) {
+    return (
+      '<span class="witness-action" data-witness-action="' + esc(name) + '">' + voteButtonHtml(name) + "</span>"
     );
   }
 
@@ -688,7 +703,7 @@
       '<span class="witness-cell" data-label="APR" title="HBD interest this witness votes for">' +
       esc(aprOf(witness)) +
       "</span></span>" +
-      voteButtonHtml(name) +
+      witnessActionHtml(name) +
       "</article>"
     );
   }
@@ -776,9 +791,9 @@
 
   function voteNoteText() {
     if (!state.votes.user || !state.votes.ready) return "";
-    var lines = [];
-    if (state.votes.proxy) lines.push("Witness votes follow @" + state.votes.proxy + ".");
-    else lines.push("Voting for " + state.votes.names.size + " of 30 witnesses.");
+    if (state.votes.proxy) return "@" + state.votes.proxy + " set as proxy.";
+    if (state.mode !== "witnesses" && state.mode !== "witness") return "";
+    var lines = ["Voting for " + state.votes.names.size + " of 30 witnesses."];
     if (state.votes.expired) {
       lines.push("This account's governance vote has expired. Voting for a witness restores its weight.");
     }
@@ -794,27 +809,9 @@
   }
 
   function paintVoteButtons() {
-    var buttons = document.querySelectorAll(".witness-vote[data-vote]");
-    buttons.forEach(function (btn) {
-      var name = btn.getAttribute("data-vote") || "";
-      var user = state.votes.user;
-      var proxy = user && state.votes.proxy;
-      var voted = !proxy && state.votes.names.has(name);
-      var pending = state.pending.has(name);
-      var waiting = Boolean(user) && !state.votes.ready;
-      btn.disabled = Boolean(proxy) || pending || waiting;
-      btn.classList.toggle("is-voted", Boolean(voted));
-      btn.setAttribute("aria-pressed", voted ? "true" : "false");
-      if (pending) btn.setAttribute("aria-busy", "true");
-      else btn.removeAttribute("aria-busy");
-      btn.innerHTML = voteButtonFace(proxy, voted);
-      if (proxy) {
-        btn.title = "Witness votes follow @" + proxy;
-        btn.setAttribute("aria-label", btn.title);
-      } else {
-        btn.removeAttribute("title");
-        btn.setAttribute("aria-label", (voted ? "Remove vote for @" : "Vote for @") + name);
-      }
+    var slots = document.querySelectorAll("[data-witness-action]");
+    slots.forEach(function (slot) {
+      slot.innerHTML = voteButtonHtml(slot.getAttribute("data-witness-action") || "");
     });
   }
 
@@ -827,12 +824,12 @@
       list.innerHTML = "";
       return;
     }
-    if (state.votes.proxy && !state.votes.names.size) {
-      list.innerHTML = emptyListHtml("Witness votes follow @" + state.votes.proxy + ".");
-      return;
-    }
     if (!state.votedRows.length) {
-      list.innerHTML = emptyListHtml("You are not voting for any witnesses.");
+      list.innerHTML = emptyListHtml(
+        state.votes.proxy
+          ? "@" + state.votes.proxy + " is not voting for any witnesses."
+          : "You are not voting for any witnesses."
+      );
       return;
     }
     list.innerHTML = rowsHtml(state.votedRows, "voted");
@@ -887,10 +884,13 @@
 
   function resetVotes() {
     var user = state.host && state.host.user ? state.host.user() || "" : "";
+    state.votesSerial += 1;
+    state.votesInflight = null;
     state.votes = {
       user: user,
       names: new Set(),
       proxy: "",
+      proxyVoter: "",
       expired: false,
       ready: !user,
     };
@@ -938,6 +938,8 @@
     state.proposalPending = new Set();
     closeCreateProposal();
     closeProposalCancel();
+    closeProxyDialog();
+    closeProxyMenu();
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
@@ -996,37 +998,105 @@
     }
   }
 
-  async function loadVotes(gen) {
+  function witnessNamesOf(account) {
+    var set = new Set();
+    var names = account && Array.isArray(account.witness_votes) ? account.witness_votes : [];
+    names.forEach(function (name) {
+      var key = String(name || "").toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }
+
+  function votesCurrent(gen, serial, user) {
+    return alive(gen) && state.votesSerial === serial && (state.host.user() || "") === user;
+  }
+
+  async function accountByName(name) {
+    var rows = await api().getAccounts([name]);
+    var list = rows || [];
+    var i;
+    for (i = 0; i < list.length; i += 1) {
+      if (accountName(list[i] && list[i].name) === name) return list[i];
+    }
+    return null;
+  }
+
+  // The account's own witness votes stay on chain. While a proxy is set they
+  // do not count, and the weight follows the proxy chain to the account that votes.
+  async function resolveProxyVotes(start, current) {
+    var voter = accountName(start);
+    var seen = {};
+    var hop;
+    for (hop = 0; hop < 4 && voter; hop += 1) {
+      if (seen[voter]) return { voter: voter, names: new Set() };
+      seen[voter] = true;
+      var account = await accountByName(voter);
+      if (!current()) return null;
+      if (!account) return { voter: voter, names: new Set() };
+      var next = accountName(account.proxy);
+      if (!next || next === voter || seen[next]) return { voter: voter, names: witnessNamesOf(account) };
+      voter = next;
+    }
+    if (!voter || !current()) return null;
+    var last = await accountByName(voter);
+    if (!current()) return null;
+    return { voter: voter, names: witnessNamesOf(last) };
+  }
+
+  function loadVotes(gen) {
     var user = state.host.user() || "";
+    var serial = state.votesSerial;
+    var inflight = state.votesInflight;
+    if (inflight && inflight.gen === gen && inflight.serial === serial && inflight.user === user) {
+      return inflight.promise;
+    }
+    var promise = loadVotesNow(gen, serial, user);
+    state.votesInflight = { gen: gen, serial: serial, user: user, promise: promise };
+    return promise;
+  }
+
+  async function loadVotesNow(gen, serial, user) {
     state.votes.user = user;
     if (!user) {
+      state.votes.names = new Set();
+      state.votes.proxy = "";
+      state.votes.proxyVoter = "";
+      state.votes.expired = false;
       state.votes.ready = true;
       paintVoteNote();
+      paintProxyMenu();
       paintVoteButtons();
       if (witnessFilter() === "voted") paintCurrentList();
       return;
     }
     try {
-      var rows = await api().getAccounts([user]);
-      if (!alive(gen) || (state.host.user() || "") !== user) return;
-      var account = rows && rows[0];
-      var names = account && Array.isArray(account.witness_votes) ? account.witness_votes : [];
-      var set = new Set();
-      names.forEach(function (name) {
-        var key = String(name || "").toLowerCase();
-        if (key) set.add(key);
-      });
-      state.votes.names = set;
-      state.votes.proxy = String((account && account.proxy) || "").toLowerCase();
+      var account = await accountByName(user);
+      if (!votesCurrent(gen, serial, user)) return;
+      state.votes.proxy = accountName(account && account.proxy) || "";
       var expires = hiveTime(account && account.governance_vote_expiration_ts);
       state.votes.expired = Number.isFinite(expires) && expires < Date.now();
+      if (state.votes.proxy) {
+        var resolved = await resolveProxyVotes(state.votes.proxy, function () {
+          return votesCurrent(gen, serial, user);
+        });
+        if (!votesCurrent(gen, serial, user)) return;
+        state.votes.proxyVoter = (resolved && resolved.voter) || state.votes.proxy;
+        state.votes.names = (resolved && resolved.names) || new Set();
+      } else {
+        state.votes.proxyVoter = "";
+        state.votes.names = witnessNamesOf(account);
+      }
       state.votes.ready = true;
     } catch (err) {
-      if (!alive(gen)) return;
+      if (!votesCurrent(gen, serial, user)) return;
       state.votes.ready = true;
     }
+    if (!votesCurrent(gen, serial, user)) return;
     paintVoteNote();
+    paintProxyMenu();
     paintVoteButtons();
+    if (onProposalPage()) paintProposalActions();
     if (witnessFilter() === "voted") ensureVoted(gen);
   }
 
@@ -1413,7 +1483,7 @@
       '<div class="dao-copy">' +
       "<p>Witnesses are the block producers. They run the consensus nodes, publish a price feed, and vote on chain parameters such as the HBD interest rate.</p>" +
       "<p>Each round is 21 blocks. The top 20 witnesses each produce one block. The extra block goes to one backup witness, picked at random in proportion to the votes outside the top 20.</p>" +
-      "<p>An account can vote for up to 30 witnesses. The weight of each vote is that account's Hive Power, counted in full for every witness. It is not split across the 30.</p>" +
+      "<p>An account can vote for up to 30 witnesses. The weight of each vote is that account's stake including proxies, counted in full for every witness. It is not split across the 30.</p>" +
       "</div>" +
       '<p class="dao-note" id="witnessInterest">The HBD savings rate is the median of the top 20. The APR column is the rate each witness is voting for.</p>' +
       '<div class="dao-stats">' +
@@ -1423,12 +1493,15 @@
       '<div class="dao-stat"><span class="dao-stat-label">hbd interest</span><strong id="daoApr">—</strong><span class="dao-stat-unit">%</span></div>' +
       "</div>" +
       '<p class="dao-note" id="daoVoteNote" hidden></p>' +
+      '<div class="dao-tools">' +
       '<form class="tags-add search-form" id="witnessSearchForm">' +
       '<input id="witnessSearch" type="text" maxlength="32" placeholder="Search witnesses" value="' +
       esc(query || "") +
       '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search witnesses">' +
       glassHtml() +
       "</form>" +
+      proxyMenuHtml() +
+      "</div>" +
       '<div class="dao-filter" role="radiogroup" aria-label="Filter witnesses">' +
       '<button type="button" role="radio" data-witness-filter="all" aria-checked="true" class="is-active">All</button>' +
       '<button type="button" role="radio" data-witness-filter="active" aria-checked="false">Active</button>' +
@@ -1858,6 +1931,27 @@
     var ready = state.proposalVotes.ready;
     var voted = Boolean(user) && ready && state.proposalVotes.ids.has(id);
     var label = "proposal #" + id;
+    var proxy = user && state.votes.proxy;
+    if (proxy) {
+      if (!can && proposalExpiredPaid(row, now, line)) {
+        return (
+          '<span class="proposal-vote is-voted is-paid" role="img" aria-label="Paid ' +
+          esc(label) +
+          '">' +
+          PROPOSAL_PAID_MARK +
+          "</span>"
+        );
+      }
+      if (!ready || !voted) return "";
+      var voter = state.votes.proxyVoter || proxy;
+      return (
+        '<span class="proposal-vote is-voted" role="img" aria-label="' +
+        esc("@" + voter + " votes for " + label) +
+        '">' +
+        WITNESS_VOTE_CHECK +
+        "</span>"
+      );
+    }
     if (!can && proposalExpiredPaid(row, now, line)) {
       return (
         '<span class="proposal-vote is-voted is-paid" role="img" aria-label="Paid ' +
@@ -1932,8 +2026,11 @@
     );
   }
 
+  // Upcoming sums every project. Every other tab counts a proposal only when
+  // it has already been paid, or its votes are above the return proposal.
+  // The note stays with those totals, so a hidden totals row hides the note.
   function proposalTotalsHtml(groups, now, line, filter) {
-    var rows = filter === "active" ? groups.above : groups.above.concat(groups.threshold ? [groups.threshold] : [], groups.below);
+    var rows = groups.above.concat(groups.threshold ? [groups.threshold] : [], groups.below);
     var total = 0n;
     var paid = 0n;
     var toPay = 0n;
@@ -1941,11 +2038,17 @@
     var paidKnown = true;
     var toPayKnown = true;
     var projects = 0;
+    var approvedOnly = filter !== "upcoming";
     var i;
     for (i = 0; i < rows.length; i += 1) {
       if (isReturnProposal(rows[i])) continue;
-      projects += 1;
       var pay = proposalPay(rows[i], now, line);
+      if (approvedOnly) {
+        var above = line != null && bigIntOf(rows[i].total_votes, 0n) > line;
+        var wasPaid = pay.paid != null && pay.paid > 0n;
+        if (!above && !wasPaid) continue;
+      }
+      projects += 1;
       if (pay.total == null) totalKnown = false;
       else total += pay.total;
       if (pay.paid == null) paidKnown = false;
@@ -1959,6 +2062,7 @@
       moneyCell("Total", totalKnown ? total : null) +
       moneyCell("Paid", paidKnown ? paid : null, true) +
       moneyCell("To pay", toPayKnown ? toPay : null, true) +
+      (approvedOnly ? '<p class="proposal-approved-note">Only approved counted.</p>' : "") +
       "</div>"
     );
   }
@@ -2139,6 +2243,7 @@
 
   async function loadProposalVotes(gen) {
     var user = (state.host && state.host.user && state.host.user()) || "";
+    var serial = state.votesSerial;
     state.proposalVotes.user = user;
     state.proposalVotes.ids = new Set();
     if (!user) {
@@ -2149,17 +2254,26 @@
     state.proposalVotes.ready = false;
     paintProposalActions();
     try {
-      var ids = await fetchProposalVoteIds(user, function () {
-        return alive(gen) && onProposalPage() && state.proposalVotes.user === user;
+      await loadVotes(gen);
+      if (!alive(gen) || state.votesSerial !== serial || state.proposalVotes.user !== user) return;
+      var voter = state.votes.proxy ? state.votes.proxyVoter || state.votes.proxy : user;
+      var ids = await fetchProposalVoteIds(voter, function () {
+        return (
+          alive(gen) &&
+          state.votesSerial === serial &&
+          onProposalPage() &&
+          state.proposalVotes.user === user
+        );
       });
       if (!ids) return;
+      if (!alive(gen) || state.votesSerial !== serial) return;
       state.proposalVotes.ids = ids;
       state.proposalVotes.ready = true;
     } catch (err) {
-      if (!alive(gen) || state.proposalVotes.user !== user) return;
+      if (!alive(gen) || state.votesSerial !== serial || state.proposalVotes.user !== user) return;
       state.proposalVotes.ready = true;
     }
-    if (alive(gen) && onProposalPage()) paintProposalActions();
+    if (alive(gen) && state.votesSerial === serial && onProposalPage()) paintProposalActions();
   }
 
   async function castProposalVote(raw) {
@@ -2171,7 +2285,7 @@
       host.openLogin();
       return;
     }
-    if (!state.proposalVotes.ready || state.proposalPending.has(id)) return;
+    if (!state.proposalVotes.ready || state.votes.proxy || state.proposalPending.has(id)) return;
     var row = proposalById(id);
     if (!row || !proposalCanVote(row, chainNow())) return;
     var voted = state.proposalVotes.ids.has(id);
@@ -2595,6 +2709,8 @@
     }
     var sign = document.getElementById("ownerSignOverlay");
     if ((sign && !sign.hidden) || state.proposalCreateBusy) return;
+    var proxyOv = document.getElementById("proxyOverlay");
+    if (proxyOv && !proxyOv.hidden) return;
     var cancelOv = document.getElementById("proposalCancelOverlay");
     if (cancelOv && !cancelOv.hidden) return;
     var ov = document.getElementById("proposalOverlay");
@@ -2938,7 +3054,9 @@
     var id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) return;
     var sign = document.getElementById("ownerSignOverlay");
-    if ((sign && !sign.hidden) || state.proposalCancelBusy || state.proposalCreateBusy) return;
+    if ((sign && !sign.hidden) || state.proposalCancelBusy || state.proposalCreateBusy || state.proxyBusy) return;
+    var proxyOv = document.getElementById("proxyOverlay");
+    if (proxyOv && !proxyOv.hidden) return;
     var create = document.getElementById("proposalOverlay");
     if (create && !create.hidden) return;
     var ov = document.getElementById("proposalCancelOverlay");
@@ -3056,6 +3174,332 @@
     }
   }
 
+  function proxyMenuHtml() {
+    var label = state.votes.proxy ? "Remove proxy" : "Set proxy";
+    var waiting = (Boolean(state.votes.user) && !state.votes.ready) || state.proxyBusy;
+    return (
+      '<div class="dao-more">' +
+      '<button type="button" class="dao-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>' +
+      '<div class="dao-more-menu" role="menu" hidden>' +
+      '<button type="button" class="dao-more-item" role="menuitem" data-proxy-action' +
+      (waiting ? " disabled" : "") +
+      ">" +
+      esc(label) +
+      "</button></div></div>"
+    );
+  }
+
+  function paintProxyMenu() {
+    var label = state.votes.proxy ? "Remove proxy" : "Set proxy";
+    var waiting = Boolean(state.votes.user) && !state.votes.ready;
+    var buttons = document.querySelectorAll("[data-proxy-action]");
+    buttons.forEach(function (btn) {
+      btn.textContent = label;
+      btn.disabled = waiting || state.proxyBusy;
+    });
+  }
+
+  function proxyMenuOpen() {
+    return Boolean(document.querySelector(".dao-more.is-open"));
+  }
+
+  function closeProxyMenu() {
+    var roots = document.querySelectorAll(".dao-more.is-open");
+    roots.forEach(function (root) {
+      root.classList.remove("is-open");
+      var btn = root.querySelector(".dao-more-btn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+      var menu = root.querySelector(".dao-more-menu");
+      if (menu) menu.hidden = true;
+    });
+  }
+
+  function toggleProxyMenu(btn) {
+    var root = btn && btn.closest ? btn.closest(".dao-more") : null;
+    if (!root) return;
+    var open = root.classList.contains("is-open");
+    closeProxyMenu();
+    if (open) return;
+    root.classList.add("is-open");
+    btn.setAttribute("aria-expanded", "true");
+    var menu = root.querySelector(".dao-more-menu");
+    if (menu) menu.hidden = false;
+  }
+
+  function setProxyStatus(message, isError) {
+    var el = document.getElementById("proxyStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setProxyLocked(on) {
+    state.proxyBusy = Boolean(on);
+    var ids = ["proxyUser", "proxySubmit", "proxyDismiss"];
+    var i;
+    for (i = 0; i < ids.length; i += 1) {
+      var el = document.getElementById(ids[i]);
+      if (el) el.disabled = Boolean(on);
+    }
+    var submit = document.getElementById("proxySubmit");
+    if (!submit) return;
+    if (on) submit.setAttribute("aria-busy", "true");
+    else submit.removeAttribute("aria-busy");
+    paintProxyMenu();
+  }
+
+  function closeProxyDialog() {
+    var sign = document.getElementById("ownerSignOverlay");
+    if (sign && !sign.hidden) return;
+    state.proxyTicket += 1;
+    setProxyLocked(false);
+    var ov = document.getElementById("proxyOverlay");
+    if (ov) ov.hidden = true;
+    setProxyStatus("");
+    var input = document.getElementById("proxyUser");
+    if (input) input.value = "";
+  }
+
+  function daoDialogOpen() {
+    var sign = document.getElementById("ownerSignOverlay");
+    if (sign && !sign.hidden) return true;
+    var ids = ["proxyOverlay", "proposalOverlay", "proposalCancelOverlay"];
+    var i;
+    for (i = 0; i < ids.length; i += 1) {
+      var ov = document.getElementById(ids[i]);
+      if (ov && !ov.hidden) return true;
+    }
+    return false;
+  }
+
+  function openProxyDialog() {
+    var host = state.host;
+    if (!host) return;
+    var user = host.user() || "";
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    if (state.votes.user && !state.votes.ready) return;
+    if (state.votes.proxy || state.proxyBusy || daoDialogOpen()) return;
+    state.proxyTicket += 1;
+    setProxyLocked(false);
+    setProxyStatus("");
+    var input = document.getElementById("proxyUser");
+    var search = document.getElementById("proposalSearch");
+    var typed = search ? String(search.value || "").trim() : "";
+    if (input) input.value = typed;
+    var ov = document.getElementById("proxyOverlay");
+    if (ov) ov.hidden = false;
+    if (host.focus) host.focus(input);
+  }
+
+  // Broadcasts land a block after the node accepts them, so the account's proxy
+  // field can still be stale. Apply the signed value, then load that voter's lists.
+  async function applyGovernance(gen, proxy) {
+    var user = state.host.user() || "";
+    state.votesSerial += 1;
+    var serial = state.votesSerial;
+    state.votes.user = user;
+    state.votes.proxy = accountName(proxy) || "";
+    state.votes.proxyVoter = state.votes.proxy;
+    state.votes.ready = false;
+    state.votes.names = new Set();
+    state.proposalVotes.user = user;
+    state.proposalVotes.ready = false;
+    state.proposalVotes.ids = new Set();
+    state.votedKey = "";
+    paintProxyMenu();
+    paintVoteNote();
+    paintVoteButtons();
+    if (onProposalPage()) paintProposalActions();
+    try {
+      if (state.votes.proxy) {
+        var resolved = await resolveProxyVotes(state.votes.proxy, function () {
+          return votesCurrent(gen, serial, user);
+        });
+        if (!votesCurrent(gen, serial, user)) return;
+        state.votes.proxyVoter = (resolved && resolved.voter) || state.votes.proxy;
+        state.votes.names = (resolved && resolved.names) || new Set();
+      } else {
+        var account = await accountByName(user);
+        if (!votesCurrent(gen, serial, user)) return;
+        state.votes.proxyVoter = "";
+        state.votes.names = witnessNamesOf(account);
+      }
+      state.votes.ready = true;
+    } catch (err) {
+      if (!votesCurrent(gen, serial, user)) return;
+      state.votes.ready = true;
+    }
+    if (!votesCurrent(gen, serial, user)) return;
+    paintVoteNote();
+    paintProxyMenu();
+    paintVoteButtons();
+    if (witnessFilter() === "voted" && state.mode === "witnesses") ensureVoted(gen);
+    if (!onProposalPage()) return;
+    try {
+      var voter = state.votes.proxy ? state.votes.proxyVoter || state.votes.proxy : user;
+      var ids = await fetchProposalVoteIds(voter, function () {
+        return votesCurrent(gen, serial, user) && onProposalPage();
+      });
+      if (!ids || !votesCurrent(gen, serial, user)) return;
+      state.proposalVotes.ids = ids;
+      state.proposalVotes.ready = true;
+    } catch (err2) {
+      if (!votesCurrent(gen, serial, user)) return;
+      state.proposalVotes.ready = true;
+    }
+    if (votesCurrent(gen, serial, user) && onProposalPage()) paintProposalActions();
+  }
+
+  async function submitProxy() {
+    if (state.proxyBusy) return;
+    var host = state.host;
+    if (!host) return;
+    var user = accountName(host.user() || "");
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    var input = document.getElementById("proxyUser");
+    var raw = input ? String(input.value || "") : "";
+    var name = accountName(raw);
+    if (!String(raw || "").trim()) {
+      setProxyStatus("Enter a username.", true);
+      return;
+    }
+    if (!name) {
+      setProxyStatus("Usernames use letters, numbers, dots, or hyphens.", true);
+      return;
+    }
+    if (input) input.value = name;
+    if (name === user) {
+      setProxyStatus("An account cannot be its own proxy.", true);
+      return;
+    }
+    var ticket = state.proxyTicket;
+    var gen = state.gen;
+    setProxyLocked(true);
+    setProxyStatus("");
+    try {
+      var account = await accountByName(name);
+      if (ticket !== state.proxyTicket) return;
+      if (!account) {
+        setProxyStatus("That account was not found.", true);
+        return;
+      }
+      await host.signActive(
+        user,
+        [
+          [
+            "account_witness_proxy",
+            {
+              account: user,
+              proxy: name,
+            },
+          ],
+        ],
+        {
+          title: "Set proxy",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: "The proxy was not set.",
+          failMessage: "Could not set that proxy.",
+        }
+      );
+      if (ticket !== state.proxyTicket) return;
+      closeProxyDialog();
+      if (!alive(gen)) return;
+      applyGovernance(gen, name);
+    } catch (err) {
+      if (ticket !== state.proxyTicket) return;
+      if (err && err.ownerCancel) return;
+      var ov = document.getElementById("proxyOverlay");
+      if (!ov || ov.hidden) return;
+      setProxyStatus((err && err.message) || "Could not set that proxy.", true);
+    } finally {
+      if (ticket === state.proxyTicket) setProxyLocked(false);
+    }
+  }
+
+  async function removeProxy() {
+    var host = state.host;
+    if (!host || state.proxyBusy) return;
+    var user = accountName(host.user() || "");
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    if (!state.votes.ready || !state.votes.proxy) return;
+    if (daoDialogOpen()) return;
+    var gen = state.gen;
+    var serial = state.votesSerial;
+    state.proxyBusy = true;
+    paintProxyMenu();
+    try {
+      await host.signActive(
+        user,
+        [
+          [
+            "account_witness_proxy",
+            {
+              account: user,
+              proxy: "",
+            },
+          ],
+        ],
+        {
+          title: "Remove proxy",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: "The proxy was not removed.",
+          failMessage: "Could not remove the proxy.",
+        }
+      );
+      if (!alive(gen) || state.votesSerial !== serial) return;
+      applyGovernance(gen, "");
+    } catch (err) {
+      if (!(err && err.ownerCancel) && host.still && host.still()) {
+        host.showError((err && err.message) || "Could not remove the proxy.");
+      }
+    } finally {
+      state.proxyBusy = false;
+      paintProxyMenu();
+    }
+  }
+
+  var proxyDialogBound = false;
+  function bindProxyDialog() {
+    if (proxyDialogBound) return;
+    var ov = document.getElementById("proxyOverlay");
+    if (!ov) return;
+    proxyDialogBound = true;
+    ov.addEventListener("click", function (event) {
+      if (event.target !== ov) return;
+      var active = document.activeElement;
+      if (active && ov.contains(active)) return;
+      closeProxyDialog();
+    });
+    ov.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || event.isComposing) return;
+      if (event.target && event.target.id === "proxyUser") {
+        event.preventDefault();
+        submitProxy();
+      }
+    });
+    var dismiss = document.getElementById("proxyDismiss");
+    if (dismiss) {
+      dismiss.addEventListener("click", function () {
+        closeProxyDialog();
+      });
+    }
+    var submit = document.getElementById("proxySubmit");
+    if (submit) {
+      submit.addEventListener("click", function () {
+        submitProxy();
+      });
+    }
+  }
+
   function proposalShell() {
     return (
       '<section class="cs77-page dao-page">' +
@@ -3063,8 +3507,8 @@
       '<h2 class="page-title">Proposals</h2>' +
       '<p class="dao-kicker">Decentralized fund</p>' +
       '<div class="dao-copy">' +
-      "<p>Proposals are how a project asks the decentralized organization for funding. The project names a daily amount, and that amount can be paid in HBD for a set number of days. Stakeholders vote with Hive Power. The weight of each vote is that account's stake, counted in full for every proposal.</p>" +
-      "<p>Vote for the return proposal to have a say in the decentralized fund. A project is paid only while it has more votes than the return proposal. Voting the return proposal up funds fewer projects and leaves more HBD in the treasury. That HBD stays out of the supply new Hive is minted from, so the vote also slows inflation.</p>" +
+      "<p>Proposals are how a project asks the DAO for funding. The project names a daily amount, and that amount can be paid in HBD for a set number of days. Stakeholders vote with their stake including proxies.</p>" +
+      "<p>Vote for the return proposal to have a say in the decentralized fund. A project is paid only while it has more votes than the return proposal.</p>" +
       "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
       "</div>" +
       '<div class="dao-stats proposal-stats">' +
@@ -3073,6 +3517,7 @@
       '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span></div>' +
       "</div>" +
+      '<p class="dao-note" id="daoVoteNote" hidden></p>' +
       '<div class="dao-create">' +
       '<button type="button" class="btn-primary btn-compact" id="proposalCreate">Create proposal</button>' +
       '<div id="proposalOwn" class="proposal-own" hidden></div>' +
@@ -3083,12 +3528,15 @@
       '<button type="button" role="radio" data-proposal-filter="upcoming" aria-checked="false">Upcoming</button>' +
       '<button type="button" role="radio" data-proposal-filter="past" aria-checked="false">Past</button>' +
       "</div>" +
+      '<div class="dao-tools">' +
       '<form class="tags-add search-form" id="proposalSearchForm">' +
       '<input id="proposalSearch" type="text" maxlength="32" placeholder="Search username" value="' +
       esc(state.proposalQuery || "") +
       '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search proposals by username">' +
       glassHtml() +
       "</form>" +
+      proxyMenuHtml() +
+      "</div>" +
       '<p class="tags-status" id="daoStatus" hidden></p>' +
       '<div class="proposal-table" id="proposalTable">' +
       '<div id="proposalList"></div>' +
@@ -3108,6 +3556,7 @@
     if (!writeView(gen, proposalShell())) return;
     loadChain(gen);
     loadProposals(gen);
+    loadVotes(gen);
     loadProposalVotes(gen);
   }
 
@@ -3217,6 +3666,7 @@
           who.user +
           who.to +
           "</span></div>" +
+          '<p class="dao-note" id="daoVoteNote" hidden></p>' +
           '<div class="dao-actions">' +
           '<div class="proposal-action" data-proposal-action="' +
           esc(String(id)) +
@@ -3239,6 +3689,7 @@
       )
     );
     paintProposalFigures();
+    paintVoteNote();
   }
 
   function paintProposalMissing(gen, id) {
@@ -3544,7 +3995,7 @@
         name,
         '<p class="dao-rank" id="witnessRank">Checking rank…</p>' +
           '<div class="dao-actions">' +
-          voteButtonHtml(name) +
+          witnessActionHtml(name) +
           '<a class="btn-ghost" href="' +
           esc(state.host.profileHref(name)) +
           '">Profile</a></div>' +
@@ -3836,6 +4287,20 @@
   }
 
   function onClick(event) {
+    var proxyMenuBtn = event.target.closest && event.target.closest(".dao-more-btn");
+    if (proxyMenuBtn) {
+      event.preventDefault();
+      toggleProxyMenu(proxyMenuBtn);
+      return;
+    }
+    var proxyAction = event.target.closest && event.target.closest("[data-proxy-action]");
+    if (proxyAction) {
+      event.preventDefault();
+      closeProxyMenu();
+      if (state.votes.proxy) removeProxy();
+      else openProxyDialog();
+      return;
+    }
     var createProposal = event.target.closest && event.target.closest("#proposalCreate");
     if (createProposal) {
       event.preventDefault();
@@ -3982,9 +4447,15 @@
       view.addEventListener("compositionend", onComposeEnd);
       window.addEventListener("scroll", onScroll, { passive: true });
       window.addEventListener("resize", onScroll);
+      document.addEventListener("click", function (event) {
+        var el = event.target;
+        if (el && el.closest && el.closest(".dao-more")) return;
+        closeProxyMenu();
+      });
     }
     bindProposalDialog();
     bindProposalCancel();
+    bindProxyDialog();
   }
 
   async function render(ctx) {
@@ -4015,5 +4486,8 @@
     render: render,
     closeCreateProposal: closeCreateProposal,
     closeProposalCancel: closeProposalCancel,
+    closeProxy: closeProxyDialog,
+    closeProxyMenu: closeProxyMenu,
+    proxyMenuOpen: proxyMenuOpen,
   };
 })(window);
