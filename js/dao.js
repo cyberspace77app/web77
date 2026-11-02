@@ -584,7 +584,7 @@
   }
 
   var WITNESS_VOTE_CHECK =
-    '<svg class="witness-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
+    '<svg class="dao-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
 
   function voteButtonFace(proxy, voted) {
     if (proxy) return "Proxy";
@@ -709,7 +709,7 @@
       if (!split && (filter === "all" || filter === "active") && listMode === "rank" && rank > 20) {
         split = true;
         html.push(
-          '<p class="witness-split"><span>Below the top 20, one backup witness produces the next block in each round.</span></p>'
+          '<p class="dao-split"><span>Below the top 20, one backup witness produces the next block in each round.</span></p>'
         );
       }
       html.push(rowHtml(witness, rank, listMode));
@@ -718,7 +718,7 @@
   }
 
   function paintWitnessFilter() {
-    var buttons = document.querySelectorAll(".witness-filter [data-witness-filter]");
+    var buttons = document.querySelectorAll(".dao-filter [data-witness-filter]");
     var current = witnessFilter();
     buttons.forEach(function (btn) {
       var on = btn.getAttribute("data-witness-filter") === current;
@@ -728,7 +728,7 @@
   }
 
   function emptyListHtml(message) {
-    return '<p class="feed-hint witness-empty">' + esc(message) + "</p>";
+    return '<p class="feed-hint dao-empty">' + esc(message) + "</p>";
   }
 
   function setStatus(message, isError) {
@@ -1422,7 +1422,7 @@
       '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search witnesses">' +
       glassHtml() +
       "</form>" +
-      '<div class="witness-filter" role="radiogroup" aria-label="Filter witnesses">' +
+      '<div class="dao-filter" role="radiogroup" aria-label="Filter witnesses">' +
       '<button type="button" role="radio" data-witness-filter="all" aria-checked="true" class="is-active">All</button>' +
       '<button type="button" role="radio" data-witness-filter="active" aria-checked="false">Active</button>' +
       '<button type="button" role="radio" data-witness-filter="voted" aria-checked="false">Voted</button>' +
@@ -1838,7 +1838,7 @@
 
   // Same yellow circle as the vote check. The stroke is a dollar sign.
   var PROPOSAL_PAID_MARK =
-    '<svg class="witness-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 6.1v11.8M14.9 8H10.6a2 2 0 0 0 0 4h2.8a2 2 0 0 1 0 4H8.6"/></svg>';
+    '<svg class="dao-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 6.1v11.8M14.9 8H10.6a2 2 0 0 0 0 4h2.8a2 2 0 0 1 0 4H8.6"/></svg>';
 
   function proposalExpiredPaid(row, now, line) {
     if (proposalPhase(row, now) !== "past") return false;
@@ -1934,7 +1934,7 @@
     for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
     if (groups.threshold) {
       if (filter !== "all") {
-        html.push('<p class="witness-split proposal-threshold" aria-hidden="true"><span></span></p>');
+        html.push('<p class="dao-split proposal-threshold" aria-hidden="true"><span></span></p>');
       }
       html.push(proposalRowHtml(groups.threshold, now, filter, line));
       if (filter !== "all") html.push('<p class="proposal-unfunded">Currently not funded</p>');
@@ -1983,7 +1983,7 @@
   }
 
   function paintProposalFilter() {
-    var buttons = document.querySelectorAll(".witness-filter [data-proposal-filter]");
+    var buttons = document.querySelectorAll(".dao-filter [data-proposal-filter]");
     var current = proposalFilter();
     buttons.forEach(function (btn) {
       var on = btn.getAttribute("data-proposal-filter") === current;
@@ -2195,7 +2195,7 @@
 
   function revealProposalFilter() {
     if (state.mode !== "proposals") return;
-    var bar = document.querySelector(".dao-page .witness-filter");
+    var bar = document.querySelector(".dao-page .dao-filter");
     if (!bar || bar.getBoundingClientRect().top >= 0) return;
     var root = document.documentElement;
     var prev = root.style.scrollBehavior;
@@ -2358,7 +2358,7 @@
       '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
       "</div>" +
-      '<div class="witness-filter" role="radiogroup" aria-label="Filter proposals">' +
+      '<div class="dao-filter" role="radiogroup" aria-label="Filter proposals">' +
       '<button type="button" role="radio" data-proposal-filter="active" aria-checked="true" class="is-active">Active</button>' +
       '<button type="button" role="radio" data-proposal-filter="all" aria-checked="false">All</button>' +
       '<button type="button" role="radio" data-proposal-filter="upcoming" aria-checked="false">Upcoming</button>' +
@@ -2510,9 +2510,10 @@
           '<p class="dao-note" id="proposalStanding" hidden></p>' +
           '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
           '<dl class="dao-facts" id="proposalFacts"></dl>' +
-          '<section class="witness-supporters">' +
+          '<section class="dao-supporters">' +
           '<h3 class="dao-kicker">Supporters</h3>' +
-          '<p class="dao-note" id="proposalSupporterStatus">Loading supporters…</p>' +
+          '<button type="button" class="dao-supporter-load" id="proposalSupporterLoad">Load supporters</button>' +
+          '<p class="dao-note" id="proposalSupporterStatus" hidden></p>' +
           '<div id="proposalSupporterList"></div>' +
           '<button type="button" class="btn-ghost" id="proposalSupporterRetry" hidden>Try again</button>' +
           "</section>"
@@ -2565,7 +2566,10 @@
     var status = document.getElementById("proposalSupporterStatus");
     var list = document.getElementById("proposalSupporterList");
     var retry = document.getElementById("proposalSupporterRetry");
+    var loadBtn = document.getElementById("proposalSupporterLoad");
     if (!status || !list) return;
+    status.hidden = false;
+    if (loadBtn) loadBtn.hidden = true;
     if (retry) retry.hidden = !state.supporterError && !state.proposalSupportersPartial;
     if (state.supporterError) {
       status.textContent = state.supporterError;
@@ -2582,12 +2586,7 @@
       list.innerHTML = "";
       return;
     }
-    var html = [
-      '<div class="witness-supporter-head"><span>Rank</span><span>Account</span><span>Stake</span></div>',
-    ];
-    var i;
-    for (i = 0; i < count; i += 1) html.push(supporterHtml(rows[i], i + 1));
-    list.innerHTML = html.join("");
+    list.innerHTML = supporterTableHtml(rows);
   }
 
   function proposalSupporterStatus(gen, id, serial, text) {
@@ -2595,7 +2594,9 @@
       return;
     }
     var status = document.getElementById("proposalSupporterStatus");
-    if (status) status.textContent = text;
+    if (!status) return;
+    status.hidden = false;
+    status.textContent = text;
   }
 
   // Current approvals. voter_vests is the stake that counts, including proxies.
@@ -2651,8 +2652,10 @@
     }
     var list = document.getElementById("proposalSupporterList");
     var retry = document.getElementById("proposalSupporterRetry");
+    var loadBtn = document.getElementById("proposalSupporterLoad");
     if (list) list.innerHTML = "";
     if (retry) retry.hidden = true;
+    if (loadBtn) loadBtn.hidden = true;
     proposalSupporterStatus(gen, id, serial, "Loading supporters…");
     if (!current()) return;
     try {
@@ -2769,7 +2772,6 @@
         state.proposals.paidReady = true;
       }
       paintProposalDetail(gen);
-      loadProposalSupporters(gen, id);
     } catch (err) {
       if (!current()) return;
       writeView(
@@ -2832,9 +2834,10 @@
           (about ? '<p class="dao-about">' + esc(about) + "</p>" : "") +
           (disabled ? '<p class="dao-note dao-disabled">This witness is not signing blocks.</p>' : "") +
           '<dl class="dao-facts" id="witnessFacts"></dl>' +
-          '<section class="witness-supporters">' +
+          '<section class="dao-supporters">' +
           '<h3 class="dao-kicker">Supporters</h3>' +
-          '<p class="dao-note" id="witnessSupporterStatus">Loading supporters…</p>' +
+          '<button type="button" class="dao-supporter-load" id="witnessSupporterLoad">Load supporters</button>' +
+          '<p class="dao-note" id="witnessSupporterStatus" hidden></p>' +
           '<div id="witnessSupporterList"></div>' +
           '<button type="button" class="btn-ghost" id="witnessSupporterRetry" hidden>Try again</button>' +
           "</section>"
@@ -2886,17 +2889,27 @@
       '<a href="' + esc(state.host.profileHref(row.name)) + '">@' + esc(row.name) + "</a>";
     if (notes.length) who += "<small>" + esc(notes.join(" · ")) + "</small>";
     return (
-      '<div class="witness-supporter">' +
-      '<span class="witness-supporter-rank">' +
+      "<tr>" +
+      "<td>" +
       rank +
-      "</span>" +
-      '<span class="witness-supporter-who">' +
+      "</td>" +
+      "<td>" +
       who +
-      "</span>" +
-      '<span class="witness-supporter-hp">' +
+      "</td>" +
+      "<td>" +
       esc(hp.exact || "—") +
-      "</span></div>"
+      "</td></tr>"
     );
+  }
+
+  function supporterTableHtml(rows) {
+    var html = [
+      '<table class="dao-table"><thead><tr><th>Rank</th><th>Account</th><th>Stake</th></tr></thead><tbody>',
+    ];
+    var i;
+    for (i = 0; i < rows.length; i += 1) html.push(supporterHtml(rows[i], i + 1));
+    html.push("</tbody></table>");
+    return html.join("");
   }
 
   function paintSupporters() {
@@ -2904,7 +2917,10 @@
     var status = document.getElementById("witnessSupporterStatus");
     var list = document.getElementById("witnessSupporterList");
     var retry = document.getElementById("witnessSupporterRetry");
+    var loadBtn = document.getElementById("witnessSupporterLoad");
     if (!status || !list) return;
+    status.hidden = false;
+    if (loadBtn) loadBtn.hidden = true;
     if (retry) retry.hidden = !state.supporterError;
     if (state.supporterError) {
       status.textContent = state.supporterError;
@@ -2920,12 +2936,7 @@
       list.innerHTML = "";
       return;
     }
-    var html = [
-      '<div class="witness-supporter-head"><span>Rank</span><span>Account</span><span>Stake</span></div>',
-    ];
-    var i;
-    for (i = 0; i < count; i += 1) html.push(supporterHtml(rows[i], i + 1));
-    list.innerHTML = html.join("");
+    list.innerHTML = supporterTableHtml(rows);
   }
 
   function supporterStatus(gen, name, serial, text) {
@@ -2933,7 +2944,9 @@
       return;
     }
     var status = document.getElementById("witnessSupporterStatus");
-    if (status) status.textContent = text;
+    if (!status) return;
+    status.hidden = false;
+    status.textContent = text;
   }
 
   function hafOrigin(node) {
@@ -2997,8 +3010,10 @@
     }
     var list = document.getElementById("witnessSupporterList");
     var retry = document.getElementById("witnessSupporterRetry");
+    var loadBtn = document.getElementById("witnessSupporterLoad");
     if (list) list.innerHTML = "";
     if (retry) retry.hidden = true;
+    if (loadBtn) loadBtn.hidden = true;
     supporterStatus(gen, name, serial, "Loading supporters…");
     if (!current()) return;
     try {
@@ -3087,7 +3102,6 @@
       state.detailAccount = pack[1] && pack[1][0];
       paintDetail(gen);
       scanRank(gen, name);
-      loadSupporters(gen, name);
     } catch (err) {
       if (!alive(gen) || state.detailName !== name) return;
       writeView(
@@ -3104,7 +3118,7 @@
 
   function onClick(event) {
     var proposalBtn = event.target.closest && event.target.closest("[data-proposal-filter]");
-    if (proposalBtn && proposalBtn.closest(".witness-filter")) {
+    if (proposalBtn && proposalBtn.closest(".dao-filter")) {
       event.preventDefault();
       setProposalFilter(proposalBtn.getAttribute("data-proposal-filter") || "");
       return;
@@ -3113,6 +3127,14 @@
     if (proposalRetry) {
       event.preventDefault();
       if (state.mode === "proposals") loadProposals(state.gen);
+      return;
+    }
+    var proposalSupporterLoad = event.target.closest && event.target.closest("#proposalSupporterLoad");
+    if (proposalSupporterLoad) {
+      event.preventDefault();
+      if (state.mode === "proposal" && state.detailProposalId != null) {
+        loadProposalSupporters(state.gen, state.detailProposalId);
+      }
       return;
     }
     var proposalSupporterRetry = event.target.closest && event.target.closest("#proposalSupporterRetry");
@@ -3130,7 +3152,7 @@
       return;
     }
     var filterBtn = event.target.closest && event.target.closest("[data-witness-filter]");
-    if (filterBtn && filterBtn.closest(".witness-filter")) {
+    if (filterBtn && filterBtn.closest(".dao-filter")) {
       event.preventDefault();
       setWitnessFilter(filterBtn.getAttribute("data-witness-filter") || "");
       return;
@@ -3139,6 +3161,12 @@
     if (retry) {
       event.preventDefault();
       retryList();
+      return;
+    }
+    var supporterLoad = event.target.closest && event.target.closest("#witnessSupporterLoad");
+    if (supporterLoad) {
+      event.preventDefault();
+      if (state.mode === "witness" && state.detailName) loadSupporters(state.gen, state.detailName);
       return;
     }
     var supporterRetry = event.target.closest && event.target.closest("#witnessSupporterRetry");

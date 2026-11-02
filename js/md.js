@@ -2710,7 +2710,7 @@
     return !/[a-zA-Z0-9@＠/]/.test(ch);
   }
 
-  // Hive tags are 2–24 chars: a letter, then letters, digits, or hyphens, ending alnum.
+  // Hive tags are 2–24 chars: a letter or digit, then letters, digits, or hyphens, ending alnum.
   // Also refuse a match glued to another word, an entity, or a second hash.
   function isTagBoundary(ch) {
     if (!ch) return true;
@@ -2823,7 +2823,7 @@
         }
       }
       if ((at === "#" || at === "＃") && isTagBoundary(s[i - 1])) {
-        const m = s.slice(i + 1).match(/^([a-z][a-z0-9-]{0,22}[a-z0-9])/i);
+        const m = s.slice(i + 1).match(/^([a-z0-9][a-z0-9-]{0,22}[a-z0-9])/i);
         if (m && !tagContinues(s[i + 1 + m[1].length])) {
           out += tagHtml(at, m[1]);
           i += 1 + m[1].length;

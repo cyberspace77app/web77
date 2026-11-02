@@ -6727,7 +6727,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function isValidTag(tag) {
-    return /^[a-z][a-z0-9-]{1,23}$/.test(tag);
+    return /^[a-z0-9][a-z0-9-]{1,23}$/.test(tag);
   }
 
   function postPermlink(title) {
@@ -30523,7 +30523,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.27";
+      script.src = "/js/dao.js?v=0.19.30";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);

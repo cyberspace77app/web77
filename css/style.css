@@ -9207,7 +9207,7 @@ body.is-dao #view {
 .dao-facts,
 .dao-actions,
 .dao-rank,
-.witness-supporters {
+.dao-supporters {
   max-width: 40rem;
 }
 
@@ -9363,90 +9363,93 @@ body.is-dao #view {
   color: var(--red-bright);
 }
 
-.witness-supporters {
+.dao-supporters {
   margin-top: 1.7rem;
 }
 
-.witness-supporters .dao-kicker {
+.dao-supporters .dao-kicker {
   margin-bottom: 0.45rem;
 }
 
-.witness-supporters .dao-note {
+.dao-supporters .dao-note {
   margin-bottom: 0.75rem;
 }
 
-.witness-supporter-head,
-.witness-supporter {
-  display: grid;
-  grid-template-columns: 3.25rem minmax(0, 1fr) auto;
-  column-gap: 0.75rem;
-  align-items: baseline;
-}
-
-.witness-supporter-head {
-  padding-bottom: 0.4rem;
+.dao-supporter-load {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.35rem 0 0.85rem;
+  padding: 0.55rem 1.15rem;
+  border: 1px solid var(--gray);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gray);
   font-family: var(--font-display);
-  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
   text-transform: uppercase;
-  color: var(--gray-dim);
+  cursor: pointer;
 }
 
-.witness-supporter-head span:first-child,
-.witness-supporter-head span:last-child {
-  text-align: right;
-}
-
-.witness-supporter {
-  padding: 0.42rem 0;
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 0.95rem;
-}
-
-.witness-supporter-rank {
-  color: var(--text);
-  text-align: right;
-}
-
-.witness-supporter-who {
-  min-width: 0;
-}
-
-.witness-supporter-who a {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.dao-supporter-load:hover,
+.dao-supporter-load:focus-visible {
   color: var(--yellow);
+  border-color: var(--gray);
 }
 
-.witness-supporter-who small {
-  display: block;
-  margin-top: 0.12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.dao-supporter-load:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.dao-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
   font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.75;
+  background: transparent;
+}
+
+.dao-table th,
+.dao-table td {
+  border: 1px solid var(--border);
+  padding: 0.55rem 0.75rem;
+  color: var(--gray);
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+}
+
+.dao-table th {
+  font-weight: 700;
+  text-align: center;
+}
+
+.dao-table td:last-child {
+  text-align: right;
+}
+
+.dao-table small {
+  display: block;
+  margin-top: 0.15rem;
   font-size: 0.85rem;
+  line-height: 1.45;
   color: var(--gray);
 }
 
-.witness-supporter-hp {
-  color: var(--text);
-  text-align: right;
-  white-space: nowrap;
-}
-
-.witness-filter {
+.dao-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem 1.25rem;
   margin: 1.15rem 0 1.15rem;
 }
 
-.witness-filter button {
+.dao-filter button {
   margin: 0;
   padding: 0.15rem 0 0.28rem;
   border: 0;
@@ -9460,15 +9463,15 @@ body.is-dao #view {
   cursor: pointer;
 }
 
-.witness-filter button.is-active {
+.dao-filter button.is-active {
   border-bottom-color: var(--text);
 }
 
-.witness-filter button:hover {
+.dao-filter button:hover {
   color: var(--yellow);
 }
 
-.witness-filter button.is-active:hover {
+.dao-filter button.is-active:hover {
   color: var(--text);
 }
 
@@ -9653,7 +9656,7 @@ body.is-dao #view {
   outline-offset: 3px;
 }
 
-.witness-vote-check {
+.dao-vote-check {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -9671,13 +9674,13 @@ body.is-dao #view {
   cursor: wait;
 }
 
-.witness-split,
-.witness-empty {
+.dao-split,
+.dao-empty {
   grid-column: 1 / -1;
 }
 
-.witness-split {
-  --witness-check: 0.35rem;
+.dao-split {
+  --dao-check: 0.35rem;
   display: block;
   margin: 0.85rem 0 0.35rem;
   padding: 0;
@@ -9690,15 +9693,15 @@ body.is-dao #view {
   text-align: left;
 }
 
-.witness-split::before {
+.dao-split::before {
   content: "";
   display: block;
-  height: calc(var(--witness-check) * 3);
+  height: calc(var(--dao-check) * 3);
   margin-bottom: 0.55rem;
-  background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--witness-check) * 2) calc(var(--witness-check) * 2);
+  background: repeating-conic-gradient(var(--yellow) 0% 25%, #101010 0% 50%) 0 0 / calc(var(--dao-check) * 2) calc(var(--dao-check) * 2);
 }
 
-.witness-split span {
+.dao-split span {
   display: block;
   padding: 0;
   background: none;
@@ -9706,7 +9709,7 @@ body.is-dao #view {
   text-align: left;
 }
 
-.witness-empty {
+.dao-empty {
   margin: 0.35rem 0 1rem;
 }
 
@@ -9803,7 +9806,7 @@ body.is-dao #view {
     color: var(--gray-dim);
   }
 
-  .witness-split {
+  .dao-split {
     margin: 0.35rem 0;
   }
 }
