@@ -1737,19 +1737,16 @@
     );
   }
 
-  function moneyCell(label, milli, estimated) {
+  function moneyCell(label, milli, end) {
     var shown = hbdCell(milli);
-    var tip = shown.exact;
-    if (estimated && tip) tip += " · estimated from the daily pay";
-    else if (estimated) tip = "Paid total was not reported.";
     return (
-      '<span class="proposal-cell" data-label="' +
+      '<span class="proposal-cell' +
+      (end ? " is-end" : "") +
+      '" data-label="' +
       esc(label) +
-      '"' +
-      (tip ? ' tabindex="0"' : "") +
-      ">" +
-      figureHtml(shown.cell, "hbd", tip) +
-      "</span>"
+      '"><span class="proposal-figure">' +
+      figureHtml(shown.cell, "hbd", "") +
+      "</span></span>"
     );
   }
 
@@ -1787,8 +1784,8 @@
     var permlink = String((row && row.permlink) || "");
     var href = who.creator && permlink ? state.host.appHref("/@" + who.creator + "/" + encodeURIComponent(permlink)) : "";
     var subjectHtml = href
-      ? '<a class="proposal-subject" href="' + esc(href) + '" title="' + esc(subject) + '">' + esc(subject) + "</a>"
-      : '<span class="proposal-subject" title="' + esc(subject) + '">' + esc(subject) + "</span>";
+      ? '<a class="proposal-subject" href="' + esc(href) + '">' + esc(subject) + "</a>"
+      : '<span class="proposal-subject">' + esc(subject) + "</span>";
     return (
       '<div class="proposal-who">' +
       who.avatar +
@@ -1821,7 +1818,7 @@
     if (range) bits.push(range);
     if (!bits.length) return "";
     var text = bits.join(" · ");
-    return '<span class="proposal-foot" title="' + esc(text) + '">' + esc(text) + "</span>";
+    return '<span class="proposal-foot">' + esc(text) + "</span>";
   }
 
   function proposalStakeHtml(hp) {
@@ -1911,10 +1908,10 @@
       proposalIdHtml(id) +
       "</div>" +
       '<div class="proposal-cells">' +
-      moneyCell("Total", pay.total, false) +
-      moneyCell("Daily", pay.daily, false) +
-      moneyCell("Paid", pay.paid, pay.estimated) +
-      moneyCell("To pay", pay.toPay, false) +
+      moneyCell("Total", pay.total) +
+      moneyCell("Daily", pay.daily, true) +
+      moneyCell("Paid", pay.paid, true) +
+      moneyCell("To pay", pay.toPay, true) +
       "</div>" +
       '<div class="proposal-bottom">' +
       proposalStakeHtml(hp) +
@@ -1992,48 +1989,32 @@
     });
   }
 
-  function paintTipCard(id, text, exact) {
+  function setProposalStat(id, text) {
     var strong = document.getElementById(id);
-    var card = strong && strong.closest ? strong.closest(".dao-stat") : null;
-    if (!strong) return;
-    strong.textContent = text;
-    if (!card) return;
-    var tip = card.querySelector(".session-stat-tip");
-    var show = Boolean(exact) && exact !== text;
-    if (tip) {
-      tip.textContent = exact || "";
-      tip.hidden = !show;
-    }
-    card.classList.toggle("is-tip", show);
-    if (show) card.tabIndex = 0;
-    else card.removeAttribute("tabindex");
+    if (strong) strong.textContent = text;
   }
 
   function paintProposalStats() {
     if (state.mode !== "proposals") return;
     if (!document.getElementById("proposalTreasury")) return;
     var treasury = state.fund ? hbdCell(assetInt(state.fund.hbd_balance, 3)) : null;
-    paintTipCard("proposalTreasury", treasury ? treasury.cell : "—", treasury ? treasury.exact : "");
+    setProposalStat("proposalTreasury", treasury ? treasury.cell : "—");
     var fundedEl = document.getElementById("proposalFunded");
     var unit = document.getElementById("proposalFundedUnit");
     if (!state.proposals.rows.length) {
-      paintTipCard("proposalDaily", "—", "");
-      paintTipCard("proposalThreshold", "—", "");
+      setProposalStat("proposalDaily", "—");
+      setProposalStat("proposalThreshold", "—");
       if (fundedEl) fundedEl.textContent = "—";
       if (unit) unit.textContent = "projects";
       return;
     }
     var snap = fundingSnapshot(chainNow());
     var daily = hbdCell(snap.daily);
-    paintTipCard("proposalDaily", daily.cell, daily.exact);
+    setProposalStat("proposalDaily", daily.cell);
     if (fundedEl) fundedEl.textContent = String(snap.count);
     if (unit) unit.textContent = snap.count === 1 ? "project" : "projects";
     var hp = snap.threshold;
-    paintTipCard(
-      "proposalThreshold",
-      hp && hp.compact && hp.compact !== "—" ? hp.compact : "—",
-      hp && hp.exact ? hp.exact : ""
-    );
+    setProposalStat("proposalThreshold", hp && hp.compact && hp.compact !== "—" ? hp.compact : "—");
   }
 
   function paintProposalList() {
@@ -2353,10 +2334,10 @@
       "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
       "</div>" +
       '<div class="dao-stats proposal-stats">' +
-      '<div class="dao-stat"><span class="dao-stat-label">treasury</span><strong id="proposalTreasury">—</strong><span class="dao-stat-unit">hbd</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
-      '<div class="dao-stat"><span class="dao-stat-label">daily pay</span><strong id="proposalDaily">—</strong><span class="dao-stat-unit">hbd</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">treasury</span><strong id="proposalTreasury">—</strong><span class="dao-stat-unit">hbd</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">daily pay</span><strong id="proposalDaily">—</strong><span class="dao-stat-unit">hbd</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
-      '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span></div>' +
       "</div>" +
       '<div class="dao-filter" role="radiogroup" aria-label="Filter proposals">' +
       '<button type="button" role="radio" data-proposal-filter="active" aria-checked="true" class="is-active">Active</button>' +
