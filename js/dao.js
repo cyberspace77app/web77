@@ -74,6 +74,9 @@
     proposalPending: new Set(),
     proposalCreateTicket: 0,
     proposalCreateBusy: false,
+    proposalCancelId: null,
+    proposalCancelBusy: false,
+    proposalCancelTicket: 0,
   };
 
   function emptyBucket() {
@@ -934,6 +937,7 @@
     state.proposalVotes = emptyProposalVotes();
     state.proposalPending = new Set();
     closeCreateProposal();
+    closeProposalCancel();
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
@@ -2055,6 +2059,7 @@
 
   function paintProposalList() {
     if (state.mode !== "proposals") return;
+    paintProposalOwn();
     var list = document.getElementById("proposalList");
     if (!list) return;
     list.classList.toggle("is-all", proposalFilter() === "all");
@@ -2590,6 +2595,8 @@
     }
     var sign = document.getElementById("ownerSignOverlay");
     if ((sign && !sign.hidden) || state.proposalCreateBusy) return;
+    var cancelOv = document.getElementById("proposalCancelOverlay");
+    if (cancelOv && !cancelOv.hidden) return;
     var ov = document.getElementById("proposalOverlay");
     if (ov && !ov.hidden) return;
     state.proposalCreateTicket += 1;
@@ -2806,6 +2813,249 @@
     });
   }
 
+  function signedInUser() {
+    var host = state.host;
+    var user = host && host.user ? host.user() || "" : "";
+    return accountName(user);
+  }
+
+  // remove_proposal needs the creator's active key. The chain rejects any
+  // other account, including the receiver. Proposal 0 is the funding line.
+  function ownProposalRows() {
+    var user = signedInUser();
+    if (!user) return [];
+    var now = chainNow();
+    var line = returnVotes();
+    var rows = state.proposals.rows;
+    var list = [];
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      if (!row || row.removed || isReturnProposal(row)) continue;
+      if (accountName(row.creator) !== user) continue;
+      var phase = proposalPhase(row, now);
+      if (phase !== "active" && phase !== "upcoming") continue;
+      var standing = "active";
+      if (phase === "upcoming") standing = "upcoming";
+      else if (line != null && bigIntOf(row.total_votes, 0n) > line) standing = "approved";
+      list.push({ row: row, standing: standing, id: proposalId(row), start: hiveTime(row.start_date) });
+    }
+    list.sort(function (a, b) {
+      var as = Number.isFinite(a.start) ? a.start : 0;
+      var bs = Number.isFinite(b.start) ? b.start : 0;
+      if (as !== bs) return as < bs ? -1 : 1;
+      return (a.id || 0) - (b.id || 0);
+    });
+    return list;
+  }
+
+  function proposalOwnSubject(row) {
+    return String((row && row.subject) || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function proposalOwnHtml() {
+    var rows = ownProposalRows();
+    if (!rows.length) return "";
+    var html = "";
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var item = rows[i];
+      var subject = proposalOwnSubject(item.row);
+      html +=
+        '<p class="proposal-own-note">' +
+        '<span class="proposal-own-text">' +
+        '<span class="proposal-own-label">Proposal' +
+        (subject ? " " : "") +
+        "</span>" +
+        (subject ? '<span class="proposal-own-subject">' + esc(subject) + "</span>" : "") +
+        '<span class="proposal-own-meta"> #' +
+        esc(String(item.id)) +
+        " " +
+        esc(item.standing) +
+        ".</span>" +
+        "</span>" +
+        '<button type="button" class="btn-ghost btn-compact proposal-own-cancel" data-proposal-cancel="' +
+        esc(String(item.id)) +
+        '" aria-label="Cancel proposal #' +
+        esc(String(item.id)) +
+        '">Cancel</button>' +
+        "</p>";
+    }
+    return html;
+  }
+
+  function paintProposalOwn() {
+    if (state.mode !== "proposals") return;
+    var el = document.getElementById("proposalOwn");
+    if (!el) return;
+    var html = proposalOwnHtml();
+    el.innerHTML = html;
+    el.hidden = !html;
+  }
+
+  function setProposalCancelStatus(message, isError) {
+    var el = document.getElementById("proposalCancelStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setProposalCancelLocked(on) {
+    state.proposalCancelBusy = Boolean(on);
+    var ids = ["proposalCancelSubmit", "proposalCancelDismiss"];
+    var i;
+    for (i = 0; i < ids.length; i += 1) {
+      var el = document.getElementById(ids[i]);
+      if (el) el.disabled = Boolean(on);
+    }
+    var submit = document.getElementById("proposalCancelSubmit");
+    if (!submit) return;
+    if (on) submit.setAttribute("aria-busy", "true");
+    else submit.removeAttribute("aria-busy");
+  }
+
+  function closeProposalCancel() {
+    var sign = document.getElementById("ownerSignOverlay");
+    if (sign && !sign.hidden) return;
+    state.proposalCancelTicket += 1;
+    state.proposalCancelId = null;
+    setProposalCancelLocked(false);
+    var ov = document.getElementById("proposalCancelOverlay");
+    if (ov) ov.hidden = true;
+    setProposalCancelStatus("");
+  }
+
+  function openProposalCancel(raw) {
+    var host = state.host;
+    if (!host) return;
+    var user = signedInUser();
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    var id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+    var sign = document.getElementById("ownerSignOverlay");
+    if ((sign && !sign.hidden) || state.proposalCancelBusy || state.proposalCreateBusy) return;
+    var create = document.getElementById("proposalOverlay");
+    if (create && !create.hidden) return;
+    var ov = document.getElementById("proposalCancelOverlay");
+    if (!ov || !ov.hidden) return;
+    var item = null;
+    var rows = ownProposalRows();
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (rows[i].id === id) item = rows[i];
+    }
+    if (!item) return;
+    state.proposalCancelId = id;
+    state.proposalCancelTicket += 1;
+    setProposalCancelLocked(false);
+    var lead = document.getElementById("proposalCancelLead");
+    var subject = proposalOwnSubject(item.row);
+    if (lead) {
+      lead.textContent = subject
+        ? "Cancel Proposal " + subject + " #" + id + ". The creation fee is not returned."
+        : "Cancel proposal #" + id + ". The creation fee is not returned.";
+    }
+    setProposalCancelStatus("");
+    ov.hidden = false;
+    var submit = document.getElementById("proposalCancelSubmit");
+    if (host.focus) host.focus(submit);
+  }
+
+  async function submitProposalCancel() {
+    if (state.proposalCancelBusy) return;
+    var host = state.host;
+    if (!host) return;
+    var user = signedInUser();
+    var id = state.proposalCancelId;
+    if (!user || id == null) return;
+    var item = null;
+    var owned = ownProposalRows();
+    var i;
+    for (i = 0; i < owned.length; i += 1) {
+      if (owned[i].id === id) item = owned[i];
+    }
+    if (!item) {
+      setProposalCancelStatus("That proposal is no longer open.", true);
+      return;
+    }
+    var ticket = state.proposalCancelTicket;
+    var gen = state.gen;
+    setProposalCancelLocked(true);
+    setProposalCancelStatus("");
+    try {
+      await host.signActive(
+        user,
+        [
+          [
+            "remove_proposal",
+            {
+              proposal_owner: user,
+              proposal_ids: [id],
+              extensions: [],
+            },
+          ],
+        ],
+        {
+          title: "Cancel proposal",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: "The proposal was not cancelled.",
+          failMessage: "Could not cancel that proposal.",
+        }
+      );
+      if (ticket !== state.proposalCancelTicket) return;
+      closeProposalCancel();
+      if (!alive(gen) || state.mode !== "proposals") return;
+      var next = [];
+      var rows = state.proposals.rows;
+      for (i = 0; i < rows.length; i += 1) {
+        if (proposalId(rows[i]) !== id) next.push(rows[i]);
+      }
+      state.proposals.rows = next;
+      paintProposalStats();
+      paintProposalList();
+      loadProposals(state.gen);
+    } catch (err) {
+      if (ticket !== state.proposalCancelTicket) return;
+      if (err && err.ownerCancel) return;
+      var ov = document.getElementById("proposalCancelOverlay");
+      if (!ov || ov.hidden) return;
+      setProposalCancelStatus((err && err.message) || "Could not cancel that proposal.", true);
+    } finally {
+      if (ticket === state.proposalCancelTicket) setProposalCancelLocked(false);
+    }
+  }
+
+  var proposalCancelBound = false;
+  function bindProposalCancel() {
+    if (proposalCancelBound) return;
+    var ov = document.getElementById("proposalCancelOverlay");
+    if (!ov) return;
+    proposalCancelBound = true;
+    ov.addEventListener("click", function (event) {
+      if (event.target !== ov) return;
+      var active = document.activeElement;
+      if (active && ov.contains(active)) return;
+      closeProposalCancel();
+    });
+    var dismiss = document.getElementById("proposalCancelDismiss");
+    if (dismiss) {
+      dismiss.addEventListener("click", function () {
+        closeProposalCancel();
+      });
+    }
+    var submit = document.getElementById("proposalCancelSubmit");
+    if (submit) {
+      submit.addEventListener("click", function () {
+        submitProposalCancel();
+      });
+    }
+  }
+
   function proposalShell() {
     return (
       '<section class="cs77-page dao-page">' +
@@ -2825,6 +3075,7 @@
       "</div>" +
       '<div class="dao-create">' +
       '<button type="button" class="btn-primary btn-compact" id="proposalCreate">Create proposal</button>' +
+      '<div id="proposalOwn" class="proposal-own" hidden></div>' +
       "</div>" +
       '<div class="dao-filter" role="radiogroup" aria-label="Filter proposals">' +
       '<button type="button" role="radio" data-proposal-filter="active" aria-checked="true" class="is-active">Active</button>' +
@@ -3591,6 +3842,12 @@
       openCreateProposal();
       return;
     }
+    var cancelProposal = event.target.closest && event.target.closest("[data-proposal-cancel]");
+    if (cancelProposal) {
+      event.preventDefault();
+      openProposalCancel(cancelProposal.getAttribute("data-proposal-cancel") || "");
+      return;
+    }
     var proposalBtn = event.target.closest && event.target.closest("[data-proposal-filter]");
     if (proposalBtn && proposalBtn.closest(".dao-filter")) {
       event.preventDefault();
@@ -3727,6 +3984,7 @@
       window.addEventListener("resize", onScroll);
     }
     bindProposalDialog();
+    bindProposalCancel();
   }
 
   async function render(ctx) {
@@ -3753,5 +4011,9 @@
     renderWitnesses(gen);
   }
 
-  global.DaoPage = { render: render, closeCreateProposal: closeCreateProposal };
+  global.DaoPage = {
+    render: render,
+    closeCreateProposal: closeCreateProposal,
+    closeProposalCancel: closeProposalCancel,
+  };
 })(window);

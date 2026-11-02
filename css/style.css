@@ -5512,7 +5512,8 @@ a.wallet-tx-time:hover {
 #convertStatus:empty,
 #claimTokensStatus:empty,
 #createAccountStatus:empty,
-#proposalCreateStatus:empty {
+#proposalCreateStatus:empty,
+#proposalCancelStatus:empty {
   display: none;
 }
 
@@ -5522,6 +5523,7 @@ a.wallet-tx-time:hover {
 #claimTokensStatus.is-error,
 #createAccountStatus.is-error,
 #proposalCreateStatus.is-error,
+#proposalCancelStatus.is-error,
 #delegateStatus.is-error {
   color: var(--red-bright);
 }
@@ -9495,6 +9497,51 @@ body.is-dao #view {
 
 .dao-create {
   margin: 0 0 1.15rem;
+}
+
+.proposal-own {
+  margin-top: 0.85rem;
+}
+
+.proposal-own-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem 0.85rem;
+  margin: 0.65rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--gray);
+  line-height: 1.45;
+}
+
+.proposal-own-note:first-child {
+  margin-top: 0;
+}
+
+.proposal-own-text {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.proposal-own-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proposal-own-label,
+.proposal-own-meta {
+  flex: 0 0 auto;
+}
+
+.proposal-own-cancel {
+  flex: 0 0 auto;
+}
+
+#proposalCancelLead {
+  overflow-wrap: anywhere;
 }
 
 .dao-page .dao-create + .dao-filter {

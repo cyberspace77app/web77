@@ -6075,6 +6075,11 @@ let CS77_FILTER_LOW_REP = 20;
       closeLogin();
       return;
     }
+    const proposalCancelOv = $("#proposalCancelOverlay");
+    if (proposalCancelOv && !proposalCancelOv.hidden) {
+      closeProposalCancelOverlay();
+      return;
+    }
     const proposalOv = $("#proposalOverlay");
     if (proposalOv && !proposalOv.hidden) {
       closeProposalOverlay();
@@ -22236,14 +22241,25 @@ let CS77_FILTER_LOW_REP = 20;
     if (Number.isFinite(fee) && fee > 0) applyWalletSend(wallet, "hive", fee);
   }
 
+  function closeProposalCancelOverlay() {
+    if (ownerSignBusy && ownerSignSession && ownerSignSession.source === "dao") return;
+    if (window.DaoPage && typeof window.DaoPage.closeProposalCancel === "function") {
+      window.DaoPage.closeProposalCancel();
+      return;
+    }
+    const ov = $("#proposalCancelOverlay");
+    if (ov) ov.hidden = true;
+  }
+
   function closeProposalOverlay() {
     if (ownerSignBusy && ownerSignSession && ownerSignSession.source === "dao") return;
     if (window.DaoPage && typeof window.DaoPage.closeCreateProposal === "function") {
       window.DaoPage.closeCreateProposal();
-      return;
+    } else {
+      const ov = $("#proposalOverlay");
+      if (ov) ov.hidden = true;
     }
-    const ov = $("#proposalOverlay");
-    if (ov) ov.hidden = true;
+    closeProposalCancelOverlay();
   }
 
   function closeCreateAccountOverlay() {
@@ -30539,7 +30555,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.19.37";
+      script.src = "/js/dao.js?v=0.19.38";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
