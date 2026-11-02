@@ -1639,7 +1639,7 @@
     var query = state.proposalQuery || "";
     for (i = 0; i < rows.length; i += 1) {
       if (filter !== "all" && proposalPhase(rows[i], now) !== filter) continue;
-      if (query && !proposalNameHit(rows[i], query)) continue;
+      if (query && !proposalNameHit(rows[i], query) && !(filter === "active" && isReturnProposal(rows[i]))) continue;
       list.push(rows[i]);
     }
     if (filter === "past") {
@@ -1925,18 +1925,51 @@
     );
   }
 
+  function proposalTotalsHtml(groups, now, line, filter) {
+    var rows = filter === "active" ? groups.above : groups.above.concat(groups.threshold ? [groups.threshold] : [], groups.below);
+    var total = 0n;
+    var paid = 0n;
+    var toPay = 0n;
+    var totalKnown = true;
+    var paidKnown = true;
+    var toPayKnown = true;
+    var projects = 0;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (isReturnProposal(rows[i])) continue;
+      projects += 1;
+      var pay = proposalPay(rows[i], now, line);
+      if (pay.total == null) totalKnown = false;
+      else total += pay.total;
+      if (pay.paid == null) paidKnown = false;
+      else paid += pay.paid;
+      if (pay.toPay == null) toPayKnown = false;
+      else toPay += pay.toPay;
+    }
+    if (!projects) return "";
+    return (
+      '<div class="proposal-totals">' +
+      moneyCell("Total", totalKnown ? total : null) +
+      moneyCell("Paid", paidKnown ? paid : null, true) +
+      moneyCell("To pay", toPayKnown ? toPay : null, true) +
+      "</div>"
+    );
+  }
+
   function proposalRowsHtml(groups, now, filter, line) {
     var html = [];
     var i;
     for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
     if (groups.threshold) {
-      if (filter !== "all") {
+      var showFundingLine = filter !== "all" && !(filter === "active" && state.proposalQuery);
+      if (showFundingLine) {
         html.push('<p class="dao-split proposal-threshold" aria-hidden="true"><span></span></p>');
       }
       html.push(proposalRowHtml(groups.threshold, now, filter, line));
-      if (filter !== "all") html.push('<p class="proposal-unfunded">Currently not funded</p>');
+      if (showFundingLine) html.push('<p class="proposal-unfunded">Currently not funded</p>');
     }
     for (i = 0; i < groups.below.length; i += 1) html.push(proposalRowHtml(groups.below[i], now, filter, line));
+    html.push(proposalTotalsHtml(groups, now, line, filter));
     return html.join("");
   }
 

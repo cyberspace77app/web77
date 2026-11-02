@@ -10196,6 +10196,29 @@ a.proposal-id:focus-visible {
   text-align: left;
 }
 
+.proposal-totals {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  min-width: 0;
+  margin: 0.2rem 0 0;
+  padding: 0.75rem 0.95rem 0.15rem;
+  border: 1px solid transparent;
+  border-top-color: var(--gray);
+}
+
+.proposal-totals .proposal-cell[data-label="Total"] {
+  grid-column: 1;
+}
+
+.proposal-totals .proposal-cell[data-label="Paid"] {
+  grid-column: 3;
+}
+
+.proposal-totals .proposal-cell[data-label="To pay"] {
+  grid-column: 4;
+}
+
 @media (max-width: 720px) {
   .dao-stats.proposal-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10323,5 +10346,27 @@ a.proposal-id:focus-visible {
     text-align: left;
     text-overflow: unset;
     white-space: normal;
+  }
+
+  .proposal-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 1.15rem;
+    row-gap: 0.75rem;
+    padding: 0.85rem 0.7rem 0.15rem;
+  }
+
+  .proposal-totals .proposal-cell[data-label="Total"] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .proposal-totals .proposal-cell[data-label="Paid"] {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .proposal-totals .proposal-cell[data-label="To pay"] {
+    grid-column: 2;
+    grid-row: 2;
   }
 }
