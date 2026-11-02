@@ -2546,16 +2546,82 @@
     return { subject: s };
   }
 
+  // A Hive post permlink is 1–255 characters of a-z, 0-9, and hyphens.
+  // create_proposal stores that string and requires the post to already exist
+  // under the creator or the receiver.
+  var PROPOSAL_LINK_HOSTS = {
+    "cyberspace77.com": true,
+    "hive.blog": true,
+    "peakd.com": true,
+    "ecency.com": true
+  };
+
+  function proposalLinkHost(hostname) {
+    var host = String(hostname || "").toLowerCase();
+    if (host.indexOf("www.") === 0) host = host.slice(4);
+    return PROPOSAL_LINK_HOSTS[host] ? host : "";
+  }
+
+  function permlinkFromAuthorPath(path) {
+    var clean = String(path || "");
+    var re = /@([a-z0-9.\-]{3,16})\/([^/?#]+)/gi;
+    var match;
+    var perm = "";
+    while ((match = re.exec(clean))) perm = match[2];
+    if (!perm) return "";
+    try {
+      perm = decodeURIComponent(perm);
+    } catch (err) {
+      return "";
+    }
+    return perm.replace(/\/+$/, "").replace(/[.,)]+$/, "").toLowerCase();
+  }
+
   function proposalPermlink(raw) {
-    var s = String(raw || "").trim();
-    if (!s) return { error: "Enter the permlink of the post." };
-    s = s.split("?")[0].split("#")[0].replace(/\/+$/, "");
-    var slash = s.lastIndexOf("/");
-    if (slash !== -1) s = s.slice(slash + 1);
-    s = s.replace(/^@+/, "").toLowerCase();
+    var original = String(raw || "").trim();
+    if (!original) return { error: "Enter the permlink of the post." };
+    original = original.replace(/^<+|>+$/g, "").replace(/^["']+|["']+$/g, "").trim();
+    original = original.replace(/[.,)]+$/, "");
+    var asUrl = original;
+    if (/^\/\//.test(asUrl)) asUrl = "https:" + asUrl;
+    else if (/^(?:www\.)?(?:cyberspace77\.com|hive\.blog|peakd\.com|ecency\.com)(?:[/:?#]|$)/i.test(asUrl)) {
+      asUrl = "https://" + asUrl;
+    }
+    var s = "";
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(asUrl)) {
+      var parsed = null;
+      try {
+        parsed = new URL(asUrl);
+      } catch (err) {
+        parsed = null;
+      }
+      if (!parsed || !proposalLinkHost(parsed.hostname)) return { error: "That permlink is not valid." };
+      s = permlinkFromAuthorPath(parsed.pathname);
+      if (!s) return { error: "That link has no permlink." };
+    } else {
+      s = permlinkFromAuthorPath(original.split("#")[0]);
+      if (!s) {
+        s = original.split("?")[0].split("#")[0].replace(/\/+$/, "");
+        var slash = s.lastIndexOf("/");
+        if (slash !== -1) s = s.slice(slash + 1);
+        s = s.replace(/^@+/, "");
+        try {
+          s = decodeURIComponent(s);
+        } catch (err) {
+          return { error: "That permlink is not valid." };
+        }
+        s = s.replace(/[.,)]+$/, "").toLowerCase();
+      }
+    }
     if (!s) return { error: "Enter the permlink of the post." };
     if (s.length > 255 || !/^[a-z0-9-]+$/.test(s)) return { error: "That permlink is not valid." };
     return { permlink: s };
+  }
+
+  function writeProposalPermlink(el) {
+    if (!el) return;
+    var parsed = proposalPermlink(el.value);
+    if (parsed.permlink) el.value = parsed.permlink;
   }
 
   function parseDailyMilli(raw) {
@@ -2896,6 +2962,25 @@
     if (submit) {
       submit.addEventListener("click", function () {
         submitCreateProposal();
+      });
+    }
+    var permInput = document.getElementById("proposalCreatePermlink");
+    if (permInput) {
+      permInput.addEventListener("paste", function (event) {
+        var text = event.clipboardData ? event.clipboardData.getData("text") : "";
+        if (!text || !text.trim()) return;
+        var parsed = proposalPermlink(text);
+        if (!parsed.permlink || parsed.permlink === text) return;
+        event.preventDefault();
+        var start = permInput.selectionStart == null ? permInput.value.length : permInput.selectionStart;
+        var end = permInput.selectionEnd == null ? permInput.value.length : permInput.selectionEnd;
+        var next = permInput.value.slice(0, start) + parsed.permlink + permInput.value.slice(end);
+        permInput.value = next;
+        var caret = start + parsed.permlink.length;
+        if (permInput.setSelectionRange) permInput.setSelectionRange(caret, caret);
+      });
+      permInput.addEventListener("blur", function () {
+        writeProposalPermlink(permInput);
       });
     }
     ov.addEventListener("input", function (event) {
