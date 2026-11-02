@@ -27920,11 +27920,13 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: ($("#settingsAvatar") && $("#settingsAvatar").value) || "",
       cover_image: ($("#settingsCover") && $("#settingsCover").value) || "",
       custom: ($("#settingsCustom") && $("#settingsCustom").value) || "",
+      legacy: ($("#settingsLegacy") && $("#settingsLegacy").value) || "",
       legacyDelete: Boolean($("#settingsLegacyDelete") && $("#settingsLegacyDelete").checked),
     };
   }
 
   function copySettingsProfileFields(fields) {
+    const hasLegacy = Boolean(fields && Object.prototype.hasOwnProperty.call(fields, "legacy"));
     return {
       name: (fields && fields.name) || "",
       about: (fields && fields.about) || "",
@@ -27933,6 +27935,7 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: (fields && fields.profile_image) || "",
       cover_image: (fields && fields.cover_image) || "",
       custom: (fields && fields.custom) || "{}",
+      legacy: hasLegacy ? String(fields.legacy == null ? "" : fields.legacy) : formatLegacyMetadata(settingsLegacySource(observer())),
       legacyDelete: Boolean(fields && fields.legacyDelete),
     };
   }
@@ -27991,15 +27994,15 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function settingsLegacyFieldHtml(fields) {
-    const user = observer();
-    const raw = settingsLegacySource(user);
+    const raw = settingsLegacySource(observer());
     if (!legacyMetadataPresent(raw)) return "";
     const esc = HiveMd.escapeHtml;
+    const value = formatLegacyMetadata(raw);
     const checked = fields && fields.legacyDelete ? " checked" : "";
     return `
       <div class="settings-field settings-legacy-field" id="settingsLegacyField">
         <label class="settings-label" for="settingsLegacy">Legacy (json_metadata)</label>
-        <textarea id="settingsLegacy" class="settings-custom" name="legacy" rows="12" readonly spellcheck="false">${esc(formatLegacyMetadata(raw))}</textarea>
+        <textarea id="settingsLegacy" class="settings-custom" name="legacy" rows="12" readonly spellcheck="false">${esc(value)}</textarea>
         <label class="cyber-toggle">
           <input id="settingsLegacyDelete" type="checkbox"${checked}>
           <span class="cyber-toggle-track" aria-hidden="true"></span>
@@ -28017,10 +28020,6 @@ let CS77_FILTER_LOW_REP = 20;
       accountState.account.json_metadata = "";
     }
     if (settingsLegacyRaw && settingsLegacyRaw.user === user) settingsLegacyRaw.text = "";
-    const box = $("#settingsLegacy");
-    if (box) box.value = "";
-    const toggle = $("#settingsLegacyDelete");
-    if (toggle) toggle.checked = false;
     const field = $("#settingsLegacyField");
     if (field) field.remove();
   }
@@ -28045,6 +28044,7 @@ let CS77_FILTER_LOW_REP = 20;
     set("#settingsAvatar", values.profile_image);
     set("#settingsCover", values.cover_image);
     set("#settingsCustom", values.custom);
+    set("#settingsLegacy", values.legacy);
     const legacyDelete = $("#settingsLegacyDelete");
     if (legacyDelete) legacyDelete.checked = Boolean(values.legacyDelete);
     paintSettingsPicture("avatar", values.profile_image);
@@ -28236,10 +28236,10 @@ let CS77_FILTER_LOW_REP = 20;
         setSettingsStatus("Profile settings are too long to save.", true);
         return;
       }
-      if (!hasSigner(user)) {
-        setSettingsStatus(signerNeededMessage(), true);
-        return;
-      }
+    }
+    if (profileChanged && !hasSigner(user)) {
+      setSettingsStatus(signerNeededMessage(), true);
+      return;
     }
     settingsBusy = true;
     setSettingsFormLocked(true);
@@ -28267,11 +28267,15 @@ let CS77_FILTER_LOW_REP = 20;
         applySavedProfile(user, metadata, json);
       }
       let legacyNote = "";
+      let legacyCleared = false;
       if (deleteLegacy) {
         setSettingsStatus("Saving…", false);
         try {
-          await deleteLegacyProfile(user);
-          if (observer() === user) clearSettingsLegacyField(user);
+          await deleteLegacyProfile(user, profileChanged ? json : "");
+          if (observer() === user) {
+            clearSettingsLegacyField(user);
+            legacyCleared = true;
+          }
         } catch (err) {
           const cancelled = Boolean(err && err.ownerCancel);
           legacyNote = cancelled
@@ -28282,6 +28286,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (observer() !== user) return;
       const saved = copySettingsProfileFields(profileChanged ? fields : base || fields);
       saved.legacyDelete = false;
+      if (legacyCleared) saved.legacy = "";
+      else if (base) saved.legacy = base.legacy || "";
       settingsProfileBaseline = Object.assign({ user }, saved);
       settingsProfileDraft = Object.assign({ user }, saved);
       if (parseRoute().name === "settings") {
@@ -28299,9 +28305,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  // An empty json_metadata string is not written. "{}" replaces the Steem-era
-  // object. posting_json_metadata stays unchanged because that string is empty.
-  async function deleteLegacyProfile(user) {
+  // "{}" replaces json_metadata. posting_json_metadata is "" when the profile
+  // fields did not change. When they did, it is the JSON just saved.
+  async function deleteLegacyProfile(user, postingJson) {
     await signWithDialog(
       user,
       [
@@ -28310,7 +28316,7 @@ let CS77_FILTER_LOW_REP = 20;
           {
             account: user,
             json_metadata: "{}",
-            posting_json_metadata: "",
+            posting_json_metadata: String(postingJson || ""),
             extensions: [],
           },
         ],

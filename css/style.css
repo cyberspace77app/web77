@@ -8217,12 +8217,12 @@ min-height: 0;
   font-size: 0.82rem;
 }
 
-.settings-legacy-field .cyber-toggle {
-  margin-top: 0.85rem;
-}
-
 .settings-form textarea.settings-custom[readonly] {
   cursor: default;
+}
+
+.settings-legacy-field .cyber-toggle {
+  margin-top: 0.85rem;
 }
 
 .settings-form input:focus,
