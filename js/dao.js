@@ -3931,7 +3931,7 @@
     status.textContent = text;
   }
 
-  // Current approvals. voter_vests is the stake that counts, including proxies.
+  // Current approvals. voter_vests is the stake that counts. A set proxy is omitted.
   // The endpoint orders by name, so the page sorts by that stake after it loads.
   // A large proposal can hit the node's statement timeout, so a failed node is skipped
   // and the node that already answered is tried once more before the others.
@@ -4011,17 +4011,19 @@
         node = pack.node;
         var data = pack.data;
         var votes = data && Array.isArray(data.votes) ? data.votes : [];
-        var total = Number(data && data.total_votes);
+        var reported = state.proposalSupporterCount;
         var i;
         for (i = 0; i < votes.length; i += 1) {
           var account = accountName(votes[i] && votes[i].voter_name);
           if (!account || seen.has(account)) continue;
+          // A governance proxy keeps the approval, but Hive does not count it.
+          if (accountName(votes[i].proxy)) continue;
           seen.add(account);
           rows.push({
             name: account,
             raw: bigIntOf(votes[i].voter_vests, 0n),
             proxied: bigIntOf(votes[i].proxied_vests, 0n),
-            proxy: accountName(votes[i].proxy),
+            proxy: "",
           });
         }
         if (rows.length) {
@@ -4031,7 +4033,7 @@
             serial,
             "Loading supporters… " +
               formatCount(rows.length) +
-              (Number.isFinite(total) && total > rows.length ? " of " + formatCount(total) : "")
+              (Number.isFinite(reported) && reported > rows.length ? " of " + formatCount(reported) : "")
           );
         }
         var pages = Number(data && data.total_pages);
