@@ -10345,9 +10345,13 @@ a.proposal-id:focus-visible {
 }
 
 .dao-detail .proposal-user,
-.dao-detail .proposal-user:hover,
 .dao-detail .proposal-user:focus-visible {
   color: var(--gray);
+  text-shadow: none;
+}
+
+.dao-detail .proposal-user:hover {
+  color: var(--yellow);
   text-shadow: none;
 }
 
