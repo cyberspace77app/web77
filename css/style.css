@@ -9517,6 +9517,11 @@ body.is-dao #view {
   margin-bottom: 0.75rem;
 }
 
+.dao-page #proposalSupporterLoad,
+.dao-page #proposalSupporterRetry {
+  margin: 0 0 0.85rem;
+}
+
 .dao-supporter-loading {
   justify-content: flex-start;
   padding: 0.15rem 0 0.85rem;
