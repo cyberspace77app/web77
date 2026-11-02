@@ -3592,7 +3592,7 @@
       '<h2 class="page-title">Proposals</h2>' +
       '<p class="dao-kicker">Decentralized fund</p>' +
       '<div class="dao-copy">' +
-      "<p>Proposals are how a project asks the DAO for funding. The project names a daily amount, and that amount can be paid in HBD for a set number of days. Stakeholders vote with their stake including proxies.</p>" +
+      "<p>Proposals are how a project asks the DAO for funding. The project names a daily amount, and that amount is paid in HBD for a set number of days if approved. Stakeholders vote with their stake including proxies.</p>" +
       "<p>Vote for the return proposal to have a say in the decentralized fund. A project is paid only while it has more votes than the return proposal.</p>" +
       "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
       "</div>" +
