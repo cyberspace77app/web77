@@ -9054,7 +9054,8 @@ a.embed-card:focus-visible,
   z-index: 1;
 }
 
-html.is-embed .embed-card .embed-speak {
+html.is-embed .embed-card .embed-speak,
+html.is-embed .embed-card .embed-file {
   position: relative;
   z-index: 2;
 }

@@ -11108,10 +11108,13 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  // The card and the post body share one embed. The kind is stamped only on
-  // the card so autoplay never starts inside an open post.
+  // The card stamps a player kind. Opening a post pauses those cards.
+  // A self-hosted file and a pasted .mp4 are <video> elements. Those still
+  // autoplay in the open post, muted, when the setting is on.
   function feedPlayerKind(html) {
     const s = String(html || "");
+    // A file player stays a file even when the address mentions another host.
+    if (/<video\b/i.test(s)) return "file";
     if (/youtube(?:-nocookie)?\.com\/embed\//i.test(s)) return "youtube";
     if (/play\.3speak\.tv\//i.test(s)) return "3speak";
     if (/player\.vimeo\.com\/video\//i.test(s)) return "vimeo";
@@ -11122,7 +11125,6 @@ let CS77_FILTER_LOW_REP = 20;
     if (/skatehype\.com\/ifplay\.php/i.test(s)) return "skatehype";
     if (/tiktok\.com\/player\//i.test(s)) return "tiktok";
     if (/player\.twitch\.tv\/|clips\.twitch\.tv\/embed/i.test(s)) return "twitch";
-    if (/<video\b/i.test(s)) return "file";
     if (/<iframe\b/i.test(s)) return "iframe";
     return "";
   }
@@ -11168,8 +11170,16 @@ let CS77_FILTER_LOW_REP = 20;
     return attrs.replace(quoted[0], 'allow="' + (next ? next + "; autoplay" : "autoplay") + '"');
   }
 
+  // Born muted so a file can start without a click. The post body copy is a
+  // different element and stays unmuted until it is the one playing.
+  function prepareCardFileVideo(html) {
+    if (!autoplayVideos()) return html;
+    return String(html || "").replace(/<video\b(?![^>]*\bmuted\b)/i, "<video muted");
+  }
+
   function prepareCardPlayer(html, kind) {
-    if (!html || !kind || kind === "file") return html;
+    if (!html || !kind) return html;
+    if (kind === "file") return prepareCardFileVideo(html);
     return String(html).replace(/<iframe\b([^>]*)>/i, function (_full, attrs) {
       let next = withAutoplayAllow(attrs);
       const srcMatch = /\bsrc\s*=\s*"([^"]*)"/i.exec(next);
@@ -11222,8 +11232,11 @@ let CS77_FILTER_LOW_REP = 20;
         video.pause();
         return;
       }
-      if (mute) video.muted = true;
       video.playsInline = true;
+      if (mute) {
+        video.muted = true;
+        video.setAttribute("muted", "");
+      }
       const pending = video.play();
       if (pending && typeof pending.catch === "function") pending.catch(function () {});
       return;
@@ -11308,10 +11321,33 @@ let CS77_FILTER_LOW_REP = 20;
     feedVideoTimers.delete(box);
   }
 
+  function feedVideoKind(box) {
+    if (!box || !box.getAttribute) return "";
+    const stamped = box.getAttribute("data-player") || "";
+    if (stamped) return stamped;
+    if (box.querySelector && box.querySelector("video")) return "file";
+    return "";
+  }
+
+  // File videos in the open post. The feed behind it is hidden, so this is
+  // the clip the reader is looking at. Iframe players stay paused there.
+  function openPostFileBoxes() {
+    const layer = document.getElementById("postLayer");
+    if (!layer || layer.hidden) return [];
+    const videos = layer.querySelectorAll(".post-body video, .comment-body video");
+    const boxes = [];
+    for (let i = 0; i < videos.length; i++) {
+      const box = videos[i].closest && videos[i].closest(".embed");
+      if (!box || (box.closest && box.closest("template, .nsfw-hold"))) continue;
+      boxes.push(box);
+    }
+    return boxes;
+  }
+
   function pauseFeedVideo(box) {
     if (!box) return;
     clearFeedVideoTimers(box);
-    commandFeedPlayer(box, box.getAttribute("data-player") || "", "pause", false);
+    commandFeedPlayer(box, feedVideoKind(box), "pause", false);
   }
 
   function pauseCurrentFeedVideo() {
@@ -11320,15 +11356,31 @@ let CS77_FILTER_LOW_REP = 20;
     if (current) pauseFeedVideo(current);
   }
 
+  // A slow file header misses the first play(). Retry when the browser can
+  // actually start it, and only while this box is still the current one.
+  function armFileVideoPlay(box) {
+    const video = box.querySelector("video");
+    if (!video || video.getAttribute("data-file-play") === "1") return;
+    video.setAttribute("data-file-play", "1");
+    const kick = function () {
+      if (feedVideoCurrent !== box || !box.isConnected || !video.paused) return;
+      commandFeedPlayer(box, "file", "play", true);
+    };
+    video.addEventListener("loadedmetadata", kick);
+    video.addEventListener("canplay", kick);
+  }
+
   function playFeedVideo(box) {
     clearFeedVideoTimers(box);
-    const kind = box.getAttribute("data-player") || "";
+    const kind = feedVideoKind(box);
+    if (!kind) return;
     const started = Date.now();
     const run = function () {
       if (feedVideoCurrent !== box || !box.isConnected) return;
       commandFeedPlayer(box, kind, "play", Date.now() - started < 450);
     };
     run();
+    if (kind === "file") armFileVideoPlay(box);
     if (FEED_SWAP_PARAMS[kind]) return;
     feedVideoTimers.set(
       box,
@@ -11362,12 +11414,15 @@ let CS77_FILTER_LOW_REP = 20;
     feedVideoSyncQueued = false;
     const current = feedVideoCurrent && feedVideoCurrent.isConnected ? feedVideoCurrent : null;
     if (current !== feedVideoCurrent && feedVideoCurrent) pauseFeedVideo(feedVideoCurrent);
-    if (!autoplayVideos() || document.body.classList.contains("is-post-open")) {
+    if (!autoplayVideos()) {
       if (current) pauseFeedVideo(current);
       feedVideoCurrent = null;
       return;
     }
-    const nodes = document.querySelectorAll(".card-video[data-player]");
+    const postOpen = document.body.classList.contains("is-post-open");
+    const nodes = postOpen
+      ? openPostFileBoxes()
+      : document.querySelectorAll(".card-video[data-player]");
     let best = null;
     let bestRank = -1;
     for (let i = 0; i < nodes.length; i++) {
@@ -16938,6 +16993,7 @@ let CS77_FILTER_LOW_REP = 20;
     setPostBackgroundHidden(true);
     postLayer.open = true;
     updateScrollTopBtn();
+    queueFeedVideoSync();
     return layer;
   }
 
@@ -17215,6 +17271,7 @@ let CS77_FILTER_LOW_REP = 20;
     postLayer.hadWelcome = false;
     quietSmartHeader();
     armInstantScroll();
+    pauseCurrentFeedVideo();
     document.body.classList.remove("is-post-open");
     setPostBackgroundHidden(false);
     if (bringWelcome) {
@@ -30290,6 +30347,15 @@ let CS77_FILTER_LOW_REP = 20;
     return `<div class="card-video embed-speak">${paused}</div>`;
   }
 
+  // A pasted .mp4 or a self-hosted <video> stays on the card. No data-player,
+  // so the feed autoplay watcher leaves it paused until the viewer hits play.
+  function embedFileVideoHtml(post) {
+    if (!showNsfwContent() && postHasNsfw(post)) return "";
+    const html = HiveMd.previewVideo(post);
+    if (!html || feedPlayerKind(html) !== "file") return "";
+    return `<div class="card-video embed-file">${html}</div>`;
+  }
+
   function embedMetaHtml(post) {
     const name = String(post.author || "").replace(/^@/, "");
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
@@ -30329,9 +30395,10 @@ let CS77_FILTER_LOW_REP = 20;
       ? `<p class="card-excerpt">${HiveMd.escapeHtml(excerpt)}</p>`
       : "";
     const speak = embedSpeakHtml(post);
-    const media = speak || embedImageHtml(post);
+    const file = speak ? "" : embedFileVideoHtml(post);
+    const media = speak || file || embedImageHtml(post);
     const inner = `${embedMetaHtml(post)}<h2>${HiveMd.escapeHtml(embedTitleText(post))}</h2>${excerptHtml}${media}${embedStatsHtml(post)}`;
-    if (!speak) {
+    if (!speak && !file) {
       return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer" data-author="${author}" data-permlink="${permlink}">${inner}</a>`;
     }
     const label = HiveMd.escapeHtml(embedTitleText(post));

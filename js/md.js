@@ -2038,21 +2038,104 @@
     return "";
   }
 
-  function fileVideoHtml(src, poster) {
+  function positiveMediaDim(value) {
+    const match = /^(\d{1,5})(?:\.\d+)?(?:px)?$/.exec(String(value || "").trim());
+    if (!match) return 0;
+    const n = Math.round(Number(match[1]));
+    return n > 0 && n < 20000 ? n : 0;
+  }
+
+  // Width and height baked into a file address, such as 1080x1920 or ?w=&h=.
+  function mediaDimsFromUrl(url) {
+    const s = String(url || "");
+    if (!s) return { w: 0, h: 0 };
+    let match = /\/(\d{2,5})x(\d{2,5})(?:\/|[.?#]|$)/.exec(s);
+    if (!match) match = /[_-](\d{2,5})x(\d{2,5})(?:\.|[?#]|$)/.exec(s);
+    if (match) {
+      const w = positiveMediaDim(match[1]);
+      const h = positiveMediaDim(match[2]);
+      if (w && h) return { w: w, h: h };
+    }
+    try {
+      const parsed = new URL(s);
+      const w = positiveMediaDim(parsed.searchParams.get("w") || parsed.searchParams.get("width"));
+      const h = positiveMediaDim(parsed.searchParams.get("h") || parsed.searchParams.get("height"));
+      if (w || h) return { w: w, h: h };
+    } catch (err) {
+      // A bare path has no query size.
+    }
+    return { w: 0, h: 0 };
+  }
+
+  // A direct file address. Query and #t= stay. A page that merely mentions
+  // .mp4 in the query is not one.
+  function directMp4Url(href) {
+    const raw = unescapeHtml(String(href || "")).trim();
+    if (!raw || !isSafePostUrl(raw, "src")) return "";
+    let url;
+    try {
+      url = new URL(raw);
+    } catch (err) {
+      return "";
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    let path = url.pathname || "";
+    try {
+      path = decodeURIComponent(path);
+    } catch (err) {
+      return "";
+    }
+    if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
+    if (!/\.mp4$/i.test(path)) return "";
+    return raw;
+  }
+
+  function fileVideoTag(src, poster) {
     if (!isSafePostUrl(src, "src")) return "";
     let extra = "";
     if (poster && isSafePostUrl(poster, "poster")) {
       extra = ' poster="' + escapeHtml(poster) + '"';
     }
     return (
-      '<div class="embed">' +
       '<video controls playsinline preload="metadata" src="' +
       escapeHtml(src) +
       '"' +
       extra +
-      "></video>" +
-      "</div>"
+      "></video>"
     );
+  }
+
+  function fileVideoHtml(src, poster, portrait) {
+    const tag = fileVideoTag(src, poster);
+    if (!tag) return "";
+    return '<div class="embed' + (portrait ? " embed-portrait" : "") + '">' + tag + "</div>";
+  }
+
+  // Known players first. A plain .mp4 is the same file player as a self-hosted
+  // <video>. The card uses the wrapped frame. The post body inserts the tag
+  // and frameAuthorVideos wraps it, so the two stay one path.
+  function urlEmbedHtml(href) {
+    const player = playerHtmlFromUrl(href);
+    if (player) return player;
+    const file = directMp4Url(href);
+    if (!file) return "";
+    const dims = mediaDimsFromUrl(file);
+    return fileVideoHtml(file, "", dims.h > dims.w && dims.w > 0);
+  }
+
+  function videoMarkupIsPortrait(tag) {
+    const open = /^<video\b[^>]*>/i.exec(tag);
+    const openRaw = open ? open[0] : "";
+    const w = positiveMediaDim(htmlAttr(openRaw, "width"));
+    const h = positiveMediaDim(htmlAttr(openRaw, "height"));
+    if (w > 0 && h > 0) return h > w;
+    let src = htmlAttr(openRaw, "src");
+    if (!src) {
+      const source = /<source\b[^>]*>/i.exec(tag);
+      if (source) src = htmlAttr(source[0], "src");
+    }
+    const dims = mediaDimsFromUrl(src);
+    return dims.w > 0 && dims.h > dims.w;
   }
 
   // A <video> plays in the card. A player address in src uses that player.
@@ -2080,7 +2163,10 @@
       }
     }
     if (!src) return "";
-    return playerHtmlFromUrl(src) || fileVideoHtml(src, htmlAttr(openRaw, "poster"));
+    const player = playerHtmlFromUrl(src);
+    if (player) return player;
+    const portrait = videoMarkupIsPortrait(openRaw + (inner || "") + "</video>");
+    return fileVideoHtml(src, htmlAttr(openRaw, "poster"), portrait);
   }
 
   function embedPlainText(text) {
@@ -2090,6 +2176,11 @@
       const url = unescapeHtml(parts.url);
       const player = playerHtmlFromUrl(url);
       if (player) return player + parts.trail;
+      const file = directMp4Url(url);
+      if (file) {
+        const tag = fileVideoTag(file);
+        if (tag) return tag + parts.trail;
+      }
       const tweet = tweetIdFromUrl(url);
       if (tweet) {
         const embed = tweetEmbedHtml(tweet);
@@ -2243,7 +2334,7 @@
         const m = /^https?:\/\/[^\s<]+/i.exec(s.slice(i));
         if (m) {
           const parts = splitPlainUrl(m[0]);
-          const player = playerHtmlFromUrl(parts.url);
+          const player = urlEmbedHtml(parts.url);
           if (player) {
             if (imageBefore && !previewHostLeads(parts.url)) return "";
             return player;
@@ -2259,7 +2350,7 @@
           const name = tag.name.toLowerCase();
           if (/^https?$/.test(name) && /^<https?:\/\/[^>\s]+>$/i.test(tag.raw)) {
             const href = tag.raw.slice(1, -1);
-            const player = playerHtmlFromUrl(href);
+            const player = urlEmbedHtml(href);
             if (player) {
               if (imageBefore && !previewHostLeads(href)) return "";
               return player;
@@ -2297,7 +2388,7 @@
           if (name === "iframe" || name === "object" || name === "embed") {
             const media = plainMediaUrl(tag.raw);
             const rawSrc = htmlAttr(tag.raw, "src") || htmlAttr(tag.raw, "data");
-            const player = media ? playerHtmlFromUrl(media) : "";
+            const player = media ? urlEmbedHtml(media) : "";
             if (player) {
               if (imageBefore && !previewHostLeads(rawSrc) && !previewHostLeads(media)) return "";
               return player;
@@ -2353,7 +2444,12 @@
     if (!video || String(video.nodeName || "").toLowerCase() !== "video") return;
     const box = typeof video.closest === "function" ? video.closest(".embed") : null;
     if (!box) return;
-    box.classList.toggle("embed-portrait", fileVideoIsPortrait(video.videoWidth, video.videoHeight));
+    const w = Number(video.videoWidth) || 0;
+    const h = Number(video.videoHeight) || 0;
+    // A file that has not reported a size yet keeps the hint from the address
+    // or the width and height attributes. Zero here is not landscape.
+    if (w < 1 || h < 1) return;
+    box.classList.toggle("embed-portrait", fileVideoIsPortrait(w, h));
   }
 
   function skatehypeFrameId(box) {
@@ -2518,11 +2614,14 @@
     }
   }
 
-  // An author <video> uses the same frame as a hosted player. Its own
-  // dimensions pick portrait once the file header has loaded.
+  // An author <video>, including one built from a pasted .mp4 address, uses
+  // the same frame as a hosted player. Width and height, or a size in the
+  // file address, pick the first frame. The file header replaces that once
+  // it has loaded.
   function frameAuthorVideos(html) {
     return String(html || "").replace(/<video\b[\s\S]*?<\/video>/gi, function (tag) {
-      return '<div class="embed">' + tag + "</div>";
+      const portrait = videoMarkupIsPortrait(tag);
+      return '<div class="embed' + (portrait ? " embed-portrait" : "") + '">' + tag + "</div>";
     });
   }
 
@@ -3562,6 +3661,7 @@
     }
     const hosted = hostedVideoFromUrl(url.href);
     if (hosted && hosted.plain) return hosted.plain;
+    if (directMp4Url(url.href)) return url.href;
     return "";
   }
 
