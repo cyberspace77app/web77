@@ -9547,6 +9547,10 @@ body.is-dao #view {
   text-align: center;
 }
 
+.dao-table td.dao-rank {
+  text-align: center;
+}
+
 .dao-table td:last-child {
   text-align: right;
 }
@@ -9557,6 +9561,51 @@ body.is-dao #view {
   font-size: 0.85rem;
   line-height: 1.45;
   color: var(--gray);
+}
+
+.dao-rank-inline,
+.dao-who-label {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .dao-table .dao-rank {
+    display: none;
+  }
+
+  .dao-rank-inline,
+  .dao-who-label {
+    display: inline;
+  }
+
+  .dao-rank-inline {
+    white-space: nowrap;
+  }
+
+  .dao-account-label {
+    display: none;
+  }
+
+  .dao-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  .dao-table th.dao-account,
+  .dao-table td.dao-account {
+    padding-left: 0.3rem;
+    padding-right: 0.35rem;
+    overflow-wrap: anywhere;
+  }
+
+  .dao-table th:last-child,
+  .dao-table td:last-child {
+    width: 11rem;
+    white-space: nowrap;
+    text-align: right;
+    padding-left: 0.4rem;
+    padding-right: 0.7rem;
+  }
 }
 
 .dao-create {

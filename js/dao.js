@@ -4160,10 +4160,12 @@
     if (notes.length) who += "<small>" + esc(notes.join(" · ")) + "</small>";
     return (
       "<tr>" +
-      "<td>" +
+      '<td class="dao-rank">' +
       rank +
       "</td>" +
-      "<td>" +
+      '<td class="dao-account"><span class="dao-rank-inline">' +
+      rank +
+      " · </span>" +
       who +
       "</td>" +
       "<td>" +
@@ -4174,7 +4176,7 @@
 
   function supporterTableHtml(rows) {
     var html = [
-      '<table class="dao-table"><thead><tr><th>Rank</th><th>Account</th><th>Stake</th></tr></thead><tbody>',
+      '<table class="dao-table"><thead><tr><th class="dao-rank">Rank</th><th class="dao-account"><span class="dao-account-label">Account</span><span class="dao-who-label">Rank · Account</span></th><th>Stake</th></tr></thead><tbody>',
     ];
     var i;
     for (i = 0; i < rows.length; i += 1) html.push(supporterHtml(rows[i], i + 1));
