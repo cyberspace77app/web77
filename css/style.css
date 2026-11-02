@@ -10482,7 +10482,9 @@ a.proposal-id:focus-visible {
   .dao-stats.proposal-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
+@media (max-width: 900px) {
   #proposalList {
     display: flex;
     flex-direction: column;
