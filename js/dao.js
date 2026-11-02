@@ -3741,7 +3741,7 @@
     var permlink = String(row.permlink || "");
     var postHref =
       who.creator && permlink ? state.host.appHref("/@" + who.creator + "/" + encodeURIComponent(permlink)) : "";
-    var postBtn = postHref ? '<a class="btn-ghost" href="' + esc(postHref) + '">Post</a>' : "";
+    var postBtn = postHref ? '<a class="btn-ghost" href="' + esc(postHref) + '">Proposal description</a>' : "";
     var by = who.creator || who.receiver;
     state.host.setPageMeta(
       subject + " — CyberSpace77",
