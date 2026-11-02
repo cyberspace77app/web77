@@ -9517,37 +9517,9 @@ body.is-dao #view {
   margin-bottom: 0.75rem;
 }
 
-.dao-supporter-load {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0.35rem 0 0.85rem;
-  padding: 0.55rem 1.15rem;
-  border: 1px solid var(--gray);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--gray);
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 0.68rem;
-  letter-spacing: 0.14em;
-  line-height: 1.2;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.dao-supporter-load:hover,
-.dao-supporter-load:focus-visible {
-  color: var(--yellow);
-}
-
-.dao-supporter-load:hover {
-  border-color: var(--yellow);
-}
-
-.dao-supporter-load:focus-visible {
-  outline: 1px solid var(--yellow);
-  outline-offset: 2px;
+.dao-supporter-loading {
+  justify-content: flex-start;
+  padding: 0.15rem 0 0.85rem;
 }
 
 .dao-table {

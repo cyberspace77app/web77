@@ -3725,6 +3725,13 @@
     }
   }
 
+  function supporterLoadingHtml() {
+    return (
+      '<div class="loading-row dao-supporter-loading" role="status" aria-label="Loading supporters">' +
+      '<span class="btn-loader" aria-hidden="true"></span></div>'
+    );
+  }
+
   function paintProposalDetail(gen) {
     var row = state.detailProposal;
     var id = state.detailProposalId;
@@ -3740,41 +3747,47 @@
       subject + " — CyberSpace77",
       by ? "Proposal #" + id + " by @" + by + "." : "Proposal #" + id + " in the decentralized fund."
     );
-    writeView(
-      gen,
-      proposalDetailShell(
-        subject,
-        "Proposal #" + id,
-        '<div class="proposal-who">' +
-          who.avatar +
-          '<span class="proposal-copy">' +
-          who.user +
-          who.to +
-          "</span></div>" +
-          '<p class="dao-note" id="daoVoteNote" hidden></p>' +
-          '<div class="dao-actions">' +
-          '<div class="proposal-action" data-proposal-action="' +
-          esc(String(id)) +
-          '">' +
-          proposalActionHtml(row, chainNow(), returnVotes()) +
-          "</div>" +
-          postBtn +
-          "</div>" +
-          '<p class="dao-rank" id="proposalPhase"></p>' +
-          '<p class="dao-note" id="proposalStanding" hidden></p>' +
-          '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
-          '<dl class="dao-facts" id="proposalFacts"></dl>' +
-          '<section class="dao-supporters">' +
-          '<h3 class="dao-kicker">Supporters</h3>' +
-          '<button type="button" class="dao-supporter-load" id="proposalSupporterLoad">Load supporters</button>' +
-          '<p class="dao-note" id="proposalSupporterStatus" hidden></p>' +
-          '<div id="proposalSupporterList"></div>' +
-          '<button type="button" class="btn-ghost" id="proposalSupporterRetry" hidden>Try again</button>' +
-          "</section>"
+    if (
+      !writeView(
+        gen,
+        proposalDetailShell(
+          subject,
+          "Proposal #" + id,
+          '<div class="proposal-who">' +
+            who.avatar +
+            '<span class="proposal-copy">' +
+            who.user +
+            who.to +
+            "</span></div>" +
+            '<p class="dao-note" id="daoVoteNote" hidden></p>' +
+            '<div class="dao-actions">' +
+            '<div class="proposal-action" data-proposal-action="' +
+            esc(String(id)) +
+            '">' +
+            proposalActionHtml(row, chainNow(), returnVotes()) +
+            "</div>" +
+            postBtn +
+            "</div>" +
+            '<p class="dao-rank" id="proposalPhase"></p>' +
+            '<p class="dao-note" id="proposalStanding" hidden></p>' +
+            '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
+            '<dl class="dao-facts" id="proposalFacts"></dl>' +
+            '<section class="dao-supporters">' +
+            '<h3 class="dao-kicker">Supporters</h3>' +
+            '<p class="dao-note" id="proposalSupporterStatus">Loading supporters…</p>' +
+            '<div id="proposalSupporterList">' +
+            supporterLoadingHtml() +
+            "</div>" +
+            '<button type="button" class="btn-ghost" id="proposalSupporterRetry" hidden>Try again</button>' +
+            "</section>"
+        )
       )
-    );
+    ) {
+      return;
+    }
     paintProposalFigures();
     paintVoteNote();
+    loadProposalSupporters(gen, id);
   }
 
   function paintProposalMissing(gen, id) {
@@ -3821,10 +3834,8 @@
     var status = document.getElementById("proposalSupporterStatus");
     var list = document.getElementById("proposalSupporterList");
     var retry = document.getElementById("proposalSupporterRetry");
-    var loadBtn = document.getElementById("proposalSupporterLoad");
     if (!status || !list) return;
     status.hidden = false;
-    if (loadBtn) loadBtn.hidden = true;
     if (retry) retry.hidden = !state.supporterError && !state.proposalSupportersPartial;
     if (state.supporterError) {
       status.textContent = state.supporterError;
@@ -3907,10 +3918,8 @@
     }
     var list = document.getElementById("proposalSupporterList");
     var retry = document.getElementById("proposalSupporterRetry");
-    var loadBtn = document.getElementById("proposalSupporterLoad");
-    if (list) list.innerHTML = "";
+    if (list) list.innerHTML = supporterLoadingHtml();
     if (retry) retry.hidden = true;
-    if (loadBtn) loadBtn.hidden = true;
     proposalSupporterStatus(gen, id, serial, "Loading supporters…");
     if (!current()) return;
     try {
@@ -4074,33 +4083,39 @@
     if (!witness || !alive(gen)) return;
     var about = aboutOf(state.detailAccount);
     var disabled = isDisabled(witness);
-    writeView(
-      gen,
-      detailShell(
-        name,
-        '<p class="dao-rank" id="witnessRank">Checking rank…</p>' +
-          '<div class="dao-actions">' +
-          witnessActionHtml(name) +
-          '<a class="btn-ghost" href="' +
-          esc(state.host.profileHref(name)) +
-          '">Profile</a></div>' +
-          '<p class="dao-note" id="daoVoteNote" hidden></p>' +
-          '<p class="tags-status" id="daoStatus" hidden></p>' +
-          (about ? '<p class="dao-about">' + esc(about) + "</p>" : "") +
-          (disabled ? '<p class="dao-note dao-disabled">This witness is not signing blocks.</p>' : "") +
-          '<dl class="dao-facts" id="witnessFacts"></dl>' +
-          '<section class="dao-supporters">' +
-          '<h3 class="dao-kicker">Supporters</h3>' +
-          '<button type="button" class="dao-supporter-load" id="witnessSupporterLoad">Load supporters</button>' +
-          '<p class="dao-note" id="witnessSupporterStatus" hidden></p>' +
-          '<div id="witnessSupporterList"></div>' +
-          '<button type="button" class="btn-ghost" id="witnessSupporterRetry" hidden>Try again</button>' +
-          "</section>"
+    if (
+      !writeView(
+        gen,
+        detailShell(
+          name,
+          '<p class="dao-rank" id="witnessRank">Checking rank…</p>' +
+            '<div class="dao-actions">' +
+            witnessActionHtml(name) +
+            '<a class="btn-ghost" href="' +
+            esc(state.host.profileHref(name)) +
+            '">Profile</a></div>' +
+            '<p class="dao-note" id="daoVoteNote" hidden></p>' +
+            '<p class="tags-status" id="daoStatus" hidden></p>' +
+            (about ? '<p class="dao-about">' + esc(about) + "</p>" : "") +
+            (disabled ? '<p class="dao-note dao-disabled">This witness is not signing blocks.</p>' : "") +
+            '<dl class="dao-facts" id="witnessFacts"></dl>' +
+            '<section class="dao-supporters">' +
+            '<h3 class="dao-kicker">Supporters</h3>' +
+            '<p class="dao-note" id="witnessSupporterStatus">Loading supporters…</p>' +
+            '<div id="witnessSupporterList">' +
+            supporterLoadingHtml() +
+            "</div>" +
+            '<button type="button" class="btn-ghost" id="witnessSupporterRetry" hidden>Try again</button>' +
+            "</section>"
+        )
       )
-    );
+    ) {
+      return;
+    }
     paintDetailFacts();
     paintVoteNote();
     paintVoteButtons();
+    loadSupporters(gen, name);
   }
 
   async function scanRank(gen, name) {
@@ -4172,10 +4187,8 @@
     var status = document.getElementById("witnessSupporterStatus");
     var list = document.getElementById("witnessSupporterList");
     var retry = document.getElementById("witnessSupporterRetry");
-    var loadBtn = document.getElementById("witnessSupporterLoad");
     if (!status || !list) return;
     status.hidden = false;
-    if (loadBtn) loadBtn.hidden = true;
     if (retry) retry.hidden = !state.supporterError;
     if (state.supporterError) {
       status.textContent = state.supporterError;
@@ -4265,10 +4278,8 @@
     }
     var list = document.getElementById("witnessSupporterList");
     var retry = document.getElementById("witnessSupporterRetry");
-    var loadBtn = document.getElementById("witnessSupporterLoad");
-    if (list) list.innerHTML = "";
+    if (list) list.innerHTML = supporterLoadingHtml();
     if (retry) retry.hidden = true;
-    if (loadBtn) loadBtn.hidden = true;
     supporterStatus(gen, name, serial, "Loading supporters…");
     if (!current()) return;
     try {
@@ -4410,14 +4421,6 @@
       if (state.mode === "proposals") loadProposals(state.gen);
       return;
     }
-    var proposalSupporterLoad = event.target.closest && event.target.closest("#proposalSupporterLoad");
-    if (proposalSupporterLoad) {
-      event.preventDefault();
-      if (state.mode === "proposal" && state.detailProposalId != null) {
-        loadProposalSupporters(state.gen, state.detailProposalId);
-      }
-      return;
-    }
     var proposalSupporterRetry = event.target.closest && event.target.closest("#proposalSupporterRetry");
     if (proposalSupporterRetry) {
       event.preventDefault();
@@ -4442,12 +4445,6 @@
     if (retry) {
       event.preventDefault();
       retryList();
-      return;
-    }
-    var supporterLoad = event.target.closest && event.target.closest("#witnessSupporterLoad");
-    if (supporterLoad) {
-      event.preventDefault();
-      if (state.mode === "witness" && state.detailName) loadSupporters(state.gen, state.detailName);
       return;
     }
     var supporterRetry = event.target.closest && event.target.closest("#witnessSupporterRetry");
