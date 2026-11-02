@@ -1719,7 +1719,7 @@
     var query = state.proposalQuery || "";
     for (i = 0; i < rows.length; i += 1) {
       if (filter !== "all" && proposalPhase(rows[i], now) !== filter) continue;
-      if (query && !proposalNameHit(rows[i], query) && !(filter === "active" && isReturnProposal(rows[i]))) continue;
+      if (query && !proposalNameHit(rows[i], query)) continue;
       list.push(rows[i]);
     }
     if (filter === "past") {
