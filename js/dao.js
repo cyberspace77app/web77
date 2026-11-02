@@ -1,6 +1,8 @@
 /**
  * DAO pages. Loaded only for /witnesses, /proposals, and /witness/@name.
  * /dao opens the witness list.
+ * A proposal is paid while it has more votes than proposal 0, the return
+ * proposal. That proposal's own daily pay is a sink, not a project ask.
  * Witness pay follows database::process_funds after HF28: inflation is minted
  * from HIVE supply plus non-treasury HBD, and the witness slice is multiplied
  * by 21 before the schedule weight is applied.
@@ -21,6 +23,7 @@
   var RANK_SCAN_PAGE = 100;
   var RANK_SCAN_PAGES = 5;
   var SUPPORTER_PAGE = 1000;
+  var PROPOSAL_PAGE = 100;
   var NEAR_PX = 700;
 
   var state = {
@@ -57,6 +60,10 @@
     supporterRows: [],
     supporterReady: false,
     supporterError: "",
+    fund: null,
+    proposalFilter: "all",
+    proposalSerial: 0,
+    proposals: emptyProposals(),
   };
 
   function emptyBucket() {
@@ -73,6 +80,17 @@
 
   function emptyVotes() {
     return { user: "", names: new Set(), proxy: "", expired: false, ready: true };
+  }
+
+  function emptyProposals() {
+    return {
+      rows: [],
+      paid: new Map(),
+      paidReady: false,
+      loading: false,
+      done: false,
+      error: "",
+    };
   }
 
   function md() {
@@ -890,6 +908,10 @@
     state.supporterRows = [];
     state.supporterReady = false;
     state.supporterError = "";
+    state.fund = null;
+    state.proposalFilter = "all";
+    state.proposalSerial += 1;
+    state.proposals = emptyProposals();
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
@@ -919,11 +941,16 @@
       state.schedule = normalizeSchedule(pack[1]);
       state.majority = state.schedule.majority;
       var fund = Array.isArray(pack[3]) ? pack[3][0] : null;
+      state.fund = fund || null;
       state.rewards = computeRewards(props, fund, pack[2], state.schedule);
       var interest = Number(props.hbd_interest_rate);
       state.interest = Number.isFinite(interest) ? interest : null;
       paintStats();
       if (state.mode === "witnesses") paintCurrentList();
+      if (state.mode === "proposals") {
+        paintProposalStats();
+        paintProposalList();
+      }
       if (state.mode === "witness" && state.detailWitness) {
         paintDetailFacts();
         paintSupporters();
@@ -1397,21 +1424,621 @@
     fillRank(gen, state.listGen, true);
   }
 
+  var MS_PER_DAY = 86400000n;
+
+  function proposalId(row) {
+    if (!row) return null;
+    var raw = row.proposal_id != null ? row.proposal_id : row.id;
+    var n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Proposal 0 is the return proposal. Its daily pay soaks up budget in the
+  // chain record and is not a project ask, so the list never shows that amount.
+  function isReturnProposal(row) {
+    return proposalId(row) === 0;
+  }
+
+  function chainNow() {
+    var t = hiveTime(state.props && state.props.time);
+    return Number.isFinite(t) ? t : Date.now();
+  }
+
+  function proposalPhase(row, now) {
+    var start = hiveTime(row && row.start_date);
+    var end = hiveTime(row && row.end_date);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return "";
+    if (now > end) return "past";
+    if (now < start) return "upcoming";
+    return "active";
+  }
+
+  function proposalFilter() {
+    var filter = state.proposalFilter;
+    if (filter === "active" || filter === "upcoming" || filter === "past") return filter;
+    return "all";
+  }
+
+  function payOver(dailyMilli, ms) {
+    if (ms <= 0n || dailyMilli <= 0n) return 0n;
+    return divRound(dailyMilli * ms, MS_PER_DAY);
+  }
+
+  function groupedMilli(milli) {
+    var neg = milli < 0n;
+    var n = neg ? -milli : milli;
+    var whole = (n / 1000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    var frac = (n % 1000n).toString();
+    while (frac.length < 3) frac = "0" + frac;
+    frac = frac.replace(/0+$/, "");
+    return (neg ? "-" : "") + whole + (frac ? "." + frac : "");
+  }
+
+  function compactMilli(milli) {
+    var neg = milli < 0n;
+    var n = neg ? -milli : milli;
+    var scales = [
+      [1000000000000000000n, "Q"],
+      [1000000000000000n, "T"],
+      [1000000000000n, "B"],
+      [1000000000n, "M"],
+    ];
+    var i;
+    for (i = 0; i < scales.length; i += 1) {
+      var scale = scales[i][0];
+      if (n < scale) continue;
+      var whole = n / scale;
+      var frac = ((n % scale) * 100n) / scale;
+      var fracText = frac.toString();
+      if (fracText.length < 2) fracText = "0" + fracText;
+      return (neg ? "-" : "") + whole.toString() + "." + fracText + scales[i][1];
+    }
+    return groupedMilli(milli);
+  }
+
+  function hbdCell(milli) {
+    if (milli == null) return { cell: "—", exact: "" };
+    var abs = milli < 0n ? -milli : milli;
+    return {
+      cell: abs >= 1000000000n ? compactMilli(milli) : groupedMilli(milli),
+      exact: formatHiveMilli(milli) + " hbd",
+    };
+  }
+
+  function paidMilli(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    if (!s) return 0n;
+    if (s.indexOf(".") !== -1) return assetInt(s, 3);
+    return assetInt(s, 0);
+  }
+
+  function recordedPaid(row) {
+    var id = proposalId(row);
+    if (!state.proposals.paidReady || id == null || !state.proposals.paid.has(id)) return null;
+    return state.proposals.paid.get(id);
+  }
+
+  function returnVotes() {
+    var rows = state.proposals.rows;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (isReturnProposal(rows[i])) return bigIntOf(rows[i].total_votes, 0n);
+    }
+    return null;
+  }
+
+  function proposalPay(row, now, retVotes) {
+    if (isReturnProposal(row)) {
+      return { total: null, daily: null, paid: null, toPay: null, estimated: false };
+    }
+    var daily = assetInt(row.daily_pay, 3);
+    var start = hiveTime(row.start_date);
+    var end = hiveTime(row.end_date);
+    var total = null;
+    var toPay = null;
+    var accrued = null;
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+      var startMs = BigInt(Math.round(start));
+      var endMs = BigInt(Math.round(end));
+      var nowMs = BigInt(Math.round(now));
+      total = payOver(daily, endMs - startMs);
+      if (nowMs >= endMs) toPay = 0n;
+      else if (nowMs <= startMs) toPay = total;
+      else toPay = payOver(daily, endMs - nowMs);
+      accrued = nowMs > startMs ? payOver(daily, (nowMs < endMs ? nowMs : endMs) - startMs) : 0n;
+    }
+    var recorded = recordedPaid(row);
+    var phase = proposalPhase(row, now);
+    var paid = recorded;
+    var estimated = false;
+    if (paid == null) {
+      if (phase === "upcoming") paid = 0n;
+      else if (phase === "past") paid = null;
+      else if (retVotes != null && bigIntOf(row.total_votes, 0n) > retVotes && accrued != null) {
+        paid = accrued;
+        estimated = true;
+      } else if (phase === "active") {
+        paid = 0n;
+        estimated = true;
+      }
+    }
+    return { total: total, daily: daily, paid: paid, toPay: toPay, estimated: estimated };
+  }
+
+  function compareVotes(a, b) {
+    var av = bigIntOf(a.total_votes, 0n);
+    var bv = bigIntOf(b.total_votes, 0n);
+    if (av !== bv) return av > bv ? -1 : 1;
+    return (proposalId(b) || 0) - (proposalId(a) || 0);
+  }
+
+  function proposalGroups() {
+    var filter = proposalFilter();
+    var now = chainNow();
+    var rows = state.proposals.rows;
+    var list = [];
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (filter === "all" || proposalPhase(rows[i], now) === filter) list.push(rows[i]);
+    }
+    if (filter === "past") {
+      list.sort(function (a, b) {
+        var ap = recordedPaid(a);
+        var bp = recordedPaid(b);
+        if (state.proposals.paidReady) {
+          if (ap == null) ap = 0n;
+          if (bp == null) bp = 0n;
+        }
+        if (ap == null && bp == null) return compareVotes(a, b);
+        if (ap == null) return 1;
+        if (bp == null) return -1;
+        if (ap !== bp) return ap > bp ? -1 : 1;
+        return compareVotes(a, b);
+      });
+      return { above: list, threshold: null, below: [] };
+    }
+    if (filter === "upcoming") {
+      list.sort(compareVotes);
+      return { above: list, threshold: null, below: [] };
+    }
+    var ret = null;
+    for (i = 0; i < list.length; i += 1) {
+      if (isReturnProposal(list[i])) ret = list[i];
+    }
+    if (!ret) {
+      list.sort(compareVotes);
+      return { above: list, threshold: null, below: [] };
+    }
+    var line = bigIntOf(ret.total_votes, 0n);
+    var above = [];
+    var below = [];
+    for (i = 0; i < list.length; i += 1) {
+      if (isReturnProposal(list[i])) continue;
+      if (bigIntOf(list[i].total_votes, 0n) > line) above.push(list[i]);
+      else below.push(list[i]);
+    }
+    above.sort(compareVotes);
+    below.sort(compareVotes);
+    return { above: above, threshold: ret, below: below };
+  }
+
+  function fundingSnapshot(now) {
+    var rows = state.proposals.rows;
+    var line = returnVotes();
+    var daily = 0n;
+    var count = 0;
+    var threshold = null;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (!isReturnProposal(rows[i])) continue;
+      threshold = hpOf(rows[i].total_votes);
+      break;
+    }
+    if (line != null) {
+      for (i = 0; i < rows.length; i += 1) {
+        var row = rows[i];
+        if (isReturnProposal(row) || proposalPhase(row, now) !== "active") continue;
+        if (bigIntOf(row.total_votes, 0n) <= line) continue;
+        count += 1;
+        daily += assetInt(row.daily_pay, 3);
+      }
+    }
+    return { daily: daily, count: count, threshold: threshold };
+  }
+
+  function shortDate(ts) {
+    if (!Number.isFinite(ts)) return "";
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(ts));
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function dateRangeText(row) {
+    var start = shortDate(hiveTime(row && row.start_date));
+    var end = shortDate(hiveTime(row && row.end_date));
+    if (start && end) return start + " – " + end;
+    return start || end || "";
+  }
+
+  function amountCell(label, shown, tip) {
+    return (
+      '<span class="proposal-cell' +
+      (label === "Votes" ? " proposal-votes" : "") +
+      '" data-label="' +
+      esc(label) +
+      '"' +
+      (tip ? ' tabindex="0"' : "") +
+      ">" +
+      esc(shown) +
+      (tip ? '<span class="session-stat-tip" role="tooltip">' + esc(tip) + "</span>" : "") +
+      "</span>"
+    );
+  }
+
+  function moneyCell(label, milli, estimated) {
+    var shown = hbdCell(milli);
+    var tip = shown.exact;
+    if (estimated && tip) tip += " · estimated from the daily pay";
+    else if (estimated) tip = "Paid total was not reported.";
+    return amountCell(label, shown.cell, tip);
+  }
+
+  function proposalWhoHtml(row, phase, filter) {
+    var creator = accountName(row.creator);
+    var receiver = accountName(row.receiver);
+    var subject = String((row && row.subject) || "").trim() || "Proposal";
+    var permlink = String((row && row.permlink) || "");
+    var href = creator && permlink ? state.host.appHref("/@" + creator + "/" + encodeURIComponent(permlink)) : "";
+    var subjectHtml = href
+      ? '<a class="proposal-subject" href="' + esc(href) + '" title="' + esc(subject) + '">' + esc(subject) + "</a>"
+      : '<span class="proposal-subject" title="' + esc(subject) + '">' + esc(subject) + "</span>";
+    var bits = [];
+    if (creator) {
+      bits.push('by <a href="' + esc(state.host.profileHref(creator)) + '">@' + esc(creator) + "</a>");
+    }
+    if (receiver && receiver !== creator) {
+      bits.push('to <a href="' + esc(state.host.profileHref(receiver)) + '">@' + esc(receiver) + "</a>");
+    }
+    if (isReturnProposal(row)) bits.push("sets the funding line");
+    else if (filter === "all" && phase) bits.push(esc(phase));
+    var range = dateRangeText(row);
+    if (range) bits.push(esc(range));
+    var avatar = creator
+      ? '<img class="avatar" src="' +
+        esc(md().avatarUrl(creator, "small")) +
+        '" alt="" width="28" height="28" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
+      : "";
+    return (
+      '<div class="proposal-who">' +
+      avatar +
+      '<span class="proposal-copy">' +
+      subjectHtml +
+      '<small class="proposal-meta">' +
+      bits.join(" · ") +
+      "</small></span></div>"
+    );
+  }
+
+  function proposalRowHtml(row, now, filter, line) {
+    var pay = proposalPay(row, now, line);
+    var hp = hpOf(row.total_votes);
+    var id = proposalId(row);
+    return (
+      '<article class="proposal-row' +
+      (isReturnProposal(row) ? " is-return" : "") +
+      '" data-proposal="' +
+      esc(id == null ? "" : String(id)) +
+      '">' +
+      '<span class="proposal-id">' +
+      esc(id == null ? "—" : String(id)) +
+      "</span>" +
+      proposalWhoHtml(row, proposalPhase(row, now), filter) +
+      '<span class="proposal-cells">' +
+      moneyCell("Total", pay.total, false) +
+      moneyCell("Daily", pay.daily, false) +
+      moneyCell("Paid", pay.paid, pay.estimated) +
+      moneyCell("To pay", pay.toPay, false) +
+      amountCell("Votes", hp.compact || "—", hp.exact || "") +
+      "</span></article>"
+    );
+  }
+
+  function proposalRowsHtml(groups, now, filter, line) {
+    var html = [];
+    var i;
+    for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
+    if (groups.threshold) {
+      html.push('<p class="witness-split proposal-threshold" aria-hidden="true"><span></span></p>');
+      html.push(proposalRowHtml(groups.threshold, now, filter, line));
+      html.push('<p class="proposal-unfunded">Currently not funded</p>');
+    }
+    for (i = 0; i < groups.below.length; i += 1) html.push(proposalRowHtml(groups.below[i], now, filter, line));
+    return html.join("");
+  }
+
+  function proposalEmptyCopy() {
+    var filter = proposalFilter();
+    if (filter === "active") return "No active proposals.";
+    if (filter === "upcoming") return "No upcoming proposals.";
+    if (filter === "past") return "No past proposals.";
+    return "No proposals to show.";
+  }
+
+  function paintProposalFilter() {
+    var buttons = document.querySelectorAll(".witness-filter [data-proposal-filter]");
+    var current = proposalFilter();
+    buttons.forEach(function (btn) {
+      var on = btn.getAttribute("data-proposal-filter") === current;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function paintTipCard(id, text, exact) {
+    var strong = document.getElementById(id);
+    var card = strong && strong.closest ? strong.closest(".dao-stat") : null;
+    if (!strong) return;
+    strong.textContent = text;
+    if (!card) return;
+    var tip = card.querySelector(".session-stat-tip");
+    var show = Boolean(exact) && exact !== text;
+    if (tip) {
+      tip.textContent = exact || "";
+      tip.hidden = !show;
+    }
+    card.classList.toggle("is-tip", show);
+    if (show) card.tabIndex = 0;
+    else card.removeAttribute("tabindex");
+  }
+
+  function paintProposalStats() {
+    if (state.mode !== "proposals") return;
+    if (!document.getElementById("proposalTreasury")) return;
+    var treasury = state.fund ? hbdCell(assetInt(state.fund.hbd_balance, 3)) : null;
+    paintTipCard("proposalTreasury", treasury ? treasury.cell : "—", treasury ? treasury.exact : "");
+    var fundedEl = document.getElementById("proposalFunded");
+    var unit = document.getElementById("proposalFundedUnit");
+    if (!state.proposals.rows.length) {
+      paintTipCard("proposalDaily", "—", "");
+      paintTipCard("proposalThreshold", "—", "");
+      if (fundedEl) fundedEl.textContent = "—";
+      if (unit) unit.textContent = "projects";
+      return;
+    }
+    var snap = fundingSnapshot(chainNow());
+    var daily = hbdCell(snap.daily);
+    paintTipCard("proposalDaily", daily.cell, daily.exact);
+    if (fundedEl) fundedEl.textContent = String(snap.count);
+    if (unit) unit.textContent = snap.count === 1 ? "project" : "projects";
+    var hp = snap.threshold;
+    paintTipCard(
+      "proposalThreshold",
+      hp && hp.compact && hp.compact !== "—" ? hp.compact : "—",
+      hp && hp.exact ? hp.exact : ""
+    );
+  }
+
+  function paintProposalList() {
+    if (state.mode !== "proposals") return;
+    var list = document.getElementById("proposalList");
+    if (!list) return;
+    paintProposalFilter();
+    if (state.proposals.error && !state.proposals.rows.length) {
+      list.innerHTML = "";
+      return;
+    }
+    if (!state.proposals.rows.length) {
+      list.innerHTML =
+        state.proposals.done && !state.proposals.loading ? emptyListHtml(proposalEmptyCopy()) : "";
+      return;
+    }
+    var groups = proposalGroups();
+    var count = groups.above.length + (groups.threshold ? 1 : 0) + groups.below.length;
+    if (!count) {
+      list.innerHTML = emptyListHtml(proposalEmptyCopy());
+      return;
+    }
+    list.innerHTML = proposalRowsHtml(groups, chainNow(), proposalFilter(), returnVotes());
+  }
+
+  function revealProposalFilter() {
+    if (state.mode !== "proposals") return;
+    var bar = document.querySelector(".dao-page .witness-filter");
+    if (!bar || bar.getBoundingClientRect().top >= 0) return;
+    var root = document.documentElement;
+    var prev = root.style.scrollBehavior;
+    root.style.scrollBehavior = "auto";
+    bar.scrollIntoView({ block: "start" });
+    root.style.scrollBehavior = prev;
+  }
+
+  function setProposalFilter(next) {
+    if (next !== "all" && next !== "active" && next !== "upcoming" && next !== "past") return;
+    if (proposalFilter() === next) return;
+    state.proposalFilter = next;
+    paintProposalFilter();
+    paintProposalList();
+    revealProposalFilter();
+  }
+
+  function setProposalBusy(on) {
+    var el = document.getElementById("proposalMore");
+    if (el) el.hidden = !on;
+  }
+
+  function setProposalRetry(on) {
+    var el = document.getElementById("proposalRetry");
+    if (el) el.hidden = !on;
+  }
+
+  async function fetchAllProposals(current) {
+    var rows = [];
+    var seen = new Set();
+    var cursorVotes = "";
+    var cursorId = 0;
+    var page;
+    for (page = 0; page < 30; page += 1) {
+      var batch = await api().hiveRpc(
+        "condenser_api.list_proposals",
+        [cursorVotes ? [cursorVotes, cursorId] : [], PROPOSAL_PAGE, "by_total_votes", "descending", "all"],
+        true
+      );
+      if (!current()) return null;
+      var list = Array.isArray(batch) ? batch : [];
+      var added = 0;
+      var i;
+      for (i = 0; i < list.length; i += 1) {
+        var id = proposalId(list[i]);
+        if (id == null || seen.has(id)) continue;
+        seen.add(id);
+        rows.push(list[i]);
+        added += 1;
+      }
+      if (list.length < PROPOSAL_PAGE) break;
+      var last = list[list.length - 1];
+      var nextVotes = String(last && last.total_votes != null ? last.total_votes : "");
+      var nextId = proposalId(last);
+      if (!nextVotes || nextId == null || (nextVotes === cursorVotes && nextId === cursorId) || !added) break;
+      cursorVotes = nextVotes;
+      cursorId = nextId;
+    }
+    return rows;
+  }
+
+  async function fetchPaidFrom(node, current) {
+    var map = new Map();
+    var page;
+    for (page = 1; page <= 20; page += 1) {
+      if (!current()) return null;
+      var res = await fetch(
+        node + "/hafbe-api/proposals?page=" + page + "&page-size=1000&sort=by_total_votes&direction=desc"
+      );
+      if (!current()) return null;
+      if (!res.ok) throw new Error("no proposals app");
+      var data = await res.json();
+      var list = data && Array.isArray(data.proposals) ? data.proposals : null;
+      if (!list) throw new Error("no proposals app");
+      var i;
+      for (i = 0; i < list.length; i += 1) {
+        var id = proposalId(list[i]);
+        if (id == null || id === 0) continue;
+        map.set(id, paidMilli(list[i].paid_amount));
+      }
+      var pages = Number(data && data.total_pages);
+      if (!list.length || (Number.isFinite(pages) && page >= pages)) return map;
+    }
+    return map;
+  }
+
+  async function fetchPaidAmounts(current) {
+    var nodes = voterNodes();
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (!current()) return null;
+      try {
+        var map = await fetchPaidFrom(nodes[i], current);
+        if (!current()) return null;
+        if (map && map.size) return map;
+      } catch (err) {
+        /* this node has no proposal index */
+      }
+    }
+    return null;
+  }
+
+  async function loadProposals(gen) {
+    state.proposalSerial += 1;
+    var serial = state.proposalSerial;
+    state.proposals = emptyProposals();
+    state.proposals.loading = true;
+    function current() {
+      return alive(gen) && state.mode === "proposals" && state.proposalSerial === serial;
+    }
+    setProposalBusy(true);
+    setProposalRetry(false);
+    setStatus("", false);
+    paintProposalList();
+    paintProposalStats();
+    try {
+      var rows = await fetchAllProposals(current);
+      if (!current() || !rows) return;
+      var paid = await fetchPaidAmounts(current);
+      if (!current()) return;
+      state.proposals.rows = rows;
+      if (paid) {
+        state.proposals.paid = paid;
+        state.proposals.paidReady = true;
+      }
+      state.proposals.loading = false;
+      state.proposals.done = true;
+      state.proposals.error = "";
+      setProposalBusy(false);
+      setProposalRetry(false);
+      setStatus("", false);
+      paintProposalStats();
+      paintProposalList();
+    } catch (err) {
+      if (!current()) return;
+      state.proposals.loading = false;
+      state.proposals.done = true;
+      state.proposals.error = (err && err.message) || "Could not load proposals.";
+      setProposalBusy(false);
+      setStatus(state.proposals.error, true);
+      setProposalRetry(true);
+      paintProposalList();
+    }
+  }
+
+  function proposalShell() {
+    return (
+      '<section class="cs77-page dao-page">' +
+      navHtml("proposals") +
+      '<h2 class="page-title">Proposals</h2>' +
+      '<p class="dao-kicker">Decentralized fund</p>' +
+      '<div class="dao-copy">' +
+      "<p>Proposals are how a project asks the decentralized organization for funding. The project names a daily amount, and that amount can be paid in HBD for a set number of days. Stakeholders vote with Hive Power. The weight of each vote is that account's stake, counted in full for every proposal.</p>" +
+      "<p>Vote for the return proposal to have a say in the decentralized fund. A project is paid only while it has more votes than the return proposal. Voting the return proposal up funds fewer projects and leaves more HBD in the treasury. That HBD stays out of the supply new Hive is minted from, so the vote also slows inflation.</p>" +
+      "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
+      "</div>" +
+      '<div class="dao-stats proposal-stats">' +
+      '<div class="dao-stat"><span class="dao-stat-label">treasury</span><strong id="proposalTreasury">—</strong><span class="dao-stat-unit">hbd</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">daily pay</span><strong id="proposalDaily">—</strong><span class="dao-stat-unit">hbd</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
+      '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
+      "</div>" +
+      '<div class="witness-filter" role="radiogroup" aria-label="Filter proposals">' +
+      '<button type="button" role="radio" data-proposal-filter="all" aria-checked="true" class="is-active">All</button>' +
+      '<button type="button" role="radio" data-proposal-filter="active" aria-checked="false">Active</button>' +
+      '<button type="button" role="radio" data-proposal-filter="upcoming" aria-checked="false">Upcoming</button>' +
+      '<button type="button" role="radio" data-proposal-filter="past" aria-checked="false">Past</button>' +
+      "</div>" +
+      '<p class="tags-status" id="daoStatus" hidden></p>' +
+      '<div class="proposal-table" id="proposalTable">' +
+      '<div class="proposal-head"><span>#</span><span>Project</span><span title="Total asked, in hbd">Total</span><span title="Daily pay, in hbd">Daily</span><span title="Already paid, in hbd">Paid</span><span title="Still to pay, in hbd">To pay</span><span title="Hive Power voting for this proposal">Votes</span></div>' +
+      '<div id="proposalList"></div>' +
+      "</div>" +
+      '<div id="proposalMore" class="loading-row is-feed-more" hidden><span class="btn-loader" role="status" aria-label="Loading proposals"></span></div>' +
+      '<button type="button" class="btn-ghost" id="proposalRetry" hidden>Try again</button>' +
+      "</section>"
+    );
+  }
+
   function renderProposals(gen) {
     state.mode = "proposals";
     state.host.setPageMeta(
       "Proposals — CyberSpace77",
-      "Proposals are how the decentralized Hive Fund pays for work the stakeholders approve."
+      "Proposals fund projects from the decentralized organization. Vote for the return proposal to decide what is paid and to slow inflation."
     );
-    writeView(
-      gen,
-      '<section class="cs77-page dao-page">' +
-        navHtml("proposals") +
-        '<h2 class="page-title">Proposals</h2>' +
-        '<p class="dao-kicker">Decentralized fund</p>' +
-        '<div class="dao-copy"><p>Proposals are how the decentralized Hive Fund pays for work the stakeholders approve. This page will list them later.</p></div>' +
-        "</section>"
-    );
+    if (!writeView(gen, proposalShell())) return;
+    loadChain(gen);
+    loadProposals(gen);
   }
 
   function detailShell(name, body) {
@@ -1731,6 +2358,18 @@
   }
 
   function onClick(event) {
+    var proposalBtn = event.target.closest && event.target.closest("[data-proposal-filter]");
+    if (proposalBtn && proposalBtn.closest(".witness-filter")) {
+      event.preventDefault();
+      setProposalFilter(proposalBtn.getAttribute("data-proposal-filter") || "");
+      return;
+    }
+    var proposalRetry = event.target.closest && event.target.closest("#proposalRetry");
+    if (proposalRetry) {
+      event.preventDefault();
+      if (state.mode === "proposals") loadProposals(state.gen);
+      return;
+    }
     var filterBtn = event.target.closest && event.target.closest("[data-witness-filter]");
     if (filterBtn && filterBtn.closest(".witness-filter")) {
       event.preventDefault();
