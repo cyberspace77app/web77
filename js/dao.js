@@ -61,9 +61,13 @@
     supporterReady: false,
     supporterError: "",
     fund: null,
-    proposalFilter: "all",
+    proposalFilter: "active",
+    proposalQuery: "",
+    proposalSearchTimer: 0,
     proposalSerial: 0,
     proposals: emptyProposals(),
+    proposalVotes: emptyProposalVotes(),
+    proposalPending: new Set(),
   };
 
   function emptyBucket() {
@@ -91,6 +95,10 @@
       done: false,
       error: "",
     };
+  }
+
+  function emptyProposalVotes() {
+    return { user: "", ids: new Set(), ready: true };
   }
 
   function md() {
@@ -909,13 +917,20 @@
     state.supporterReady = false;
     state.supporterError = "";
     state.fund = null;
-    state.proposalFilter = "all";
+    state.proposalFilter = "active";
+    state.proposalQuery = "";
     state.proposalSerial += 1;
     state.proposals = emptyProposals();
+    state.proposalVotes = emptyProposalVotes();
+    state.proposalPending = new Set();
     state.composing = false;
     if (state.searchTimer) {
       clearTimeout(state.searchTimer);
       state.searchTimer = 0;
+    }
+    if (state.proposalSearchTimer) {
+      clearTimeout(state.proposalSearchTimer);
+      state.proposalSearchTimer = 0;
     }
     resetVotes();
   }
@@ -1455,8 +1470,33 @@
 
   function proposalFilter() {
     var filter = state.proposalFilter;
-    if (filter === "active" || filter === "upcoming" || filter === "past") return filter;
-    return "all";
+    if (filter === "all" || filter === "upcoming" || filter === "past") return filter;
+    return "active";
+  }
+
+  // Voting stays open through the end date, including before the proposal starts.
+  // A vote on a proposal that has ended is kept as the check, not a button.
+  // An ended proposal that was paid uses that same slot for a dollar mark.
+  function proposalCanVote(row, now) {
+    var phase = proposalPhase(row, now);
+    return phase === "active" || phase === "upcoming";
+  }
+
+  function voteProposalId(vote) {
+    if (!vote) return null;
+    if (vote.proposal) return proposalId(vote.proposal);
+    if (vote.proposal_id == null) return null;
+    var n = Number(vote.proposal_id);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function proposalById(id) {
+    var rows = state.proposals.rows;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (proposalId(rows[i]) === id) return rows[i];
+    }
+    return null;
   }
 
   function payOver(dailyMilli, ms) {
@@ -1578,8 +1618,11 @@
     var rows = state.proposals.rows;
     var list = [];
     var i;
+    var query = state.proposalQuery || "";
     for (i = 0; i < rows.length; i += 1) {
-      if (filter === "all" || proposalPhase(rows[i], now) === filter) list.push(rows[i]);
+      if (filter !== "all" && proposalPhase(rows[i], now) !== filter) continue;
+      if (query && !proposalNameHit(rows[i], query)) continue;
+      list.push(rows[i]);
     }
     if (filter === "past") {
       list.sort(function (a, b) {
@@ -1667,18 +1710,12 @@
     return start || end || "";
   }
 
-  function amountCell(label, shown, tip) {
+  function figureHtml(shown, unit, tip) {
+    var text = shown || "—";
     return (
-      '<span class="proposal-cell' +
-      (label === "Votes" ? " proposal-votes" : "") +
-      '" data-label="' +
-      esc(label) +
-      '"' +
-      (tip ? ' tabindex="0"' : "") +
-      ">" +
-      esc(shown) +
-      (tip ? '<span class="session-stat-tip" role="tooltip">' + esc(tip) + "</span>" : "") +
-      "</span>"
+      esc(text) +
+      (text !== "—" ? ' <span class="proposal-unit">' + unit + "</span>" : "") +
+      (tip ? '<span class="session-stat-tip" role="tooltip">' + esc(tip) + "</span>" : "")
     );
   }
 
@@ -1687,10 +1724,18 @@
     var tip = shown.exact;
     if (estimated && tip) tip += " · estimated from the daily pay";
     else if (estimated) tip = "Paid total was not reported.";
-    return amountCell(label, shown.cell, tip);
+    return (
+      '<span class="proposal-cell" data-label="' +
+      esc(label) +
+      '"' +
+      (tip ? ' tabindex="0"' : "") +
+      ">" +
+      figureHtml(shown.cell, "hbd", tip) +
+      "</span>"
+    );
   }
 
-  function proposalWhoHtml(row, phase, filter) {
+  function proposalIdentityHtml(row) {
     var creator = accountName(row.creator);
     var receiver = accountName(row.receiver);
     var subject = String((row && row.subject) || "").trim() || "Proposal";
@@ -1699,30 +1744,103 @@
     var subjectHtml = href
       ? '<a class="proposal-subject" href="' + esc(href) + '" title="' + esc(subject) + '">' + esc(subject) + "</a>"
       : '<span class="proposal-subject" title="' + esc(subject) + '">' + esc(subject) + "</span>";
-    var bits = [];
-    if (creator) {
-      bits.push('by <a href="' + esc(state.host.profileHref(creator)) + '">@' + esc(creator) + "</a>");
-    }
-    if (receiver && receiver !== creator) {
-      bits.push('to <a href="' + esc(state.host.profileHref(receiver)) + '">@' + esc(receiver) + "</a>");
-    }
-    if (isReturnProposal(row)) bits.push("sets the funding line");
-    else if (filter === "all" && phase) bits.push(esc(phase));
-    var range = dateRangeText(row);
-    if (range) bits.push(esc(range));
+    var user = creator
+      ? '<a class="proposal-user" href="' + esc(state.host.profileHref(creator)) + '">@' + esc(creator) + "</a>"
+      : "";
+    var to =
+      receiver && receiver !== creator
+        ? '<span class="proposal-to">to</span><a class="proposal-user" href="' +
+          esc(state.host.profileHref(receiver)) +
+          '">@' +
+          esc(receiver) +
+          "</a>"
+        : "";
     var avatar = creator
       ? '<img class="avatar" src="' +
         esc(md().avatarUrl(creator, "small")) +
         '" alt="" width="28" height="28" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
       : "";
+    return '<div class="proposal-who">' + avatar + '<span class="proposal-copy">' + user + to + subjectHtml + "</span></div>";
+  }
+
+  function proposalFootHtml(row, phase, filter) {
+    var bits = [];
+    if (isReturnProposal(row)) bits.push("sets the funding line");
+    else if (filter === "all" && phase) bits.push(phase);
+    var range = dateRangeText(row);
+    if (range) bits.push(range);
+    if (!bits.length) return "";
+    var text = bits.join(" · ");
+    return '<span class="proposal-foot" title="' + esc(text) + '">' + esc(text) + "</span>";
+  }
+
+  function proposalStakeHtml(hp) {
+    var shown = (hp && hp.compact) || "—";
+    var tip = (hp && hp.exact) || "";
     return (
-      '<div class="proposal-who">' +
-      avatar +
-      '<span class="proposal-copy">' +
-      subjectHtml +
-      '<small class="proposal-meta">' +
-      bits.join(" · ") +
-      "</small></span></div>"
+      '<span class="proposal-stake"' +
+      (tip ? ' tabindex="0"' : "") +
+      ">" +
+      figureHtml(shown, "hp", tip) +
+      "</span>"
+    );
+  }
+
+  // Same yellow circle as the vote check. The stroke is a dollar sign.
+  var PROPOSAL_PAID_MARK =
+    '<svg class="witness-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 6.1v11.8M14.9 8H10.6a2 2 0 0 0 0 4h2.8a2 2 0 0 1 0 4H8.6"/></svg>';
+
+  function proposalExpiredPaid(row, now, line) {
+    if (proposalPhase(row, now) !== "past") return false;
+    var paid = proposalPay(row, now, line).paid;
+    return paid != null && paid > 0n;
+  }
+
+  function proposalActionHtml(row, now, line) {
+    var id = proposalId(row);
+    if (id == null) return "";
+    var can = proposalCanVote(row, now);
+    var user = state.proposalVotes.user;
+    var ready = state.proposalVotes.ready;
+    var voted = Boolean(user) && ready && state.proposalVotes.ids.has(id);
+    var label = "proposal #" + id;
+    if (!can && proposalExpiredPaid(row, now, line)) {
+      return (
+        '<span class="proposal-vote is-voted is-paid" role="img" aria-label="Paid ' +
+        esc(label) +
+        '">' +
+        PROPOSAL_PAID_MARK +
+        "</span>"
+      );
+    }
+    if (!can && !voted) return "";
+    if (!can) {
+      return (
+        '<span class="proposal-vote is-voted" role="img" aria-label="Voted for ' +
+        esc(label) +
+        '">' +
+        WITNESS_VOTE_CHECK +
+        "</span>"
+      );
+    }
+    var pending = state.proposalPending.has(id);
+    var waiting = Boolean(user) && !ready;
+    var aria = (voted ? "Remove vote for " : "Vote for ") + label;
+    return (
+      '<button type="button" class="btn-primary btn-compact proposal-vote' +
+      (voted ? " is-voted" : "") +
+      '" data-proposal-vote="' +
+      esc(String(id)) +
+      '" aria-pressed="' +
+      (voted ? "true" : "false") +
+      '" aria-label="' +
+      esc(aria) +
+      '"' +
+      (pending ? ' aria-busy="true"' : "") +
+      (pending || waiting ? " disabled" : "") +
+      ">" +
+      (voted ? WITNESS_VOTE_CHECK : "Vote") +
+      "</button>"
     );
   }
 
@@ -1730,23 +1848,34 @@
     var pay = proposalPay(row, now, line);
     var hp = hpOf(row.total_votes);
     var id = proposalId(row);
+    var phase = proposalPhase(row, now);
     return (
       '<article class="proposal-row' +
       (isReturnProposal(row) ? " is-return" : "") +
       '" data-proposal="' +
       esc(id == null ? "" : String(id)) +
       '">' +
+      '<div class="proposal-body">' +
+      '<div class="proposal-top">' +
+      proposalIdentityHtml(row) +
       '<span class="proposal-id">' +
-      esc(id == null ? "—" : String(id)) +
-      "</span>" +
-      proposalWhoHtml(row, proposalPhase(row, now), filter) +
-      '<span class="proposal-cells">' +
+      esc(id == null ? "—" : "#" + String(id)) +
+      "</span></div>" +
+      '<div class="proposal-cells">' +
       moneyCell("Total", pay.total, false) +
       moneyCell("Daily", pay.daily, false) +
       moneyCell("Paid", pay.paid, pay.estimated) +
       moneyCell("To pay", pay.toPay, false) +
-      amountCell("Votes", hp.compact || "—", hp.exact || "") +
-      "</span></article>"
+      "</div>" +
+      '<div class="proposal-bottom">' +
+      proposalStakeHtml(hp) +
+      proposalFootHtml(row, phase, filter) +
+      "</div></div>" +
+      '<div class="proposal-action" data-proposal-action="' +
+      esc(id == null ? "" : String(id)) +
+      '">' +
+      proposalActionHtml(row, now, line) +
+      "</div></article>"
     );
   }
 
@@ -1755,20 +1884,53 @@
     var i;
     for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
     if (groups.threshold) {
-      html.push('<p class="witness-split proposal-threshold" aria-hidden="true"><span></span></p>');
+      if (filter !== "all") {
+        html.push('<p class="witness-split proposal-threshold" aria-hidden="true"><span></span></p>');
+      }
       html.push(proposalRowHtml(groups.threshold, now, filter, line));
-      html.push('<p class="proposal-unfunded">Currently not funded</p>');
+      if (filter !== "all") html.push('<p class="proposal-unfunded">Currently not funded</p>');
     }
     for (i = 0; i < groups.below.length; i += 1) html.push(proposalRowHtml(groups.below[i], now, filter, line));
     return html.join("");
   }
 
+  function proposalNameHit(row, query) {
+    var creator = normalizeQuery(row && row.creator);
+    var receiver = normalizeQuery(row && row.receiver);
+    return creator.indexOf(query) === 0 || receiver.indexOf(query) === 0;
+  }
+
   function proposalEmptyCopy() {
     var filter = proposalFilter();
-    if (filter === "active") return "No active proposals.";
-    if (filter === "upcoming") return "No upcoming proposals.";
-    if (filter === "past") return "No past proposals.";
-    return "No proposals to show.";
+    var named = Boolean(state.proposalQuery);
+    if (filter === "active") return named ? "No active proposals for that username." : "No active proposals.";
+    if (filter === "upcoming") return named ? "No upcoming proposals for that username." : "No upcoming proposals.";
+    if (filter === "past") return named ? "No past proposals for that username." : "No past proposals.";
+    return named ? "No proposals for that username." : "No proposals to show.";
+  }
+
+  function applyProposalQuery(raw) {
+    if (state.mode !== "proposals") return;
+    var query = normalizeQuery(raw);
+    if (query && !validQuery(query)) {
+      setStatus("Usernames use letters, numbers, dots, or hyphens.", true);
+      return;
+    }
+    setStatus("", false);
+    if (query === state.proposalQuery) return;
+    state.proposalQuery = query;
+    paintProposalList();
+  }
+
+  function scheduleProposalSearch() {
+    if (state.proposalSearchTimer) clearTimeout(state.proposalSearchTimer);
+    state.proposalSearchTimer = setTimeout(function () {
+      state.proposalSearchTimer = 0;
+      if (state.composing || state.mode !== "proposals") return;
+      var input = document.getElementById("proposalSearch");
+      if (!input) return;
+      applyProposalQuery(input.value);
+    }, 200);
   }
 
   function paintProposalFilter() {
@@ -1829,6 +1991,7 @@
     if (state.mode !== "proposals") return;
     var list = document.getElementById("proposalList");
     if (!list) return;
+    list.classList.toggle("is-all", proposalFilter() === "all");
     paintProposalFilter();
     if (state.proposals.error && !state.proposals.rows.length) {
       list.innerHTML = "";
@@ -1846,6 +2009,139 @@
       return;
     }
     list.innerHTML = proposalRowsHtml(groups, chainNow(), proposalFilter(), returnVotes());
+  }
+
+  function paintProposalActions() {
+    if (state.mode !== "proposals") return;
+    var now = chainNow();
+    var line = returnVotes();
+    var slots = document.querySelectorAll(".proposal-action[data-proposal-action]");
+    slots.forEach(function (slot) {
+      var raw = slot.getAttribute("data-proposal-action");
+      if (!raw) {
+        slot.innerHTML = "";
+        return;
+      }
+      var id = Number(raw);
+      var row = proposalById(id);
+      slot.innerHTML = row ? proposalActionHtml(row, now, line) : "";
+    });
+  }
+
+  async function fetchProposalVoteIds(user, current) {
+    var ids = new Set();
+    var startId = 0;
+    var page;
+    var name = String(user || "").toLowerCase();
+    for (page = 0; page < 20; page += 1) {
+      var batch = await api().hiveRpc(
+        "condenser_api.list_proposal_votes",
+        [[name, startId], 1000, "by_voter_proposal", "ascending", "all"],
+        true
+      );
+      if (!current()) return null;
+      var list = Array.isArray(batch) ? batch : [];
+      var added = 0;
+      var lastId = startId;
+      var sawOther = false;
+      var i;
+      for (i = 0; i < list.length; i += 1) {
+        var vote = list[i];
+        var voter = String((vote && vote.voter) || "").toLowerCase();
+        if (voter !== name) {
+          sawOther = true;
+          continue;
+        }
+        var id = voteProposalId(vote);
+        if (id == null) continue;
+        if (id > lastId) lastId = id;
+        if (ids.has(id)) continue;
+        ids.add(id);
+        added += 1;
+      }
+      if (sawOther || list.length < 1000) break;
+      if (!added || lastId === startId) break;
+      startId = lastId;
+    }
+    return ids;
+  }
+
+  async function loadProposalVotes(gen) {
+    var user = (state.host && state.host.user && state.host.user()) || "";
+    state.proposalVotes.user = user;
+    state.proposalVotes.ids = new Set();
+    if (!user) {
+      state.proposalVotes.ready = true;
+      paintProposalActions();
+      return;
+    }
+    state.proposalVotes.ready = false;
+    paintProposalActions();
+    try {
+      var ids = await fetchProposalVoteIds(user, function () {
+        return alive(gen) && state.mode === "proposals" && state.proposalVotes.user === user;
+      });
+      if (!ids) return;
+      state.proposalVotes.ids = ids;
+      state.proposalVotes.ready = true;
+    } catch (err) {
+      if (!alive(gen) || state.proposalVotes.user !== user) return;
+      state.proposalVotes.ready = true;
+    }
+    if (alive(gen) && state.mode === "proposals") paintProposalActions();
+  }
+
+  async function castProposalVote(raw) {
+    var host = state.host;
+    var id = Number(raw);
+    if (!host || !Number.isFinite(id)) return;
+    var user = host.user() || "";
+    if (!user) {
+      host.openLogin();
+      return;
+    }
+    if (!state.proposalVotes.ready || state.proposalPending.has(id)) return;
+    var row = proposalById(id);
+    if (!row || !proposalCanVote(row, chainNow())) return;
+    var voted = state.proposalVotes.ids.has(id);
+    var gen = state.gen;
+    state.proposalPending.add(id);
+    paintProposalActions();
+    try {
+      await host.signActive(
+        user,
+        [
+          [
+            "update_proposal_votes",
+            {
+              voter: user,
+              proposal_ids: [id],
+              approve: !voted,
+              extensions: [],
+            },
+          ],
+        ],
+        {
+          title: voted ? "Remove proposal vote" : "Vote proposal",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: voted ? "Proposal vote stays." : "Proposal vote was not cast.",
+          failMessage: voted ? "Could not remove that proposal vote." : "Could not vote for that proposal.",
+        }
+      );
+      if (!alive(gen)) return;
+      if (voted) state.proposalVotes.ids.delete(id);
+      else state.proposalVotes.ids.add(id);
+    } catch (err) {
+      if (!(err && err.ownerCancel) && host.still()) {
+        host.showError(
+          (err && err.message) ||
+            (voted ? "Could not remove that proposal vote." : "Could not vote for that proposal.")
+        );
+      }
+    } finally {
+      state.proposalPending.delete(id);
+      if (alive(gen) && state.mode === "proposals") paintProposalActions();
+    }
   }
 
   function revealProposalFilter() {
@@ -2014,14 +2310,19 @@
       '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span><span class="session-stat-tip" role="tooltip" hidden></span></div>' +
       "</div>" +
       '<div class="witness-filter" role="radiogroup" aria-label="Filter proposals">' +
-      '<button type="button" role="radio" data-proposal-filter="all" aria-checked="true" class="is-active">All</button>' +
-      '<button type="button" role="radio" data-proposal-filter="active" aria-checked="false">Active</button>' +
+      '<button type="button" role="radio" data-proposal-filter="active" aria-checked="true" class="is-active">Active</button>' +
+      '<button type="button" role="radio" data-proposal-filter="all" aria-checked="false">All</button>' +
       '<button type="button" role="radio" data-proposal-filter="upcoming" aria-checked="false">Upcoming</button>' +
       '<button type="button" role="radio" data-proposal-filter="past" aria-checked="false">Past</button>' +
       "</div>" +
+      '<form class="tags-add search-form" id="proposalSearchForm">' +
+      '<input id="proposalSearch" type="text" maxlength="32" placeholder="Search username" value="' +
+      esc(state.proposalQuery || "") +
+      '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search proposals by username">' +
+      glassHtml() +
+      "</form>" +
       '<p class="tags-status" id="daoStatus" hidden></p>' +
       '<div class="proposal-table" id="proposalTable">' +
-      '<div class="proposal-head"><span>#</span><span>Project</span><span title="Total asked, in hbd">Total</span><span title="Daily pay, in hbd">Daily</span><span title="Already paid, in hbd">Paid</span><span title="Still to pay, in hbd">To pay</span><span title="Hive Power voting for this proposal">Votes</span></div>' +
       '<div id="proposalList"></div>' +
       "</div>" +
       '<div id="proposalMore" class="loading-row is-feed-more" hidden><span class="btn-loader" role="status" aria-label="Loading proposals"></span></div>' +
@@ -2039,6 +2340,7 @@
     if (!writeView(gen, proposalShell())) return;
     loadChain(gen);
     loadProposals(gen);
+    loadProposalVotes(gen);
   }
 
   function detailShell(name, body) {
@@ -2370,6 +2672,12 @@
       if (state.mode === "proposals") loadProposals(state.gen);
       return;
     }
+    var proposalVote = event.target.closest && event.target.closest(".proposal-vote[data-proposal-vote]");
+    if (proposalVote) {
+      event.preventDefault();
+      castProposalVote(proposalVote.getAttribute("data-proposal-vote") || "");
+      return;
+    }
     var filterBtn = event.target.closest && event.target.closest("[data-witness-filter]");
     if (filterBtn && filterBtn.closest(".witness-filter")) {
       event.preventDefault();
@@ -2395,6 +2703,17 @@
   }
 
   function onSubmit(event) {
+    var proposalForm = event.target && event.target.closest && event.target.closest("#proposalSearchForm");
+    if (proposalForm) {
+      event.preventDefault();
+      if (state.proposalSearchTimer) {
+        clearTimeout(state.proposalSearchTimer);
+        state.proposalSearchTimer = 0;
+      }
+      var proposalInput = document.getElementById("proposalSearch");
+      if (proposalInput) applyProposalQuery(proposalInput.value);
+      return;
+    }
     var form = event.target && event.target.closest && event.target.closest("#witnessSearchForm");
     if (!form) return;
     event.preventDefault();
@@ -2407,17 +2726,30 @@
   }
 
   function onInput(event) {
-    if (!event.target || event.target.id !== "witnessSearch") return;
+    if (!event.target) return;
+    if (event.target.id === "proposalSearch") {
+      if (state.composing || event.isComposing) return;
+      scheduleProposalSearch();
+      return;
+    }
+    if (event.target.id !== "witnessSearch") return;
     if (state.composing || event.isComposing) return;
     scheduleSearch();
   }
 
   function onComposeStart(event) {
-    if (event.target && event.target.id === "witnessSearch") state.composing = true;
+    var id = event.target && event.target.id;
+    if (id === "witnessSearch" || id === "proposalSearch") state.composing = true;
   }
 
   function onComposeEnd(event) {
-    if (!event.target || event.target.id !== "witnessSearch") return;
+    if (!event.target) return;
+    if (event.target.id === "proposalSearch") {
+      state.composing = false;
+      scheduleProposalSearch();
+      return;
+    }
+    if (event.target.id !== "witnessSearch") return;
     state.composing = false;
     scheduleSearch();
   }
