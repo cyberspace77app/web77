@@ -1859,6 +1859,16 @@
         px +
         '" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
       : "";
+    if (avatar && dim === "medium") {
+      avatar =
+        '<a class="proposal-avatar" href="' +
+        esc(state.host.profileHref(creator)) +
+        '" aria-label="@' +
+        esc(creator) +
+        '">' +
+        avatar +
+        "</a>";
+    }
     return { creator: creator, receiver: receiver, user: user, to: to, avatar: avatar };
   }
 

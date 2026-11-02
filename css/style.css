@@ -10338,6 +10338,19 @@ a.proposal-id:focus-visible {
   height: 40px;
 }
 
+.dao-detail .proposal-who .proposal-avatar {
+  flex: none;
+  display: block;
+  line-height: 0;
+}
+
+.dao-detail .proposal-user,
+.dao-detail .proposal-user:hover,
+.dao-detail .proposal-user:focus-visible {
+  color: var(--gray);
+  text-shadow: none;
+}
+
 .dao-detail .proposal-action:empty {
   display: none;
 }
