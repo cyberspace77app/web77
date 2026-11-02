@@ -9995,7 +9995,10 @@ span.witness-vote.is-voted::before {
 }
 
 @media (max-width: 720px) {
-  .dao-stats,
+  .dao-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dao-choices,
   .dao-facts {
     grid-template-columns: 1fr;
