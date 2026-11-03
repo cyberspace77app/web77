@@ -10407,6 +10407,46 @@ a.proposal-id:focus-visible {
   color: inherit;
 }
 
+.proposal-approved {
+  position: relative;
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-left: 0.66rem;
+  color: var(--yellow);
+  vertical-align: -0.1em;
+  line-height: 0;
+  cursor: default;
+}
+
+.proposal-approved-check {
+  display: block;
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.proposal-approved:focus {
+  outline: none;
+}
+
+.proposal-approved:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.proposal-approved .session-stat-tip {
+  left: 0;
+  right: auto;
+  z-index: 8;
+}
+
+.proposal-approved:hover .session-stat-tip,
+.proposal-approved:focus .session-stat-tip,
+.proposal-approved:focus-visible .session-stat-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
 .proposal-cell.is-end {
   display: flex;
   align-items: baseline;
@@ -10447,7 +10487,10 @@ a.proposal-id:focus-visible {
 
 .proposal-row:has(.proposal-stake:hover),
 .proposal-row:has(.proposal-stake:focus),
-.proposal-row:has(.proposal-stake:focus-visible) {
+.proposal-row:has(.proposal-stake:focus-visible),
+.proposal-row:has(.proposal-approved:hover),
+.proposal-row:has(.proposal-approved:focus),
+.proposal-row:has(.proposal-approved:focus-visible) {
   position: relative;
   z-index: 8;
 }

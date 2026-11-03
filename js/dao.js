@@ -588,8 +588,11 @@
     }
   }
 
+  var VOTE_CHECK_SVG =
+    '<circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/>';
+
   var WITNESS_VOTE_CHECK =
-    '<svg class="dao-vote-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor"/><path fill="none" stroke="#070707" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12.5 10.4 15.8 17.2 8.6"/></svg>';
+    '<svg class="dao-vote-check" viewBox="0 0 24 24" aria-hidden="true">' + VOTE_CHECK_SVG + "</svg>";
 
   function voteButtonFace(voted) {
     if (voted) return WITNESS_VOTE_CHECK;
@@ -1821,7 +1824,7 @@
     );
   }
 
-  function moneyCell(label, milli, end) {
+  function moneyCell(label, milli, end, mark) {
     var shown = hbdCell(milli);
     return (
       '<span class="proposal-cell' +
@@ -1830,7 +1833,26 @@
       esc(label) +
       '"><span class="proposal-figure">' +
       figureHtml(shown.cell, "hbd", "") +
+      (mark || "") +
       "</span></span>"
+    );
+  }
+
+  // Active or upcoming, and strictly above the return proposal.
+  function proposalApproved(row, now, line) {
+    if (isReturnProposal(row) || line == null) return false;
+    var phase = proposalPhase(row, now);
+    if (phase !== "active" && phase !== "upcoming") return false;
+    return bigIntOf(row.total_votes, 0n) > line;
+  }
+
+  function proposalApprovedHtml() {
+    return (
+      '<span class="proposal-approved" tabindex="0" aria-label="approved">' +
+      '<svg class="proposal-approved-check" viewBox="0 0 24 24" aria-hidden="true">' +
+      VOTE_CHECK_SVG +
+      "</svg>" +
+      '<span class="session-stat-tip" role="tooltip">approved</span></span>'
     );
   }
 
@@ -2023,7 +2045,7 @@
       proposalIdHtml(id) +
       "</div>" +
       '<div class="proposal-cells">' +
-      moneyCell("Total", pay.total) +
+      moneyCell("Total", pay.total, false, proposalApproved(row, now, line) ? proposalApprovedHtml() : "") +
       moneyCell("Daily", pay.daily, true) +
       moneyCell("Paid", pay.paid, true) +
       moneyCell("To pay", pay.toPay, true) +
