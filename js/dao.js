@@ -1487,7 +1487,7 @@
       '<div class="dao-copy">' +
       "<p>Witnesses are the block producers. They run the consensus nodes, publish a price feed, and vote on chain parameters such as the HBD interest rate.</p>" +
       "<p>Each round is 21 blocks. The top 20 witnesses each produce one block. The extra block goes to one backup witness, picked at random in proportion to the votes outside the top 20.</p>" +
-      "<p>An account can vote for up to 30 witnesses. The weight of each vote is that account's stake including proxies, counted in full for every witness. It is not split across the 30.</p>" +
+      "<p>An account can vote for up to 30 witnesses. The weight of each vote is that account's hive stake including proxies, counted in full for every witness. It is not split across the 30.</p>" +
       "</div>" +
       '<p class="dao-note" id="witnessInterest">The HBD savings rate is the median of the top 20. The APR column is the rate each witness is voting for.</p>' +
       '<div class="dao-stats">' +
@@ -3606,7 +3606,7 @@
       '<h2 class="page-title">Proposals</h2>' +
       '<p class="dao-kicker">Decentralized fund</p>' +
       '<div class="dao-copy">' +
-      "<p>Proposals are how a project asks the DAO for funding. The project names a daily amount, and that amount is paid in HBD for a set number of days if approved. Stakeholders vote with their stake including proxies.</p>" +
+      "<p>Proposals are how a project asks the DAO for funding. The project names a daily amount, and that amount is paid in HBD for a set number of days if approved. Stakeholders vote with their hive stake including proxies.</p>" +
       "<p>Vote for the return proposal to have a say in the decentralized fund. A project is paid only while it has more votes than the return proposal.</p>" +
       "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
       "</div>" +
