@@ -121,6 +121,12 @@ let CS77_FILTER_LOW_REP = 20;
   let publishSubsUser = "";
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
+  // The edit dialog stays on the post URL. This entry lets Back close it.
+  let editHistoryOn = false;
+  let editHistoryPop = false;
+  let editHistoryUrl = "";
+  let editHistoryPost = null;
+  let pendingEditNav = null;
   let settingsProfileDraft = null;
   let settingsProfileBaseline = null;
   let settingsLegacyRaw = null;
@@ -4458,6 +4464,16 @@ let CS77_FILTER_LOW_REP = 20;
 
   function navigate(href, replace) {
     if (pollVotes.open) closePollVotes();
+    if (editHistoryOn) {
+      hidePublishOverlay();
+      editHistoryOn = false;
+      if (!replace) {
+        pendingEditNav = { href: href, replace: false };
+        history.back();
+        return;
+      }
+      editHistoryPost = null;
+    }
     if (peopleList.open || peopleHistoryOn) {
       const hadHistory = peopleHistoryOn;
       closePeoplePanel({ skipHistory: true });
@@ -4659,6 +4675,14 @@ let CS77_FILTER_LOW_REP = 20;
   // Clicking the open Feed, Latest, Posts, About, Members, or Wallet tab
   // loads that section again. The address and the history entry stay.
   function reloadCurrentSection() {
+    if (editHistoryOn) {
+      hidePublishOverlay();
+      editHistoryOn = false;
+      editHistoryPost = null;
+      pendingEditNav = { reloadSection: true };
+      history.back();
+      return;
+    }
     if (peopleHistoryOn) {
       closePeoplePanel({ skipHistory: true });
       peopleHistoryOn = false;
@@ -4849,6 +4873,41 @@ let CS77_FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
+    if (pendingEditNav) {
+      const job = pendingEditNav;
+      pendingEditNav = null;
+      editHistoryOn = false;
+      if (job.reloadSection) {
+        beginSectionReload();
+        return;
+      }
+      if (job.logoutRoute) {
+        if (parseRoute().name === "publish") navigate(appHref("/"), true);
+        else route();
+        return;
+      }
+      navigate(job.href, job.replace);
+      return;
+    }
+    if (editHistoryPop) {
+      editHistoryPop = false;
+      return;
+    }
+    if (editHistoryOn) {
+      editHistoryOn = false;
+      const stay = pageUrl() === editHistoryUrl;
+      hidePublishOverlay();
+      if (stay) return;
+    } else if (history.state && history.state.editDialog) {
+      const post = editHistoryPost;
+      const same = pageUrl() === editHistoryUrl;
+      if (post && same) {
+        openEditorForPost(post, { fromHistory: true });
+        if (editHistoryOn) return;
+      }
+      stripEditHistoryFlag();
+      if (same) return;
+    }
     if (pendingPeopleNav) {
       const job = pendingPeopleNav;
       pendingPeopleNav = null;
@@ -5774,6 +5833,13 @@ let CS77_FILTER_LOW_REP = 20;
     clearSubspaceCreateDraft();
     renderSession();
     currentViewKey = "";
+    if (editHistoryOn) {
+      editHistoryOn = false;
+      editHistoryPost = null;
+      pendingEditNav = { logoutRoute: true };
+      history.back();
+      return;
+    }
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
     else route();
   }
@@ -9111,7 +9177,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closePublish(opts) {
     pendingPublish = false;
+    const popEdit = editHistoryOn;
     hidePublishOverlay(opts);
+    if (popEdit) popEditHistory();
     if (parseRoute().name !== "publish") return;
     // Publish was pushed on top of the open page. Pop that entry so a post
     // opened from the feed stays open, instead of replacing it with the feed.
@@ -9359,6 +9427,7 @@ let CS77_FILTER_LOW_REP = 20;
         noteReplay(user, permlink, { title: title, body: body, jsonMetadata: jsonMetadata });
         applyPostEditToView(title, body);
         hidePublishOverlay();
+        popEditHistory();
         // The dialog locks the page where the reader left it. Bring the
         // edited post back to the top once that lock is gone.
         scrollWindowInstant(0);
@@ -9405,7 +9474,52 @@ let CS77_FILTER_LOW_REP = 20;
 
   let contentEditToken = 0;
 
-  function openEditorForPost(post) {
+  function pageUrl() {
+    return location.pathname + location.search + location.hash;
+  }
+
+  function editHistoryState() {
+    const prev = history.state && typeof history.state === "object" ? history.state : {};
+    const next = Object.assign({}, prev, { editDialog: true });
+    if (Array.isArray(prev.layers)) next.layers = cloneLayers(prev.layers);
+    return next;
+  }
+
+  // Push a same-URL entry so Back closes the editor and stays on this page.
+  // The publish route already has its own entry, so a new post does not use this.
+  function rememberEditHistory(post, fromHistory) {
+    editHistoryPost = post || null;
+    editHistoryUrl = pageUrl();
+    if (fromHistory) {
+      editHistoryOn = true;
+      return;
+    }
+    if (parseRoute().name === "publish") return;
+    const state = editHistoryState();
+    if (editHistoryOn) {
+      history.replaceState(state, "", location.href);
+      return;
+    }
+    history.pushState(state, "", location.href);
+    editHistoryOn = true;
+  }
+
+  function popEditHistory() {
+    if (!editHistoryOn) return;
+    editHistoryOn = false;
+    editHistoryPop = true;
+    history.back();
+  }
+
+  function stripEditHistoryFlag() {
+    editHistoryOn = false;
+    if (!(history.state && history.state.editDialog)) return;
+    const prev = Object.assign({}, history.state);
+    delete prev.editDialog;
+    history.replaceState(prev, "", location.href);
+  }
+
+  function openEditorForPost(post, opts) {
     if (!post || !post.author || !post.permlink) return;
     const user = observer();
     if (!user) {
@@ -9454,6 +9568,7 @@ let CS77_FILTER_LOW_REP = 20;
     fitPublishTitle();
     requestAnimationFrame(() => fitPublishTitle());
     focusPublishField();
+    rememberEditHistory(post, Boolean(opts && opts.fromHistory));
   }
 
   function openPostEditor() {
@@ -29216,9 +29331,13 @@ let CS77_FILTER_LOW_REP = 20;
     return !!(history.state && history.state.peoplePanel);
   }
 
+  function logoEditOn() {
+    return !!(history.state && history.state.editDialog);
+  }
+
   function logoCap(steps, people) {
     const depth = historyDepth() || 1;
-    const canPop = Math.max(0, depth - 1) + (people ? 1 : 0);
+    const canPop = Math.max(0, depth - 1) + (people ? 1 : 0) + (logoEditOn() ? 1 : 0);
     if (steps > canPop) return canPop > 0 ? canPop : 0;
     return steps > 0 ? steps : 0;
   }
@@ -29231,7 +29350,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function logoStepsAfter(layers, index, people) {
-    let steps = people ? 1 : 0;
+    let steps = (people ? 1 : 0) + (logoEditOn() ? 1 : 0);
     for (let i = index + 1; i < layers.length; i++) steps += Number(layers[i].n) || 1;
     return logoCap(steps, people);
   }
@@ -29252,7 +29371,9 @@ let CS77_FILTER_LOW_REP = 20;
     const people = logoPeopleOn();
     const layers = cloneLayers(history.state && history.state.layers);
     if (!layers.length) {
-      if (isOnTopLevelFeed(parseRoute())) return { top: true, steps: people ? 1 : 0, closePeople: false };
+      if (isOnTopLevelFeed(parseRoute())) {
+        return { top: true, steps: (people ? 1 : 0) + (logoEditOn() ? 1 : 0), closePeople: false };
+      }
       return { top: false, steps: logoLayerJump(), closePeople: false };
     }
     const originIndex = logoOriginIndex(layers);
@@ -29294,6 +29415,7 @@ let CS77_FILTER_LOW_REP = 20;
         peopleHistoryOn = false;
       }
     }
+    if (logoEditOn()) bonus += 1;
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
     const canPop = Math.max(0, depth - 1) + bonus;
@@ -30662,6 +30784,15 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function route() {
+    if (editHistoryOn) {
+      editHistoryOn = false;
+      hidePublishOverlay();
+    }
+    if (history.state && history.state.editDialog) {
+      const prev = Object.assign({}, history.state);
+      delete prev.editDialog;
+      history.replaceState(prev, "", location.href);
+    }
     if (peopleList.open || peopleHistoryOn) {
       closePeoplePanel({ skipHistory: true });
       peopleHistoryOn = false;
