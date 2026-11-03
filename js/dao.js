@@ -4075,7 +4075,11 @@
     if (
       !writeView(
         gen,
-        proposalDetailShell("Proposal #" + id, "Proposal", '<p class="feed-hint" id="daoStatus">Loading proposal…</p>')
+        proposalDetailShell(
+          "Proposal #" + id,
+          "Proposal",
+          '<div class="loading-row" role="status" aria-label="Loading proposal"><span class="btn-loader" aria-hidden="true"></span></div>'
+        )
       )
     ) {
       return;
