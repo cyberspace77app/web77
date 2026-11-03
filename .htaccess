@@ -7,6 +7,7 @@
 # /c/hive-121566  /c/hive-121566/latest|trending|hot|about|members|edit
 # /121566 redirects to /subspace/121566
 # /trending  /hot  /created  /search  /search/spaces  /search/subspaces  /spaces  /subspaces  /subspaces/browse  /subspaces/newest  /subspaces/create  /welcome  /imprint  /settings  /settings/profile  /settings/keys  /settings/nodes
+# /dao  /witnesses  /proposals  /proposals/<id>  /witness/@account
 # /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
 #
 # Social media or messenger link-preview crawlers do not run the app, so they only see index.html.

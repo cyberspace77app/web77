@@ -5,7 +5,8 @@
  *
  * The response is index.html with the title, description, and image the app
  * would set for the same URL. Posts, comments, profiles, and subspace pages
- * are filled from the Hive API.
+ * are filled from the Hive API. A proposal or witness page uses one condenser
+ * call for the same title and description the DAO page sets after it loads.
  */
 
 declare(strict_types=1);
@@ -177,6 +178,28 @@ function cs77_profile_page(string $raw): string
     return "";
 }
 
+function cs77_proposal_id(string $raw): ?int
+{
+    if (!preg_match("/^(?:0|[1-9][0-9]*)$/", $raw)) {
+        return null;
+    }
+    if (strlen($raw) > 10 || (strlen($raw) === 10 && strcmp($raw, "2147483647") > 0)) {
+        return null;
+    }
+    return (int)$raw;
+}
+
+function cs77_hive_account(string $raw): string
+{
+    $name = strtolower(trim($raw));
+    $name = preg_replace("/^@+/", "", $name);
+    $name = is_string($name) ? $name : "";
+    if (!preg_match("/^[a-z0-9.\\-]{3,16}$/", $name)) {
+        return "";
+    }
+    return $name;
+}
+
 function cs77_route_tag(string $raw): string
 {
     $tag = strtolower(trim($raw));
@@ -208,6 +231,7 @@ function cs77_route(string $pathname): array
         "permlink" => "",
         "page" => "",
         "community" => "",
+        "id" => null,
     ];
     if (count($parts) === 0) {
         $route["name"] = "feed";
@@ -270,6 +294,41 @@ function cs77_route(string $pathname): array
             if ($page === "users" || $page === "spaces" || $page === "subspaces") {
                 $route["name"] = "search";
                 $route["page"] = $page;
+                return $route;
+            }
+        }
+        return $route;
+    }
+    // /dao is replaced with /witnesses before the page paints.
+    if (count($parts) === 1 && $first === "dao") {
+        $route["name"] = "dao";
+        return $route;
+    }
+    if (count($parts) === 1 && $first === "witnesses") {
+        $route["name"] = "witnesses";
+        return $route;
+    }
+    if ($first === "proposals") {
+        if (count($parts) === 1) {
+            $route["name"] = "proposals";
+            return $route;
+        }
+        if (count($parts) === 2) {
+            $proposalId = cs77_proposal_id($parts[1]);
+            if ($proposalId !== null) {
+                $route["name"] = "proposal";
+                $route["id"] = $proposalId;
+                return $route;
+            }
+        }
+        return $route;
+    }
+    if ($first === "witness") {
+        if (count($parts) === 2 && isset($parts[1][0]) && $parts[1][0] === "@") {
+            $author = strtolower(substr($parts[1], 1));
+            if (preg_match("/^[a-z0-9.\\-]{3,16}$/", $author)) {
+                $route["name"] = "witness";
+                $route["author"] = $author;
                 return $route;
             }
         }
@@ -943,6 +1002,59 @@ function cs77_community_title($info, string $name, string $page): string
     return $title . " — CyberSpace77";
 }
 
+function cs77_proposal_meta(int $id): array
+{
+    $title = "Proposal #" . $id . " — CyberSpace77";
+    $description = "Proposal #" . $id . " in the decentralized fund.";
+    $loaded = cs77_hive("condenser_api.find_proposals", [[$id]]);
+    if ($loaded["state"] === "error") {
+        return ["title" => $title, "description" => $description];
+    }
+    $rows = ($loaded["state"] === "ok" && is_array($loaded["result"])) ? $loaded["result"] : [];
+    $row = null;
+    foreach ($rows as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $found = $item["id"] ?? ($item["proposal_id"] ?? null);
+        if (is_numeric($found) && (int)$found === $id) {
+            $row = $item;
+            break;
+        }
+    }
+    if ($row === null) {
+        return ["title" => $title, "description" => "This proposal could not be found."];
+    }
+    $subject = trim((string)($row["subject"] ?? ""));
+    if ($subject === "") {
+        $subject = "Proposal";
+    }
+    $by = cs77_hive_account((string)($row["creator"] ?? ""));
+    if ($by === "") {
+        $by = cs77_hive_account((string)($row["receiver"] ?? ""));
+    }
+    if ($by !== "") {
+        $description = "Proposal #" . $id . " by @" . $by . ".";
+    }
+    return ["title" => $subject . " — CyberSpace77", "description" => $description];
+}
+
+function cs77_witness_meta(string $name): array
+{
+    $title = "@" . $name . " — Witness — CyberSpace77";
+    $description = "Vote for @" . $name . " as a Hive block producer.";
+    $loaded = cs77_hive("condenser_api.get_witness_by_account", [$name]);
+    if ($loaded["state"] === "error") {
+        return ["title" => $title, "description" => $description];
+    }
+    $witness = ($loaded["state"] === "ok" && is_array($loaded["result"])) ? $loaded["result"] : [];
+    $owner = strtolower(trim((string)($witness["owner"] ?? "")));
+    if ($owner !== $name) {
+        $description = "This account is not a witness.";
+    }
+    return ["title" => $title, "description" => $description];
+}
+
 function cs77_page(array $route): array
 {
     $title = "Not found — CyberSpace77";
@@ -974,6 +1086,20 @@ function cs77_page(array $route): array
         $title = "Search — CyberSpace77";
     } elseif ($name === "imprint") {
         $title = "Imprint — CyberSpace77";
+    } elseif ($name === "dao" || $name === "witnesses") {
+        $title = "Witnesses — CyberSpace77";
+        $description = "Witnesses are hive's block producers. They run consensus nodes, publish price feeds, vote on blockchain parameters, and help secure and govern the network through stakeholder voting.";
+    } elseif ($name === "proposals") {
+        $title = "Proposals — CyberSpace77";
+        $description = "Proposals are funding requests to the decentralized hive fund, DHF or DAO. Projects receive daily HBD payments while they maintain enough stakeholder votes.";
+    } elseif ($name === "proposal") {
+        $proposal = cs77_proposal_meta((int)$route["id"]);
+        $title = $proposal["title"];
+        $description = $proposal["description"];
+    } elseif ($name === "witness") {
+        $witness = cs77_witness_meta($route["author"]);
+        $title = $witness["title"];
+        $description = $witness["description"];
     } elseif ($name === "publish") {
         $title = "Publish — CyberSpace77";
     } elseif ($name === "profile") {
