@@ -3317,12 +3317,14 @@ a.tag:hover {
   aspect-ratio: 9 / 16;
 }
 
-/* A phone screen is short, so a vertical video stays within the viewport. */
+/* A phone screen is short, so a vertical video stays within the viewport.
+   svh stays put when the browser chrome shows and hides. dvh tracked that
+   chrome, so the frame grew and shrank while the reader scrolled past it. */
 @media (max-width: 720px) {
   .post-body .embed.embed-portrait,
   .comment-body .embed.embed-portrait,
   .post-card .embed.embed-portrait {
-    width: min(100%, calc(78dvh * 9 / 16));
+    width: min(100%, calc(78svh * 9 / 16));
   }
 }
 
