@@ -1824,7 +1824,7 @@
     );
   }
 
-  function moneyCell(label, milli, end, mark) {
+  function moneyCell(label, milli, end) {
     var shown = hbdCell(milli);
     return (
       '<span class="proposal-cell' +
@@ -1833,7 +1833,6 @@
       esc(label) +
       '"><span class="proposal-figure">' +
       figureHtml(shown.cell, "hbd", "") +
-      (mark || "") +
       "</span></span>"
     );
   }
@@ -2045,13 +2044,14 @@
       proposalIdHtml(id) +
       "</div>" +
       '<div class="proposal-cells">' +
-      moneyCell("Total", pay.total, false, proposalApproved(row, now, line) ? proposalApprovedHtml() : "") +
+      moneyCell("Total", pay.total, false) +
       moneyCell("Daily", pay.daily, true) +
       moneyCell("Paid", pay.paid, true) +
       moneyCell("To pay", pay.toPay, true) +
       "</div>" +
       '<div class="proposal-bottom">' +
       proposalStakeHtml(hp) +
+      (proposalApproved(row, now, line) ? proposalApprovedHtml() : "") +
       proposalFootHtml(row, phase, filter) +
       "</div></div>" +
       '<div class="proposal-action" data-proposal-action="' +
@@ -3683,11 +3683,27 @@
     loadProposalVotes(gen);
   }
 
-  function proposalPhaseLabel(phase) {
-    if (phase === "active") return "Active";
-    if (phase === "upcoming") return "Upcoming";
-    if (phase === "past") return "Past";
-    return "";
+  // A finished proposal is funded at 99% of the ask. Paid is milli-HBD.
+  function proposalPastLabel(row, now) {
+    var pay = proposalPay(row, now, returnVotes());
+    if (pay.paid == null || pay.total == null) return "Past";
+    if (pay.paid <= 0n) return "Past · Not funded";
+    if (pay.paid * 100n >= pay.total * 99n) return "Past · Funded";
+    return "Past · Partially funded";
+  }
+
+  // The detail rank names whether an open proposal sits above proposal 0.
+  // A tie is not approved. The return proposal itself keeps the phase word.
+  function proposalPhaseLabel(row, now) {
+    var phase = proposalPhase(row, now);
+    if (phase === "past") return proposalPastLabel(row, now);
+    if (phase !== "active" && phase !== "upcoming") return "";
+    if (isReturnProposal(row)) return phase === "upcoming" ? "Upcoming" : "Active";
+    var line = returnVotes();
+    if (line == null) return phase === "upcoming" ? "Upcoming" : "Active";
+    var above = bigIntOf(row.total_votes, 0n) > line;
+    if (phase === "upcoming") return above ? "Upcoming · Approved" : "Upcoming · Not yet approved";
+    return above ? "Approved" : "Not approved";
   }
 
   function proposalStandingNote(row) {
@@ -3741,12 +3757,12 @@
     var now = chainNow();
     var pay = proposalPay(row, now, returnVotes());
     box.innerHTML =
-      proposalStatHtml("total", pay.total, false) +
-      proposalStatHtml("daily", pay.daily, false) +
-      proposalStatHtml("paid", pay.paid, pay.estimated) +
-      proposalStatHtml("to pay", pay.toPay, false);
+      proposalStatHtml("total asked", pay.total, false) +
+      proposalStatHtml("total paid", pay.paid, pay.estimated) +
+      proposalStatHtml("to pay", pay.toPay, false) +
+      proposalStatHtml("daily", pay.daily, false);
     var phaseEl = document.getElementById("proposalPhase");
-    if (phaseEl) phaseEl.textContent = proposalPhaseLabel(proposalPhase(row, now));
+    if (phaseEl) phaseEl.textContent = proposalPhaseLabel(row, now);
     var standing = document.getElementById("proposalStanding");
     if (standing) {
       var note = proposalStandingNote(row);

@@ -10525,6 +10525,12 @@ a.proposal-id:focus-visible {
   flex: none;
 }
 
+.proposal-bottom .proposal-approved {
+  margin-left: 0;
+  align-self: center;
+  flex: none;
+}
+
 .proposal-foot {
   min-width: 0;
   overflow: hidden;
