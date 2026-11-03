@@ -1422,10 +1422,22 @@ let CS77_FILTER_LOW_REP = 20;
     return contentByKey.get(postKey(author, permlink)) || null;
   }
 
-  function contentMayDelete(author, children) {
+  // Upvotes and downvotes both count, including a vote that is still sending.
+  // A missing vote list counts as none, so a comment just posted here can be deleted.
+  function contentVoteTotal(node) {
+    if (!node || !node.author || !node.permlink) return 0;
+    const view = voteView(node);
+    const up = Number(view && view.upCount);
+    const down = Number(view && view.downCount);
+    return Math.max(0, (Number.isFinite(up) ? up : 0) + (Number.isFinite(down) ? down : 0));
+  }
+
+  function contentMayDelete(author, permlink, children, node) {
     if (!isOwnAuthor(author)) return false;
     const n = Number(children);
-    return Number.isFinite(n) && n <= 0;
+    if (!Number.isFinite(n) || n > 0) return false;
+    const source = node || { author: author, permlink: permlink };
+    return contentVoteTotal(source) <= 0;
   }
 
   function contentDeleteItemHtml() {
@@ -1436,7 +1448,7 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="content-more-item content-more-cross" role="menuitem">Cross post</button>`;
   }
 
-  function contentMoreHtml(author, permlink, kind, children, offerCrossPost) {
+  function contentMoreHtml(author, permlink, kind, children, offerCrossPost, node) {
     const name = String(author || "").replace(/^@/, "");
     const link = String(permlink || "");
     if (!name || !link) return "";
@@ -1446,7 +1458,7 @@ let CS77_FILTER_LOW_REP = 20;
       items.push(
         `<button type="button" class="content-more-item content-more-edit" role="menuitem">Edit</button>`
       );
-      if (contentMayDelete(name, children)) items.push(contentDeleteItemHtml());
+      if (contentMayDelete(name, link, children, node)) items.push(contentDeleteItemHtml());
     }
     if (safeKind !== "comment") {
       const profileOffer = profilePinMenuOffer(name, link);
@@ -1628,6 +1640,13 @@ let CS77_FILTER_LOW_REP = 20;
         el.textContent = String(state.downCount);
       });
     });
+    const replies = liveReplyCount(author, permlink);
+    if (replies == null) {
+      const voted = displayedContent(author, permlink) || { author: author, permlink: permlink };
+      if (contentVoteTotal(voted) > 0) syncDeleteOffers(author, permlink, 0);
+      return;
+    }
+    syncDeleteOffers(author, permlink, replies);
   }
 
   function voteKindFromPost(post) {
@@ -9657,6 +9676,20 @@ let CS77_FILTER_LOW_REP = 20;
     return null;
   }
 
+  // A reblog card's menu is the original post. The feed row is the reblog shell.
+  function displayedContent(author, permlink) {
+    const node = contentRecord(author, permlink);
+    if (!node) return null;
+    if (
+      node.original_entry &&
+      samePostId(node.original_entry, author, permlink) &&
+      !samePostId(node, author, permlink)
+    ) {
+      return node.original_entry;
+    }
+    return node;
+  }
+
   function liveReplyCount(author, permlink) {
     const section = document.getElementById("comments");
     if (
@@ -9673,7 +9706,7 @@ let CS77_FILTER_LOW_REP = 20;
       const shown = Number(section.getAttribute("data-count"));
       if (Number.isFinite(shown)) return Math.max(0, shown);
     }
-    const node = contentRecord(author, permlink);
+    const node = displayedContent(author, permlink);
     if (node && node.children != null && node.children !== "") {
       const n = Number(node.children);
       if (Number.isFinite(n)) return Math.max(0, n);
@@ -9704,7 +9737,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   function syncDeleteOffers(author, permlink, children) {
     if (!author || !permlink) return;
-    const show = contentMayDelete(author, children);
+    const node = displayedContent(author, permlink);
+    const show = contentMayDelete(author, permlink, children, node);
     document.querySelectorAll(".content-more").forEach((more) => {
       if (
         !samePostId(
@@ -9749,7 +9783,11 @@ let CS77_FILTER_LOW_REP = 20;
       showError("Hive can only delete a post or comment that has no replies.");
       return;
     }
-    const node = contentRecord(author, permlink);
+    const node = displayedContent(author, permlink);
+    if (contentVoteTotal(node || { author: author, permlink: permlink }) > 0) {
+      showError("Hive can only delete a post or comment that has no votes.");
+      return;
+    }
     const comment = kind === "comment" || Boolean(node && !isRootPost(node));
     contentDeleteTarget = { author: author, permlink: permlink, kind: kind || "" };
     const title = $("#contentDeleteTitle");
@@ -9899,7 +9937,11 @@ let CS77_FILTER_LOW_REP = 20;
       setContentDeleteStatus("Hive can only delete a post or comment that has no replies.", true);
       return;
     }
-    const node = contentRecord(target.author, target.permlink);
+    const node = displayedContent(target.author, target.permlink);
+    if (contentVoteTotal(node || { author: target.author, permlink: target.permlink }) > 0) {
+      setContentDeleteStatus("Hive can only delete a post or comment that has no votes.", true);
+      return;
+    }
     if (node && payoutIsPaid(node)) {
       setContentDeleteStatus("Hive cannot delete a post after it pays out.", true);
       return;
@@ -11678,7 +11720,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(shown.children, postPath(shown))}
           ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
-          ${contentMoreHtml(shown.author, shown.permlink, "card", shown.children, isRootPost(shown))}
+          ${contentMoreHtml(shown.author, shown.permlink, "card", shown.children, isRootPost(shown), shown)}
         </div>
       </article>
     `;
@@ -14173,7 +14215,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${voteControlHtml(node, "pills")}
           ${payoutHtml(node, true)}
           ${replyBtn}
-          ${contentMoreHtml(node.author, node.permlink, "comment", node.children)}
+          ${contentMoreHtml(node.author, node.permlink, "comment", node.children, false, node)}
         </div>
         ${user ? `<div class="comment-reply-slot" hidden></div>` : ""}
         ${replies ? `<div class="comment-replies">${replies}</div>` : ""}
@@ -16477,7 +16519,7 @@ let CS77_FILTER_LOW_REP = 20;
             ${voteControlHtml(root, "plain")}
             ${commentCountHtml(commentCount, "#comments")}
             ${payoutHtml(root, false)}
-            ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root))}
+            ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root), root)}
           </div>
         </div>
         ${articleTagsHtml(root)}
@@ -16488,7 +16530,7 @@ let CS77_FILTER_LOW_REP = 20;
           ${commentCountHtml(commentCount, "#comments")}
           ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
-          ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root))}
+          ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root), root)}
         </div>
         <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
           ${composer}
