@@ -3825,6 +3825,7 @@
             '<p class="dao-rank" id="proposalPhase"></p>' +
             '<p class="dao-note" id="proposalStanding" hidden></p>' +
             '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
+            '<div class="proposal-rates" id="proposalRates" hidden></div>' +
             '<dl class="dao-facts" id="proposalFacts"></dl>' +
             '<section class="dao-supporters">' +
             '<h3 class="dao-kicker">Supporters</h3>' +
@@ -3841,6 +3842,134 @@
     }
     paintProposalFigures();
     paintVoteNote();
+    loadProposalRates(gen, id, row);
+  }
+
+  // update_proposal can only lower daily_pay. The proposal row keeps the
+  // latest rate, so the earlier rates come from the creator's history.
+  function dailyMilliOf(asset) {
+    if (asset && typeof asset === "object") return paidMilli(asset.amount);
+    return paidMilli(asset);
+  }
+
+  function proposalRateSegments(ops, row) {
+    var id = proposalId(row);
+    var start = hiveTime(row.start_date);
+    var end = hiveTime(row.end_date);
+    if (id == null || !Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+    var fee = null;
+    var i;
+    for (i = 0; i < ops.length; i += 1) {
+      var feeOp = ops[i] && ops[i].op;
+      var feeValue = feeOp && feeOp.value;
+      if (feeOp && feeOp.type === "proposal_fee_operation" && Number(feeValue && feeValue.proposal_id) === id) {
+        fee = ops[i];
+      }
+    }
+    if (!fee) return [];
+    var created = null;
+    for (i = 0; i < ops.length; i += 1) {
+      var createOp = ops[i] && ops[i].op;
+      if (ops[i].trx_id === fee.trx_id && createOp && createOp.type === "create_proposal_operation") created = ops[i];
+    }
+    if (!created) return [];
+    var original = dailyMilliOf(created.op.value && created.op.value.daily_pay);
+    if (original == null) return [];
+    var cuts = [];
+    for (i = 0; i < ops.length; i += 1) {
+      var item = ops[i];
+      var op = item && item.op;
+      var value = op && op.value;
+      if (!op || op.type !== "update_proposal_operation" || Number(value && value.proposal_id) !== id) continue;
+      var at = hiveTime(item.timestamp);
+      var next = dailyMilliOf(value.daily_pay);
+      if (!Number.isFinite(at) || next == null) continue;
+      cuts.push({ at: at, rate: next });
+    }
+    cuts.sort(function (a, b) {
+      return a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
+    });
+    var rate = original;
+    var steps = [{ rate: original }];
+    for (i = 0; i < cuts.length; i += 1) {
+      if (cuts[i].at >= end || cuts[i].rate >= rate) continue;
+      steps.push(cuts[i]);
+      rate = cuts[i].rate;
+    }
+    return steps.length > 1 ? steps : [];
+  }
+
+  function proposalRateHistoryHtml(steps) {
+    var html = "<p>The daily rate was lowered.</p><ul>";
+    var i;
+    for (i = 0; i < steps.length; i += 1) {
+      var when = i + 1 < steps.length ? shortDate(steps[i + 1].at) : shortDate(steps[i].at);
+      var verb = i + 1 < steps.length ? "until " : "from ";
+      html +=
+        "<li>" +
+        esc(groupedMilli(steps[i].rate)) +
+        " hbd <span>" +
+        esc(verb + when) +
+        "</span></li>";
+    }
+    return html + "</ul>";
+  }
+
+  async function fetchProposalRateOps(creator, current) {
+    var nodes = voterNodes();
+    var name = encodeURIComponent(creator);
+    var i;
+    for (i = 0; i < nodes.length; i += 1) {
+      if (!current()) return null;
+      try {
+        var ops = [];
+        var seen = {};
+        var page;
+        for (page = 1; page <= 10; page += 1) {
+          if (!current()) return null;
+          var res = await fetch(
+            nodes[i] +
+              "/hafah-api/accounts/" +
+              name +
+              "/operations?operation-types=44,47,87&page-size=100&page=" +
+              page
+          );
+          if (!current()) return null;
+          if (!res.ok) throw new Error("rate history");
+          var data = await res.json();
+          var list = data && Array.isArray(data.operations_result) ? data.operations_result : null;
+          if (!list) throw new Error("rate history");
+          var j;
+          for (j = 0; j < list.length; j += 1) {
+            var key = list[j] && list[j].operation_id;
+            if (key && seen[key]) continue;
+            if (key) seen[key] = true;
+            ops.push(list[j]);
+          }
+          var total = Number(data.total_operations);
+          if (!list.length || (Number.isFinite(total) && ops.length >= total)) return ops;
+        }
+        if (ops.length) return ops;
+      } catch (err) {
+        /* this node has no account history */
+      }
+    }
+    return null;
+  }
+
+  async function loadProposalRates(gen, id, row) {
+    var creator = accountName(row && row.creator);
+    if (!creator || isReturnProposal(row)) return;
+    function current() {
+      return alive(gen) && state.mode === "proposal" && state.detailProposalId === id;
+    }
+    var ops = await fetchProposalRateOps(creator, current);
+    if (!current() || !ops) return;
+    var segments = proposalRateSegments(ops, row);
+    var box = document.getElementById("proposalRates");
+    if (!box || !current() || !segments.length) return;
+    box.innerHTML = proposalRateHistoryHtml(segments);
+    box.hidden = false;
   }
 
   function proposalSupporterCountHtml() {

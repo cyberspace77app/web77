@@ -9403,6 +9403,39 @@ body.is-dao #view {
   margin: 0 0 1.15rem;
 }
 
+.proposal-rates {
+  max-width: 40rem;
+  margin: -0.35rem 0 1.15rem;
+}
+
+.proposal-rates p {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.45;
+  color: var(--gray);
+}
+
+.proposal-rates ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposal-rates li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  margin: 0.18rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.proposal-rates li span {
+  color: var(--gray);
+}
+
 .dao-stats {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
