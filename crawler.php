@@ -4,9 +4,7 @@
  * .htaccess sends those user agents here. Everyone else still gets index.html.
  *
  * The response is index.html with the title, description, and image the app
- * would set for the same URL. Posts, comments, profiles, and subspace pages
- * are filled from the Hive API. A proposal or witness page uses one condenser
- * call for the same title and description the DAO page sets after it loads.
+ * would set for the same URL.
  */
 
 declare(strict_types=1);
