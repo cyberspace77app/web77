@@ -1527,7 +1527,7 @@
     state.listMode = "rank";
     state.host.setPageMeta(
       "Witnesses — CyberSpace77",
-      "Hive witnesses are the block producers. Each account can vote for 30 of them with its Hive Power."
+      "Witnesses are hive's block producers. They run consensus nodes, publish price feeds, vote on blockchain parameters, and help secure and govern the network through stakeholder voting."
     );
     if (!writeView(gen, witnessShell(gen, ""))) return;
     loadChain(gen);
@@ -3650,7 +3650,7 @@
     state.mode = "proposals";
     state.host.setPageMeta(
       "Proposals — CyberSpace77",
-      "Proposals fund projects from the decentralized organization. Vote for the return proposal to decide what is paid and to slow inflation."
+      "Proposals are funding requests to the decentralized hive fund, DHF or DAO. Projects receive daily HBD payments while they maintain enough stakeholder votes."
     );
     if (!writeView(gen, proposalShell())) return;
     loadChain(gen);
