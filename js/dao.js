@@ -3633,7 +3633,9 @@
       "<p>Total is the daily amount times the length of the proposal. Paid is what has already been sent. To pay is the part of the schedule still ahead. Days spent below the return proposal are not paid later.</p>" +
       "</div>" +
       '<div class="dao-stats proposal-stats">' +
-      '<div class="dao-stat"><span class="dao-stat-label">treasury</span><strong id="proposalTreasury">—</strong><span class="dao-stat-unit">hbd</span></div>' +
+      '<a class="dao-stat dao-stat-treasury" href="' +
+      esc(state.host.profileHref("hive.fund", "wallet")) +
+      '"><span class="dao-stat-label">treasury</span><strong id="proposalTreasury">—</strong><span class="dao-stat-unit">hbd</span></a>' +
       '<div class="dao-stat"><span class="dao-stat-label">daily pay</span><strong id="proposalDaily">—</strong><span class="dao-stat-unit">hbd</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">funded</span><strong id="proposalFunded">—</strong><span class="dao-stat-unit" id="proposalFundedUnit">projects</span></div>' +
       '<div class="dao-stat"><span class="dao-stat-label">return votes</span><strong id="proposalThreshold">—</strong><span class="dao-stat-unit">hp</span></div>' +

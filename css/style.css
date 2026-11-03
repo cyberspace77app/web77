@@ -9422,6 +9422,19 @@ body.is-dao #view {
   min-width: 0;
 }
 
+a.dao-stat-treasury {
+  display: block;
+  color: inherit;
+  text-shadow: none;
+}
+
+a.dao-stat-treasury:hover,
+a.dao-stat-treasury:focus-visible {
+  border-color: var(--yellow);
+  color: inherit;
+  text-shadow: none;
+}
+
 .dao-stat-label,
 .dao-choice small,
 .dao-facts dt {
