@@ -8521,7 +8521,8 @@ min-height: 0;
 }
 
 .settings-form .cyber-toggle input,
-#createAccountOverlay .cyber-toggle input {
+#createAccountOverlay .cyber-toggle input,
+.cyber-toggle-compact input {
   position: absolute;
   opacity: 0;
   width: 1px;
@@ -8573,6 +8574,29 @@ min-height: 0;
 .cyber-toggle input:checked ~ .cyber-toggle-copy .cyber-toggle-title {
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
+}
+
+.cyber-toggle-compact {
+  align-self: stretch;
+  flex: 0 1 auto;
+  gap: 0.5rem;
+  max-width: 100%;
+  height: auto;
+  padding: 0 0.65rem;
+}
+
+.cyber-toggle-compact .cyber-toggle-track {
+  height: 16px;
+}
+
+.cyber-toggle-compact .cyber-toggle-copy {
+  gap: 0;
+}
+
+.cyber-toggle-compact .cyber-toggle-title {
+  font-size: 0.64rem;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .subspace-create .subspace-account-start {
@@ -9694,7 +9718,27 @@ a.dao-stat-treasury:focus-visible {
 }
 
 .dao-tools:has(#proposalSearchForm) {
+  flex-wrap: wrap;
+  column-gap: 0.35rem;
+  row-gap: 0.45rem;
   margin-bottom: 1.15rem;
+}
+
+.dao-page .dao-tools #proposalSearchForm {
+  flex: 1 1 14rem;
+  width: auto;
+  min-width: min(14rem, 100%);
+  max-width: 14rem;
+}
+
+@media (max-width: 720px) {
+  .dao-tools:has(#proposalSearchForm) {
+    row-gap: 0.85rem;
+  }
+
+  .dao-tools:has(#proposalSearchForm) .cyber-toggle-compact {
+    min-height: 2.65rem;
+  }
 }
 
 .proposal-own {

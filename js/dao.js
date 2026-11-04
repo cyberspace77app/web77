@@ -63,6 +63,7 @@
     fund: null,
     proposalFilter: "active",
     proposalQuery: "",
+    proposalExcludeStabilizer: false,
     proposalSearchTimer: 0,
     proposalSerial: 0,
     proposals: emptyProposals(),
@@ -940,6 +941,7 @@
     state.fund = null;
     state.proposalFilter = "active";
     state.proposalQuery = "";
+    state.proposalExcludeStabilizer = false;
     state.proposalSerial += 1;
     state.proposals = emptyProposals();
     state.proposalVotes = emptyProposalVotes();
@@ -1725,9 +1727,11 @@
     var list = [];
     var i;
     var query = state.proposalQuery || "";
+    var hideStabilizer = state.proposalExcludeStabilizer;
     for (i = 0; i < rows.length; i += 1) {
       if (filter !== "all" && proposalPhase(rows[i], now) !== filter) continue;
       if (query && !proposalNameHit(rows[i], query)) continue;
+      if (hideStabilizer && proposalIsStabilizer(rows[i])) continue;
       list.push(rows[i]);
     }
     if (filter === "past") {
@@ -2144,6 +2148,11 @@
     var creator = normalizeQuery(row && row.creator);
     var receiver = normalizeQuery(row && row.receiver);
     return creator.indexOf(query) === 0 || receiver.indexOf(query) === 0;
+  }
+
+  // The HBD stabilizer account, as creator or receiver.
+  function proposalIsStabilizer(row) {
+    return normalizeQuery(row && row.creator) === "hbdstabilizer" || normalizeQuery(row && row.receiver) === "hbdstabilizer";
   }
 
   function proposalEmptyCopy() {
@@ -3578,6 +3587,19 @@
     }
   }
 
+  function proposalExcludeHtml() {
+    return (
+      '<label class="cyber-toggle cyber-toggle-compact">' +
+      '<input id="proposalExcludeStabilizer" type="checkbox"' +
+      (state.proposalExcludeStabilizer ? " checked" : "") +
+      ">" +
+      '<span class="cyber-toggle-track" aria-hidden="true"></span>' +
+      '<span class="cyber-toggle-copy">' +
+      '<span class="cyber-toggle-title">exclude hbd stabilizer</span>' +
+      "</span></label>"
+    );
+  }
+
   function proxyMenuHtml() {
     var label = state.votes.proxy ? "Remove proxy" : "Set proxy";
     var waiting = (Boolean(state.votes.user) && !state.votes.ready) || state.proxyBusy;
@@ -3942,6 +3964,7 @@
       glassHtml() +
       "</form>" +
       proxyMenuHtml() +
+      proposalExcludeHtml() +
       "</div>" +
       '<p class="tags-status" id="daoStatus" hidden></p>' +
       '<div class="proposal-table" id="proposalTable">' +
@@ -5154,6 +5177,11 @@
 
   function onInput(event) {
     if (!event.target) return;
+    if (event.target.id === "proposalExcludeStabilizer") {
+      state.proposalExcludeStabilizer = Boolean(event.target.checked);
+      if (state.mode === "proposals") paintProposalList();
+      return;
+    }
     if (event.target.id === "proposalSearch") {
       if (state.composing || event.isComposing) return;
       scheduleProposalSearch();
