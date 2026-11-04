@@ -13673,6 +13673,18 @@ let CS77_FILTER_LOW_REP = 20;
       .toLowerCase();
   }
 
+  // Enter opens a profile only when the typed name is already in the results.
+  function openMatchedUser(raw) {
+    const name = userSearchQuery(raw);
+    if (!name || searchPages.users.results.indexOf(name) === -1) return false;
+    if (searchUserTimer) {
+      clearTimeout(searchUserTimer);
+      searchUserTimer = 0;
+    }
+    navigate(profileHref(name));
+    return true;
+  }
+
   async function fetchUserSearchPage(query, cursor) {
     const q = userSearchQuery(query);
     if (!/^[a-z0-9.\-]{1,16}$/.test(q)) return { items: [], done: true, cursor: "" };
@@ -32608,9 +32620,13 @@ let CS77_FILTER_LOW_REP = 20;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       const input = e.target;
       if (!input || !inInteractiveSurface(input)) return;
-      if (input.id !== "spaceTagSearchInput" && input.id !== "searchInput") return;
-      if (input.id === "searchInput" && searchPageName() !== "spaces") return;
-      if (!openTypedSpace(input.value)) return;
+      if (input.id === "spaceTagSearchInput" || (input.id === "searchInput" && searchPageName() === "spaces")) {
+        if (!openTypedSpace(input.value)) return;
+        e.preventDefault();
+        return;
+      }
+      if (input.id !== "searchInput" || searchPageName() !== "users") return;
+      if (!openMatchedUser(input.value)) return;
       e.preventDefault();
     });
 
