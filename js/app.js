@@ -20083,7 +20083,7 @@ let CS77_FILTER_LOW_REP = 20;
       "% annual inflation rewards, including curation rewards, the total would approx. " +
       high +
       "% if the stake would vote in proportion to all staked hive. Active curators may earn more when other stake does not vote.";
-    return `<span class="wallet-apr" tabindex="0">~${high}%${walletAprTip(tip)}</span>`;
+    return `<span class="wallet-apr" tabindex="0">${high}%${walletAprTip(tip)}</span>`;
   }
 
   function walletHbdAprHtml(rates) {
@@ -24332,7 +24332,6 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function fillProfileWallet(name, tab, pageLoad) {
     let stakeRates = null;
-    let stakeRatesReady = false;
     const ratesPromise = HiveApi.getStakeApr()
       .then(function (value) {
         stakeRates = value;
@@ -24340,10 +24339,6 @@ let CS77_FILTER_LOW_REP = 20;
       })
       .catch(function () {
         return null;
-      })
-      .then(function (value) {
-        stakeRatesReady = true;
-        return value;
       });
     let wallet = null;
     try {
@@ -24360,9 +24355,12 @@ let CS77_FILTER_LOW_REP = 20;
       releaseProfileSectionHold();
       return;
     }
-    if (stakeRatesReady && stakeRates) wallet.stakeApr = stakeRates;
+    if (stakeRates) wallet.stakeApr = stakeRates;
     await Promise.all([attachHbdUnstakes(wallet), attachConversions(wallet)]);
     if (!profileRouteStill(name, tab)) return;
+    // The rate request can finish during that conversion fetch. Copy it again
+    // before the first paint, or staked hive apr is skipped for this load.
+    if (stakeRates) wallet.stakeApr = stakeRates;
     if (delegationView.account && delegationView.account !== wallet.name) clearDelegationView();
     delegationView.open = false;
     profileState.wallet = wallet;
@@ -24370,7 +24368,7 @@ let CS77_FILTER_LOW_REP = 20;
     profileSectionHtml(walletPageHtml(wallet, isOwnAuthor(name)));
     releaseProfileSectionHold();
     const historyPromise = loadMoreWalletHistory();
-    if (!stakeRatesReady) {
+    if (!wallet.stakeApr) {
       const loaded = await ratesPromise;
       if (profileRouteStill(name, tab) && profileState.wallet === wallet && loaded) {
         wallet.stakeApr = loaded;
