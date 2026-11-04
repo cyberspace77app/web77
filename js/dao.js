@@ -70,6 +70,7 @@
     proposalPending: new Set(),
     proposalCreateTicket: 0,
     proposalCreateBusy: false,
+    proposalEditId: null,
     proposalCancelId: null,
     proposalCancelBusy: false,
     proposalCancelTicket: 0,
@@ -2693,6 +2694,10 @@
     return (milli < 0n ? "-" : "") + whole + "." + frac + " HBD";
   }
 
+  function dailyInputValue(milli) {
+    return chainHbd(milli).replace(/ HBD$/, "");
+  }
+
   // create_proposal is an active-authority operation. The fee is 10 hbd,
   // plus 1 hbd for each whole day of the scheduled length past 60 days.
   function proposalFeeHbd(startMs, endMs) {
@@ -2791,14 +2796,82 @@
     if (startEl.value && endEl.value && endEl.value <= startEl.value) endEl.value = "";
   }
 
+  var PROPOSAL_CREATE_LEAD =
+    "Fill the required details. There is a fee to create a proposal: 10 hbd, plus 1 hbd for each day it lasts over 60 days. The fee is paid in hbd by the creator.";
+
+  // update_proposal can change the subject, the permlink, the daily pay, and
+  // the end date. Daily pay cannot go up. Since HF25 the end date is an
+  // extension and cannot move later. Creator, receiver, and start stay fixed.
+  function applyProposalFormMode() {
+    var editing = state.proposalEditId != null;
+    var title = document.getElementById("proposalCreateTitle");
+    if (title) title.textContent = editing ? "Edit proposal" : "Create proposal";
+    var lead = document.getElementById("proposalCreateLead");
+    if (lead) {
+      lead.textContent = editing
+        ? "The subject, proposal post, daily amount, and end can be changed. Daily pay can only be lowered, and the end can only be moved earlier."
+        : PROPOSAL_CREATE_LEAD;
+    }
+    var submit = document.getElementById("proposalCreateSubmit");
+    if (submit && !state.proposalCreateBusy) submit.textContent = editing ? "Save" : "Create";
+    var start = document.getElementById("proposalCreateStart");
+    if (start) {
+      start.readOnly = editing;
+      if (editing) start.setAttribute("aria-readonly", "true");
+      else start.removeAttribute("aria-readonly");
+    }
+    var receiver = document.getElementById("proposalCreateReceiver");
+    if (receiver) {
+      receiver.readOnly = editing;
+      if (editing) receiver.setAttribute("aria-readonly", "true");
+      else receiver.removeAttribute("aria-readonly");
+    }
+    var fee = document.getElementById("proposalCreateFee");
+    if (fee) fee.hidden = editing;
+    var dailyHint = document.getElementById("proposalCreateDailyHint");
+    if (dailyHint) dailyHint.hidden = !editing;
+    var dateHint = document.getElementById("proposalCreateDateHint");
+    if (dateHint) dateHint.hidden = !editing;
+    var receiverHint = document.getElementById("proposalCreateReceiverHint");
+    if (receiverHint) {
+      receiverHint.textContent = editing
+        ? "The receiver cannot be changed."
+        : "Account that is paid. Leave it empty to pay the creator.";
+    }
+  }
+
   function closeCreateProposal() {
     var sign = document.getElementById("ownerSignOverlay");
     if (sign && !sign.hidden) return;
     state.proposalCreateTicket += 1;
+    state.proposalEditId = null;
     setProposalCreateLocked(false);
+    applyProposalFormMode();
+    var endEl = document.getElementById("proposalCreateEnd");
+    if (endEl) endEl.removeAttribute("max");
     var ov = document.getElementById("proposalOverlay");
     if (ov) ov.hidden = true;
     setProposalCreateStatus("");
+  }
+
+  function proposalDialogBlocked() {
+    var sign = document.getElementById("ownerSignOverlay");
+    if ((sign && !sign.hidden) || state.proposalCreateBusy || state.proposalCancelBusy || state.proxyBusy) return true;
+    var proxyOv = document.getElementById("proxyOverlay");
+    if (proxyOv && !proxyOv.hidden) return true;
+    var cancelOv = document.getElementById("proposalCancelOverlay");
+    if (cancelOv && !cancelOv.hidden) return true;
+    var ov = document.getElementById("proposalOverlay");
+    return Boolean(ov && !ov.hidden);
+  }
+
+  function showProposalDialog(focusEl) {
+    var ov = document.getElementById("proposalOverlay");
+    if (!ov) return;
+    ov.hidden = false;
+    var card = ov.querySelector(".overlay-card");
+    if (card) card.scrollTop = 0;
+    if (state.host && state.host.focus) state.host.focus(focusEl);
   }
 
   function openCreateProposal() {
@@ -2809,16 +2882,11 @@
       host.openLogin();
       return;
     }
-    var sign = document.getElementById("ownerSignOverlay");
-    if ((sign && !sign.hidden) || state.proposalCreateBusy) return;
-    var proxyOv = document.getElementById("proxyOverlay");
-    if (proxyOv && !proxyOv.hidden) return;
-    var cancelOv = document.getElementById("proposalCancelOverlay");
-    if (cancelOv && !cancelOv.hidden) return;
-    var ov = document.getElementById("proposalOverlay");
-    if (ov && !ov.hidden) return;
+    if (proposalDialogBlocked()) return;
+    state.proposalEditId = null;
     state.proposalCreateTicket += 1;
     setProposalCreateLocked(false);
+    applyProposalFormMode();
     var creator = document.getElementById("proposalCreateCreator");
     if (creator) creator.value = user;
     var subject = document.getElementById("proposalCreateSubject");
@@ -2839,16 +2907,58 @@
     if (startEl) startEl.value = localInputValue(start);
     if (endEl) {
       endEl.value = localInputValue(end);
+      endEl.removeAttribute("max");
       if (startEl && startEl.value) endEl.min = startEl.value;
     }
     setProposalCreateStatus("");
     paintProposalCreateFigures();
-    if (ov) {
-      ov.hidden = false;
-      var card = ov.querySelector(".overlay-card");
-      if (card) card.scrollTop = 0;
+    showProposalDialog(subject);
+  }
+
+  function openEditProposal(raw) {
+    var host = state.host;
+    if (!host) return;
+    var user = signedInUser();
+    if (!user) {
+      host.openLogin();
+      return;
     }
-    if (host.focus) host.focus(subject);
+    var id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (proposalDialogBlocked()) return;
+    var item = ownProposalById(id);
+    if (!item) return;
+    var row = item.row;
+    var startMs = hiveTime(row.start_date);
+    var endMs = hiveTime(row.end_date);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return;
+    state.proposalEditId = id;
+    state.proposalCreateTicket += 1;
+    setProposalCreateLocked(false);
+    applyProposalFormMode();
+    var creator = document.getElementById("proposalCreateCreator");
+    if (creator) creator.value = user;
+    var subject = document.getElementById("proposalCreateSubject");
+    if (subject) subject.value = String(row.subject || "").trim();
+    var link = document.getElementById("proposalCreatePermlink");
+    if (link) link.value = String(row.permlink || "");
+    var daily = document.getElementById("proposalCreateDaily");
+    if (daily) daily.value = dailyInputValue(assetInt(row.daily_pay, 3));
+    var receiver = document.getElementById("proposalCreateReceiver");
+    if (receiver) receiver.value = accountName(row.receiver) || user;
+    var total = document.getElementById("proposalCreateTotal");
+    if (total) total.value = "";
+    var startEl = document.getElementById("proposalCreateStart");
+    var endEl = document.getElementById("proposalCreateEnd");
+    if (startEl) startEl.value = localInputValue(new Date(startMs));
+    if (endEl) {
+      endEl.value = localInputValue(new Date(endMs));
+      if (startEl && startEl.value) endEl.min = startEl.value;
+      endEl.max = endEl.value;
+    }
+    setProposalCreateStatus("");
+    paintProposalCreateFigures();
+    showProposalDialog(subject);
   }
 
   async function submitCreateProposal() {
@@ -2976,6 +3086,134 @@
     }
   }
 
+  async function submitEditProposal() {
+    if (state.proposalCreateBusy || state.proposalEditId == null) return;
+    var host = state.host;
+    if (!host) return;
+    var user = signedInUser();
+    var id = state.proposalEditId;
+    if (!user || id == null) return;
+    var item = ownProposalById(id);
+    if (!item) {
+      setProposalCreateStatus("That proposal is no longer open.", true);
+      return;
+    }
+    var row = item.row;
+    var subject = proposalSubject(fieldValue("proposalCreateSubject"));
+    if (subject.error) {
+      setProposalCreateStatus(subject.error, true);
+      return;
+    }
+    var link = proposalPermlink(fieldValue("proposalCreatePermlink"));
+    if (link.error) {
+      setProposalCreateStatus(link.error, true);
+      return;
+    }
+    var daily = parseDailyMilli(fieldValue("proposalCreateDaily"));
+    if (daily.error) {
+      setProposalCreateStatus(daily.error, true);
+      return;
+    }
+    var currentDaily = assetInt(row.daily_pay, 3);
+    if (daily.milli > currentDaily) {
+      setProposalCreateStatus("Daily pay can only be lowered.", true);
+      return;
+    }
+    var startMs = hiveTime(row.start_date);
+    var currentEnd = hiveTime(row.end_date);
+    var endRaw = fieldValue("proposalCreateEnd");
+    var endMs = readLocalDate(endRaw);
+    if (!Number.isFinite(startMs) || !Number.isFinite(currentEnd) || !Number.isFinite(endMs)) {
+      setProposalCreateStatus("Choose an end.", true);
+      return;
+    }
+    var endChanged = localInputValue(new Date(currentEnd)) !== endRaw;
+    if (endChanged) {
+      if (endMs <= startMs) {
+        setProposalCreateStatus("The end has to be after the start.", true);
+        return;
+      }
+      if (endMs > currentEnd) {
+        setProposalCreateStatus("The end can only be moved earlier.", true);
+        return;
+      }
+    }
+    var currentSubject = String(row.subject || "").trim();
+    var currentPermlink = String(row.permlink || "");
+    if (
+      subject.subject === currentSubject &&
+      link.permlink === currentPermlink &&
+      daily.milli === currentDaily &&
+      !endChanged
+    ) {
+      setProposalCreateStatus("Nothing was changed.", true);
+      return;
+    }
+    var receiver = accountName(row.receiver) || user;
+    var subjectEl = document.getElementById("proposalCreateSubject");
+    if (subjectEl) subjectEl.value = subject.subject;
+    var linkEl = document.getElementById("proposalCreatePermlink");
+    if (linkEl) linkEl.value = link.permlink;
+    var ticket = state.proposalCreateTicket;
+    var gen = state.gen;
+    setProposalCreateLocked(true);
+    try {
+      if (link.permlink !== currentPermlink) {
+        setProposalCreateStatus("Checking the post…", false);
+        var post = await findProposalPost(user, receiver, link.permlink);
+        if (!proposalCreateCurrent(ticket, gen)) return;
+        if (!post) {
+          setProposalCreateStatus("That post was not found under the creator or the receiver.", true);
+          return;
+        }
+      }
+      setProposalCreateStatus("", false);
+      // Extension index 1 is update_proposal_end_date. hive-tx and Keychain
+      // both take that static variant as [1, { end_date }].
+      var extensions = endChanged ? [[1, { end_date: hiveStamp(new Date(endMs)) }]] : [];
+      await host.signActive(
+        user,
+        [
+          [
+            "update_proposal",
+            {
+              proposal_id: id,
+              creator: user,
+              daily_pay: chainHbd(daily.milli),
+              subject: subject.subject,
+              permlink: link.permlink,
+              extensions: extensions,
+            },
+          ],
+        ],
+        {
+          title: "Edit proposal",
+          lead: "Use hive keychain (recommended) or enter the active key of @" + user + ".",
+          cancelMessage: "The proposal was not changed.",
+          failMessage: "Could not update that proposal.",
+        }
+      );
+      if (ticket !== state.proposalCreateTicket) return;
+      row.subject = subject.subject;
+      row.permlink = link.permlink;
+      row.daily_pay = chainHbd(daily.milli);
+      if (endChanged) row.end_date = hiveStamp(new Date(endMs));
+      closeCreateProposal();
+      if (!alive(gen) || state.mode !== "proposals") return;
+      paintProposalStats();
+      paintProposalList();
+      loadProposals(state.gen);
+    } catch (err) {
+      if (ticket !== state.proposalCreateTicket) return;
+      if (err && err.ownerCancel) return;
+      var ov = document.getElementById("proposalOverlay");
+      if (!ov || ov.hidden) return;
+      setProposalCreateStatus((err && err.message) || "Could not update that proposal.", true);
+    } finally {
+      if (ticket === state.proposalCreateTicket) setProposalCreateLocked(false);
+    }
+  }
+
   var proposalDialogBound = false;
   function bindProposalDialog() {
     if (proposalDialogBound) return;
@@ -2997,7 +3235,17 @@
     var submit = document.getElementById("proposalCreateSubmit");
     if (submit) {
       submit.addEventListener("click", function () {
-        submitCreateProposal();
+        if (state.proposalEditId != null) submitEditProposal();
+        else submitCreateProposal();
+      });
+    }
+    var startInput = document.getElementById("proposalCreateStart");
+    if (startInput) {
+      startInput.addEventListener("keydown", function (event) {
+        if (startInput.readOnly) event.preventDefault();
+      });
+      startInput.addEventListener("beforeinput", function (event) {
+        if (startInput.readOnly) event.preventDefault();
       });
     }
     var permInput = document.getElementById("proposalCreatePermlink");
@@ -3086,6 +3334,15 @@
     return list;
   }
 
+  function ownProposalById(id) {
+    var rows = ownProposalRows();
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if (rows[i].id === id) return rows[i];
+    }
+    return null;
+  }
+
   function proposalOwnSubject(row) {
     return String((row && row.subject) || "")
       .replace(/\s+/g, " ")
@@ -3101,7 +3358,7 @@
       var item = rows[i];
       var subject = proposalOwnSubject(item.row);
       html +=
-        '<p class="proposal-own-note">' +
+        '<div class="proposal-own-note">' +
         '<span class="proposal-own-text">' +
         '<span class="proposal-own-label">Proposal' +
         (subject ? " " : "") +
@@ -3113,12 +3370,19 @@
         esc(item.standing) +
         ".</span>" +
         "</span>" +
-        '<button type="button" class="btn-ghost btn-compact proposal-own-cancel" data-proposal-cancel="' +
+        '<div class="dao-more proposal-own-more">' +
+        '<button type="button" class="dao-more-btn" aria-label="More actions for proposal #' +
         esc(String(item.id)) +
-        '" aria-label="Cancel proposal #' +
+        '" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>' +
+        '<div class="dao-more-menu" role="menu" hidden>' +
+        '<button type="button" class="dao-more-item" role="menuitem" data-proposal-edit="' +
         esc(String(item.id)) +
-        '">Cancel</button>' +
-        "</p>";
+        '">Edit</button>' +
+        '<button type="button" class="dao-more-item" role="menuitem" data-proposal-cancel="' +
+        esc(String(item.id)) +
+        '">Cancel proposal</button>' +
+        "</div></div>" +
+        "</div>";
     }
     return html;
   }
@@ -4645,9 +4909,17 @@
       openCreateProposal();
       return;
     }
+    var editProposal = event.target.closest && event.target.closest("[data-proposal-edit]");
+    if (editProposal) {
+      event.preventDefault();
+      closeProxyMenu();
+      openEditProposal(editProposal.getAttribute("data-proposal-edit") || "");
+      return;
+    }
     var cancelProposal = event.target.closest && event.target.closest("[data-proposal-cancel]");
     if (cancelProposal) {
       event.preventDefault();
+      closeProxyMenu();
       openProposalCancel(cancelProposal.getAttribute("data-proposal-cancel") || "");
       return;
     }

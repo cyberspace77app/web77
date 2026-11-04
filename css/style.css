@@ -5678,6 +5678,14 @@ a.wallet-tx-time:hover {
   min-width: 0;
 }
 
+#proposalCreateStart[readonly] {
+  pointer-events: none;
+}
+
+#proposalOverlay .overlay-card input:has(+ #proposalCreateDailyHint:not([hidden])) {
+  margin-bottom: 0.35rem;
+}
+
 #proposalCreateFee {
   color: var(--yellow);
 }
@@ -9690,6 +9698,7 @@ a.dao-stat-treasury:focus-visible {
 }
 
 .proposal-own-note {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.45rem 0.85rem;
@@ -9700,12 +9709,17 @@ a.dao-stat-treasury:focus-visible {
   line-height: 1.45;
 }
 
+.proposal-own-note:has(.is-open) {
+  z-index: 9;
+}
+
 .proposal-own-note:first-child {
   margin-top: 0;
 }
 
 .proposal-own-text {
   display: flex;
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -9722,8 +9736,16 @@ a.dao-stat-treasury:focus-visible {
   flex: 0 0 auto;
 }
 
-.proposal-own-cancel {
+.proposal-own-more {
+  position: static;
   flex: 0 0 auto;
+}
+
+.proposal-own-more .dao-more-menu {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
+  left: auto;
+  right: 0;
 }
 
 #proposalCancelLead {
