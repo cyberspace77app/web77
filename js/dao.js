@@ -3986,7 +3986,7 @@
     if (line == null) return phase === "upcoming" ? "Upcoming" : "Active";
     var above = bigIntOf(row.total_votes, 0n) > line;
     if (phase === "upcoming") return above ? "Upcoming · Approved" : "Upcoming · Not yet approved";
-    return above ? "Approved" : "Not approved";
+    return above ? "Active · Approved" : "Active · Not approved";
   }
 
   function proposalStandingNote(row) {
