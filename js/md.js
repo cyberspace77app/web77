@@ -2024,18 +2024,27 @@
   // portrait. Any other 3Speak frame stays landscape until its thumbnail is
   // taller than it is wide. The other hosted players are landscape. A wider
   // Skate Hype preview image drops the portrait frame. An Instagram Reel stays a link.
+  // ?orientation= or ?w= and ?h= replace that guess and stay locked.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
+    let html = "";
     const yt = youtubeIdFromUrl(url);
-    if (yt) return youtubeEmbedHtml(yt, youtubeIsShort(url) ? "portrait" : "");
-    const speak = threeSpeakFromUrl(url);
-    if (speak) return threeSpeakEmbedHtml(speak.id, speak.route);
-    const vimeo = vimeoFromUrl(url);
-    if (vimeo) return vimeoEmbedHtml(vimeo.id, vimeo.hash);
-    const hosted = hostedVideoFromUrl(url);
-    if (hosted && hosted.src) return iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
-    return "";
+    if (yt) html = youtubeEmbedHtml(yt, youtubeIsShort(url) ? "portrait" : "");
+    else {
+      const speak = threeSpeakFromUrl(url);
+      if (speak) html = threeSpeakEmbedHtml(speak.id, speak.route);
+      else {
+        const vimeo = vimeoFromUrl(url);
+        if (vimeo) html = vimeoEmbedHtml(vimeo.id, vimeo.hash);
+        else {
+          const hosted = hostedVideoFromUrl(url);
+          if (hosted && hosted.src) html = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
+        }
+      }
+    }
+    if (!html) return "";
+    return stampEmbedFrame(html, url);
   }
 
   function positiveMediaDim(value) {
@@ -2067,9 +2076,112 @@
     return { w: 0, h: 0 };
   }
 
+  // Author display hint on any video address. ?orientation=portrait,
+  // landscape, or square wins. Otherwise both ?w= and ?h= (width and height
+  // count too) lock the frame. A size only in the path is a file-video guess.
+  function videoFrameHint(url) {
+    const raw = unescapeHtml(String(url || "")).trim();
+    if (!raw) return null;
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch (err) {
+      return null;
+    }
+    const orient = String(parsed.searchParams.get("orientation") || "").trim().toLowerCase();
+    if (orient === "portrait" || orient === "landscape" || orient === "square") {
+      return { orient: orient, lock: true };
+    }
+    const w = positiveMediaDim(parsed.searchParams.get("w") || parsed.searchParams.get("width"));
+    const h = positiveMediaDim(parsed.searchParams.get("h") || parsed.searchParams.get("height"));
+    if (w && h) return { orient: h > w ? "portrait" : "landscape", lock: true };
+    return null;
+  }
+
+  function embedBoxAttrs(orient, lock) {
+    let cls = "embed";
+    if (orient === "portrait") cls += " embed-portrait";
+    else if (orient === "square") cls += " embed-square";
+    else if (orient === "twitch") cls += " embed-twitch";
+    let attrs = 'class="' + cls + '"';
+    if (lock && (orient === "portrait" || orient === "landscape" || orient === "square")) {
+      attrs += ' data-frame="' + orient + '"';
+    }
+    return attrs;
+  }
+
+  // The host guess is already in the markup. A hint replaces that frame and
+  // leaves the player address alone.
+  function stampEmbedFrame(html, url) {
+    const hint = videoFrameHint(url);
+    if (!hint) return html;
+    return String(html || "").replace(/<div class="embed[^"]*"/, "<div " + embedBoxAttrs(hint.orient, true));
+  }
+
+  // A pasted player is rewritten to a canonical watch URL. That rewrite drops
+  // the author's query, so the hint is copied back onto the address the embed
+  // step reads. The player src itself stays the canonical one.
+  function frameHintQuery(url) {
+    const hint = videoFrameHint(url);
+    if (!hint) return "";
+    let parsed;
+    try {
+      parsed = new URL(unescapeHtml(String(url || "")).trim());
+    } catch (err) {
+      return "";
+    }
+    const orient = String(parsed.searchParams.get("orientation") || "").trim().toLowerCase();
+    if (orient === hint.orient) return "orientation=" + orient;
+    const w = positiveMediaDim(parsed.searchParams.get("w") || parsed.searchParams.get("width"));
+    const h = positiveMediaDim(parsed.searchParams.get("h") || parsed.searchParams.get("height"));
+    if (w && h) return "w=" + w + "&h=" + h;
+    return "";
+  }
+
+  function keepFrameHint(plain, source) {
+    if (!plain) return "";
+    if (videoFrameHint(plain)) return plain;
+    const query = frameHintQuery(source);
+    if (!query) return plain;
+    const hashAt = plain.indexOf("#");
+    const hash = hashAt >= 0 ? plain.slice(hashAt) : "";
+    const base = hashAt >= 0 ? plain.slice(0, hashAt) : plain;
+    return base + (base.indexOf("?") === -1 ? "?" : "&") + query + hash;
+  }
+
+  function frameLocked(box) {
+    if (!box || !box.getAttribute) return false;
+    const locked = box.getAttribute("data-frame");
+    return locked === "portrait" || locked === "landscape" || locked === "square";
+  }
+
+  function fileVideoSrcIsPortrait(src) {
+    const hint = videoFrameHint(src);
+    if (hint) return hint.orient === "portrait";
+    const dims = mediaDimsFromUrl(src);
+    return dims.w > 0 && dims.h > dims.w;
+  }
+
+  function videoOpenSrc(tag) {
+    const open = /^<video\b[^>]*>/i.exec(String(tag || ""));
+    const openRaw = open ? open[0] : "";
+    let src = htmlAttr(openRaw, "src");
+    if (!src) {
+      const source = /<source\b[^>]*>/i.exec(String(tag || ""));
+      if (source) src = htmlAttr(source[0], "src");
+    }
+    return src;
+  }
+
+  function fileVideoBoxOpen(src, portrait) {
+    const hint = videoFrameHint(src);
+    const orient = hint ? hint.orient : portrait ? "portrait" : "";
+    return "<div " + embedBoxAttrs(orient, !!(hint && hint.lock)) + ">";
+  }
+
   // A direct file address. Query and #t= stay. A page that merely mentions
-  // .mp4 in the query is not one.
-  function directMp4Url(href) {
+  // .mp4 or .webm in the query is not one.
+  function directFileVideoUrl(href) {
     const raw = unescapeHtml(String(href || "")).trim();
     if (!raw || !isSafePostUrl(raw, "src")) return "";
     let url;
@@ -2086,7 +2198,7 @@
       return "";
     }
     if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
-    if (!/\.mp4$/i.test(path)) return "";
+    if (!/\.(?:mp4|webm)$/i.test(path)) return "";
     return raw;
   }
 
@@ -2108,34 +2220,31 @@
   function fileVideoHtml(src, poster, portrait) {
     const tag = fileVideoTag(src, poster);
     if (!tag) return "";
-    return '<div class="embed' + (portrait ? " embed-portrait" : "") + '">' + tag + "</div>";
+    return fileVideoBoxOpen(src, portrait) + tag + "</div>";
   }
 
-  // Known players first. A plain .mp4 is the same file player as a self-hosted
-  // <video>. The card uses the wrapped frame. The post body inserts the tag
-  // and frameAuthorVideos wraps it, so the two stay one path.
+  // Known players first. A plain .mp4 or .webm is the same file player as a
+  // self-hosted <video>. The card uses the wrapped frame. The post body
+  // inserts the tag and frameAuthorVideos wraps it, so the two stay one path.
+  // ?orientation= or ?w= and ?h= pick that frame and stay after the file loads.
   function urlEmbedHtml(href) {
     const player = playerHtmlFromUrl(href);
     if (player) return player;
-    const file = directMp4Url(href);
+    const file = directFileVideoUrl(href);
     if (!file) return "";
-    const dims = mediaDimsFromUrl(file);
-    return fileVideoHtml(file, "", dims.h > dims.w && dims.w > 0);
+    return fileVideoHtml(file, "", fileVideoSrcIsPortrait(file));
   }
 
   function videoMarkupIsPortrait(tag) {
+    const src = videoOpenSrc(tag);
+    const hint = videoFrameHint(src);
+    if (hint) return hint.orient === "portrait";
     const open = /^<video\b[^>]*>/i.exec(tag);
     const openRaw = open ? open[0] : "";
     const w = positiveMediaDim(htmlAttr(openRaw, "width"));
     const h = positiveMediaDim(htmlAttr(openRaw, "height"));
     if (w > 0 && h > 0) return h > w;
-    let src = htmlAttr(openRaw, "src");
-    if (!src) {
-      const source = /<source\b[^>]*>/i.exec(tag);
-      if (source) src = htmlAttr(source[0], "src");
-    }
-    const dims = mediaDimsFromUrl(src);
-    return dims.w > 0 && dims.h > dims.w;
+    return fileVideoSrcIsPortrait(src);
   }
 
   // A <video> plays in the card. A player address in src uses that player.
@@ -2176,7 +2285,7 @@
       const url = unescapeHtml(parts.url);
       const player = playerHtmlFromUrl(url);
       if (player) return player + parts.trail;
-      const file = directMp4Url(url);
+      const file = directFileVideoUrl(url);
       if (file) {
         const tag = fileVideoTag(file);
         if (tag) return tag + parts.trail;
@@ -2444,11 +2553,20 @@
     if (!video || String(video.nodeName || "").toLowerCase() !== "video") return;
     const box = typeof video.closest === "function" ? video.closest(".embed") : null;
     if (!box) return;
+    // ?orientation= or ?w= and ?h= is the frame the author asked for.
+    if (frameLocked(box)) {
+      const locked = box.getAttribute("data-frame");
+      box.classList.toggle("embed-portrait", locked === "portrait");
+      box.classList.toggle("embed-square", locked === "square");
+      box.classList.remove("embed-twitch");
+      return;
+    }
     const w = Number(video.videoWidth) || 0;
     const h = Number(video.videoHeight) || 0;
     // A file that has not reported a size yet keeps the hint from the address
     // or the width and height attributes. Zero here is not landscape.
     if (w < 1 || h < 1) return;
+    box.classList.remove("embed-square");
     box.classList.toggle("embed-portrait", fileVideoIsPortrait(w, h));
   }
 
@@ -2471,7 +2589,7 @@
   }
 
   function applySkatehypeOrient(box, width, height) {
-    if (!box || box.getAttribute("data-orient-set")) return;
+    if (!box || box.getAttribute("data-orient-set") || frameLocked(box)) return;
     box.setAttribute("data-orient-set", "1");
     if (skatehypePreviewIsLandscape(width, height)) box.classList.remove("embed-portrait");
   }
@@ -2489,7 +2607,7 @@
   }
 
   function watchSkatehypeBox(box) {
-    if (!box || box.getAttribute("data-orient-watch") || box.getAttribute("data-orient-set")) return;
+    if (!box || frameLocked(box) || box.getAttribute("data-orient-watch") || box.getAttribute("data-orient-set")) return;
     const id = skatehypeFrameId(box);
     if (!id) return;
     box.setAttribute("data-orient-watch", "1");
@@ -2543,7 +2661,7 @@
   // A short already starts portrait, and a wider thumbnail puts that one back
   // in the landscape frame.
   function watchThreeSpeakBox(box) {
-    if (!box || box.getAttribute("data-speak-watch")) return;
+    if (!box || frameLocked(box) || box.getAttribute("data-speak-watch")) return;
     const id = threeSpeakFrameId(box);
     if (!id || typeof fetch !== "function") return;
     const short = box.getAttribute("data-speak-kind") === "short";
@@ -2558,7 +2676,7 @@
         if (!isSafePostUrl(thumb, "src")) return;
         const probe = new Image();
         probe.onload = function () {
-          if (!box.isConnected) return;
+          if (!box.isConnected || frameLocked(box)) return;
           const tall = probe.naturalHeight > probe.naturalWidth;
           const wide = probe.naturalWidth > probe.naturalHeight;
           if (short) {
@@ -2614,14 +2732,15 @@
     }
   }
 
-  // An author <video>, including one built from a pasted .mp4 address, uses
-  // the same frame as a hosted player. Width and height, or a size in the
-  // file address, pick the first frame. The file header replaces that once
-  // it has loaded.
+  // An author <video>, including one built from a pasted .mp4 or .webm
+  // address, uses the same frame as a hosted player. Width and height, a
+  // size in the file address, or ?orientation= pick the first frame. An
+  // orientation or ?w=&h= hint stays. A path size is replaced by the file
+  // header once it has loaded.
   function frameAuthorVideos(html) {
     return String(html || "").replace(/<video\b[\s\S]*?<\/video>/gi, function (tag) {
-      const portrait = videoMarkupIsPortrait(tag);
-      return '<div class="embed' + (portrait ? " embed-portrait" : "") + '">' + tag + "</div>";
+      const src = videoOpenSrc(tag);
+      return fileVideoBoxOpen(src, videoMarkupIsPortrait(tag)) + tag + "</div>";
     });
   }
 
@@ -3642,26 +3761,27 @@
     ) {
       const id = youtubeIdFromUrl(src);
       if (!id) return "";
-      if (youtubeIsShort(src)) return "https://www.youtube.com/shorts/" + id;
-      return "https://www.youtube.com/watch?v=" + id;
+      if (youtubeIsShort(src)) return keepFrameHint("https://www.youtube.com/shorts/" + id, src);
+      return keepFrameHint("https://www.youtube.com/watch?v=" + id, src);
     }
     if (host === "3speak.tv" || host === "play.3speak.tv") {
       const info = threeSpeakFromUrl(url.href);
       if (!info) return "";
-      if (info.route === "shorts") return "https://3speak.tv/shorts?v=" + info.id;
-      if (info.route === "page") return "https://3speak.tv/@" + info.id;
-      return "https://play.3speak.tv/" + info.route + "?v=" + info.id;
+      if (info.route === "shorts") return keepFrameHint("https://3speak.tv/shorts?v=" + info.id, src);
+      if (info.route === "page") return keepFrameHint("https://3speak.tv/@" + info.id, src);
+      return keepFrameHint("https://play.3speak.tv/" + info.route + "?v=" + info.id, src);
     }
     if (host === "vimeo.com" || host === "player.vimeo.com") {
       const info = vimeoFromUrl(url.href);
       if (!info) return "";
-      return info.hash
-        ? "https://vimeo.com/" + info.id + "/" + info.hash
-        : "https://vimeo.com/" + info.id;
+      return keepFrameHint(
+        info.hash ? "https://vimeo.com/" + info.id + "/" + info.hash : "https://vimeo.com/" + info.id,
+        src
+      );
     }
     const hosted = hostedVideoFromUrl(url.href);
-    if (hosted && hosted.plain) return hosted.plain;
-    if (directMp4Url(url.href)) return url.href;
+    if (hosted && hosted.plain) return keepFrameHint(hosted.plain, src);
+    if (directFileVideoUrl(url.href)) return url.href;
     return "";
   }
 

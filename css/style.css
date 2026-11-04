@@ -3328,6 +3328,14 @@ a.tag:hover {
   }
 }
 
+.post-body .embed.embed-square,
+.comment-body .embed.embed-square,
+.post-card .embed.embed-square {
+  height: auto;
+  padding-bottom: 0;
+  aspect-ratio: 1 / 1;
+}
+
 .post-body .embed.embed-twitch,
 .comment-body .embed.embed-twitch,
 .post-card .embed.embed-twitch {

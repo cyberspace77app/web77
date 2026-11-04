@@ -11162,7 +11162,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function videoBox(html, body) {
-    const portrait = /embed-portrait/.test(String(html || ""));
+    const source = String(html || "");
+    if (/embed-square/.test(source)) return { w: 600, h: 600, portrait: false };
+    const portrait = /embed-portrait/.test(source);
     const width =
       /<video\b[^>]*\bwidth=["']?(\d{1,5})/i.exec(html || "") ||
       /<video\b[^>]*\bwidth=["']?(\d{1,5})/i.exec(body || "");
@@ -11299,7 +11301,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // The card stamps a player kind. Opening a post pauses those cards.
-  // A self-hosted file and a pasted .mp4 are <video> elements. Those still
+  // A self-hosted file and a pasted .mp4 or .webm are <video> elements. Those still
   // autoplay in the open post, muted, when the setting is on.
   function feedPlayerKind(html) {
     const s = String(html || "");
@@ -11579,8 +11581,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // A tall portrait clip can fill the screen while most of its own box is
-  // still outside. That one is on screen. A clip counts as outside once less
-  // than a few pixels of it remain in the viewport.
+  // still outside. That one stays on. Any other clip pauses as it nears the
+  // top or bottom and less than a quarter of it is still in view.
   function feedVideoMetrics(el) {
     if (!el || !el.isConnected || (el.closest && el.closest("template, .nsfw-hold"))) return null;
     const rect = el.getBoundingClientRect();
@@ -11589,12 +11591,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (vh < 1) return null;
     if (rect.bottom <= 0 || rect.top >= vh) return { onScreen: false, ready: false, rank: 0 };
     const visible = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
-    if (visible < 8) return { onScreen: false, ready: false, rank: 0 };
     const ratio = visible / rect.height;
     const cover = visible / vh;
     const dist = Math.abs(rect.top + rect.height / 2 - vh / 2) / vh;
     return {
-      onScreen: true,
+      onScreen: ratio >= 0.25 || cover >= 0.5,
       ready: ratio >= 0.55 || cover >= 0.5,
       rank: Math.max(ratio, Math.min(1, cover)) - dist * 0.15,
     };
@@ -30586,7 +30587,7 @@ let CS77_FILTER_LOW_REP = 20;
     return `<div class="card-video embed-speak">${paused}</div>`;
   }
 
-  // A pasted .mp4 or a self-hosted <video> stays on the card. No data-player,
+  // A pasted .mp4, .webm, or a self-hosted <video> stays on the card. No data-player,
   // so the feed autoplay watcher leaves it paused until the viewer hits play.
   function embedFileVideoHtml(post) {
     if (!showNsfwContent() && postHasNsfw(post)) return "";
