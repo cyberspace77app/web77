@@ -4108,8 +4108,8 @@
             '<p class="dao-rank" id="proposalPhase"></p>' +
             '<p class="dao-note" id="proposalStanding" hidden></p>' +
             '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
-            '<div class="proposal-rates" id="proposalRates" hidden></div>' +
             '<dl class="dao-facts" id="proposalFacts"></dl>' +
+            '<div class="proposal-rates" id="proposalRates" hidden></div>' +
             '<section class="dao-supporters">' +
             '<h3 class="dao-kicker">Supporters</h3>' +
             proposalSupporterCountHtml() +
@@ -4125,21 +4125,18 @@
     }
     paintProposalFigures();
     paintVoteNote();
-    loadProposalRates(gen, id, row);
+    loadProposalHistory(gen, id, row);
   }
 
-  // update_proposal can only lower daily_pay. The proposal row keeps the
-  // latest rate, so the earlier rates come from the creator's history.
+  // update_proposal can only lower daily_pay, and since HF25 it can only move
+  // the end date earlier. remove_proposal drops the proposal. The row keeps
+  // the latest rate and end, so the earlier values come from the creator's history.
   function dailyMilliOf(asset) {
     if (asset && typeof asset === "object") return paidMilli(asset.amount);
     return paidMilli(asset);
   }
 
-  function proposalRateSegments(ops, row) {
-    var id = proposalId(row);
-    var start = hiveTime(row.start_date);
-    var end = hiveTime(row.end_date);
-    if (id == null || !Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+  function proposalCreateOp(ops, id) {
     var fee = null;
     var i;
     for (i = 0; i < ops.length; i += 1) {
@@ -4149,16 +4146,25 @@
         fee = ops[i];
       }
     }
-    if (!fee) return [];
-    var created = null;
+    if (!fee) return null;
     for (i = 0; i < ops.length; i += 1) {
       var createOp = ops[i] && ops[i].op;
-      if (ops[i].trx_id === fee.trx_id && createOp && createOp.type === "create_proposal_operation") created = ops[i];
+      if (ops[i].trx_id === fee.trx_id && createOp && createOp.type === "create_proposal_operation") return ops[i];
     }
+    return null;
+  }
+
+  function proposalRateSegments(ops, row) {
+    var id = proposalId(row);
+    var start = hiveTime(row.start_date);
+    var end = hiveTime(row.end_date);
+    if (id == null || !Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+    var created = proposalCreateOp(ops, id);
     if (!created) return [];
     var original = dailyMilliOf(created.op.value && created.op.value.daily_pay);
     if (original == null) return [];
     var cuts = [];
+    var i;
     for (i = 0; i < ops.length; i += 1) {
       var item = ops[i];
       var op = item && item.op;
@@ -4198,7 +4204,127 @@
     return html + "</ul>";
   }
 
-  async function fetchProposalRateOps(creator, current) {
+  // Extension index 1 is update_proposal_end_date. Account history stores it
+  // as {type, value}. A broadcast form is [1, {end_date}].
+  function extensionEnd(value) {
+    var list = value && value.extensions;
+    if (!list || !list.length) return NaN;
+    var i;
+    for (i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      if (!item) continue;
+      if (item.type === "update_proposal_end_date") return hiveTime(item.value && item.value.end_date);
+      if (item.length && item[1] && item[1].end_date) return hiveTime(item[1].end_date);
+    }
+    return NaN;
+  }
+
+  function proposalEndSegments(ops, row) {
+    var id = proposalId(row);
+    var start = hiveTime(row.start_date);
+    if (id == null || !Number.isFinite(start)) return [];
+    var created = proposalCreateOp(ops, id);
+    if (!created) return [];
+    var original = hiveTime(created.op.value && created.op.value.end_date);
+    if (!Number.isFinite(original) || original <= start) return [];
+    var moves = [];
+    var i;
+    for (i = 0; i < ops.length; i += 1) {
+      var item = ops[i];
+      var op = item && item.op;
+      var value = op && op.value;
+      if (!op || op.type !== "update_proposal_operation" || Number(value && value.proposal_id) !== id) continue;
+      var at = hiveTime(item.timestamp);
+      var next = extensionEnd(value);
+      if (!Number.isFinite(at) || !Number.isFinite(next)) continue;
+      moves.push({ at: at, end: next });
+    }
+    moves.sort(function (a, b) {
+      return a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
+    });
+    var end = original;
+    var steps = [{ end: original }];
+    for (i = 0; i < moves.length; i += 1) {
+      if (moves[i].end >= end || moves[i].end <= start) continue;
+      steps.push(moves[i]);
+      end = moves[i].end;
+    }
+    return steps.length > 1 ? steps : [];
+  }
+
+  function proposalEndHistoryHtml(steps) {
+    var rows = [];
+    var i;
+    for (i = 0; i < steps.length; i += 1) {
+      var endText = shortDate(steps[i].end);
+      var when = i + 1 < steps.length ? shortDate(steps[i + 1].at) : shortDate(steps[i].at);
+      if (!endText || !when) return "";
+      var verb = i + 1 < steps.length ? "until " : "from ";
+      rows.push("<li>" + esc(endText) + " <span>" + esc(verb + when) + "</span></li>");
+    }
+    if (!rows.length) return "";
+    return "<p>The end date was moved earlier.</p><ul>" + rows.join("") + "</ul>";
+  }
+
+  function proposalRemovedAt(ops, id) {
+    var at = NaN;
+    var i;
+    for (i = 0; i < ops.length; i += 1) {
+      var item = ops[i];
+      var op = item && item.op;
+      var value = op && op.value;
+      if (!op || op.type !== "remove_proposal_operation") continue;
+      var ids = value && value.proposal_ids;
+      if (!ids || !ids.length) continue;
+      var hit = false;
+      var j;
+      for (j = 0; j < ids.length; j += 1) {
+        if (Number(ids[j]) === id) hit = true;
+      }
+      if (!hit) continue;
+      var t = hiveTime(item.timestamp);
+      if (!Number.isFinite(t)) continue;
+      if (!Number.isFinite(at) || t < at) at = t;
+    }
+    return at;
+  }
+
+  // An end date at or before the update stops the proposal then, ahead of the
+  // end it had. That is an early cancel even when remove_proposal was not used.
+  function proposalEndedEarlyAt(steps) {
+    if (!steps || steps.length < 2) return NaN;
+    var prev = steps[0].end;
+    var at = NaN;
+    var i;
+    for (i = 1; i < steps.length; i += 1) {
+      var step = steps[i];
+      if (step.end <= step.at && step.at < prev && (!Number.isFinite(at) || step.at < at)) at = step.at;
+      prev = step.end;
+    }
+    return at;
+  }
+
+  function proposalCancelAt(ops, row, endSteps) {
+    var removed = proposalRemovedAt(ops, proposalId(row));
+    if (Number.isFinite(removed)) return removed;
+    return proposalEndedEarlyAt(endSteps);
+  }
+
+  function proposalCancelHtml(at) {
+    var when = shortDate(at);
+    if (!when) return "";
+    return "<p>The proposal was cancelled.</p><ul><li>" + esc(when) + "</li></ul>";
+  }
+
+  function proposalHistoryHtml(rates, ends, canceledAt) {
+    var html = "";
+    if (rates && rates.length) html += proposalRateHistoryHtml(rates);
+    if (ends && ends.length) html += proposalEndHistoryHtml(ends);
+    if (Number.isFinite(canceledAt)) html += proposalCancelHtml(canceledAt);
+    return html;
+  }
+
+  async function fetchProposalHistoryOps(creator, current) {
     var nodes = voterNodes();
     var name = encodeURIComponent(creator);
     var i;
@@ -4214,14 +4340,14 @@
             nodes[i] +
               "/hafah-api/accounts/" +
               name +
-              "/operations?operation-types=44,47,87&page-size=100&page=" +
+              "/operations?operation-types=44,46,47,87&page-size=100&page=" +
               page
           );
           if (!current()) return null;
-          if (!res.ok) throw new Error("rate history");
+          if (!res.ok) throw new Error("proposal history");
           var data = await res.json();
           var list = data && Array.isArray(data.operations_result) ? data.operations_result : null;
-          if (!list) throw new Error("rate history");
+          if (!list) throw new Error("proposal history");
           var j;
           for (j = 0; j < list.length; j += 1) {
             var key = list[j] && list[j].operation_id;
@@ -4240,18 +4366,21 @@
     return null;
   }
 
-  async function loadProposalRates(gen, id, row) {
+  async function loadProposalHistory(gen, id, row) {
     var creator = accountName(row && row.creator);
-    if (!creator || isReturnProposal(row)) return;
+    if (!creator) return;
     function current() {
       return alive(gen) && state.mode === "proposal" && state.detailProposalId === id;
     }
-    var ops = await fetchProposalRateOps(creator, current);
+    var ops = await fetchProposalHistoryOps(creator, current);
     if (!current() || !ops) return;
-    var segments = proposalRateSegments(ops, row);
+    var rates = isReturnProposal(row) ? [] : proposalRateSegments(ops, row);
+    var ends = proposalEndSegments(ops, row);
+    var canceledAt = proposalCancelAt(ops, row, ends);
+    var html = proposalHistoryHtml(rates, ends, canceledAt);
     var box = document.getElementById("proposalRates");
-    if (!box || !current() || !segments.length) return;
-    box.innerHTML = proposalRateHistoryHtml(segments);
+    if (!box || !current() || !html) return;
+    box.innerHTML = html;
     box.hidden = false;
   }
 

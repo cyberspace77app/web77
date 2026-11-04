@@ -9413,7 +9413,7 @@ body.is-dao #view {
 
 .proposal-rates {
   max-width: 40rem;
-  margin: -0.35rem 0 1.15rem;
+  margin: 1.15rem 0 0;
 }
 
 .proposal-rates p {
@@ -9422,6 +9422,10 @@ body.is-dao #view {
   font-size: 1.05rem;
   line-height: 1.45;
   color: var(--gray);
+}
+
+.proposal-rates ul + p {
+  margin-top: 0.9rem;
 }
 
 .proposal-rates ul {
