@@ -9683,11 +9683,6 @@ a.dao-stat-treasury:focus-visible {
     display: none;
   }
 
-  .dao-table {
-    table-layout: fixed;
-    width: 100%;
-  }
-
   .dao-table th.dao-account,
   .dao-table td.dao-account {
     padding-left: 0.3rem;
@@ -9697,7 +9692,8 @@ a.dao-stat-treasury:focus-visible {
 
   .dao-table th:last-child,
   .dao-table td:last-child {
-    width: 11rem;
+    /* 1% shrinks the column to the stake text. A fixed width left a gap beside it. */
+    width: 1%;
     white-space: nowrap;
     text-align: right;
     padding-left: 0.4rem;
