@@ -8003,13 +8003,17 @@ body:has(#pollVotesOverlay:not([hidden])) {
     padding:1.5rem 0 0 0;
   }
 
-  /* Publish meets the top of the screen. margin:auto would center a short card. */
+  /* Publish meets the top of the screen. margin:auto would center a short card.
+     The card is full-bleed, so the panel frame is only a line against the viewport. */
   #publishOverlay {
     padding-top: 0;
   }
 
   #publishOverlay .publish-card {
     margin-top: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   #peopleOverlay,
