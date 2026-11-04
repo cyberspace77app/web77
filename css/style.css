@@ -6,6 +6,7 @@
   --bg-hint: #101010;
   --bg-input: #101010;
   --bg-card: rgba(0, 0, 0, 0.35);
+  --bg-avatar: #12080c;
   --border: #2a1020;
   --border-hot: #e31337;
   --red: #e31337;
@@ -2085,7 +2086,7 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   height: 28px;
   border-radius: 50%;
   object-fit: cover;
-  background: #12080c;
+  background: var(--bg-avatar);
 }
 
 .author-link {
@@ -2235,7 +2236,6 @@ a.community:hover {
   height: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #12080c;
 }
 
 .card-stats {
@@ -2451,7 +2451,6 @@ a.community:hover {
   object-fit: contain;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: #12080c;
   display: block;
 }
 
@@ -2469,7 +2468,6 @@ a.community:hover {
   padding: 1.35rem 1rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #12080c;
   text-align: center;
   min-height: 11.5rem;
 }
@@ -2480,7 +2478,6 @@ a.community:hover {
 
 .post-card > .nsfw-hold {
   margin: 0;
-  background: transparent;
 }
 
 .nsfw-hold.is-portrait {
@@ -3379,7 +3376,6 @@ a.tag:hover {
 .comment-body .embed video,
 .post-card .embed video {
   object-fit: contain;
-  background: #12080c;
 }
 
 .comment-body .embed {
@@ -4256,7 +4252,6 @@ a.tag:hover {
   object-position: center;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #12080c;
   margin: 0 0 1.75rem;
 }
 
@@ -8738,7 +8733,6 @@ min-height: 0;
   object-fit: cover;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: #12080c;
   flex: 0 0 auto;
 }
 
@@ -8785,7 +8779,6 @@ min-height: 0;
   object-fit: cover;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #12080c;
   margin-bottom: 0.55rem;
 }
 
