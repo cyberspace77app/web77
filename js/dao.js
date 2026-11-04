@@ -1747,8 +1747,22 @@
       return { above: list, threshold: null, below: [] };
     }
     if (filter === "upcoming") {
-      list.sort(compareVotes);
-      return { above: list, threshold: null, below: [] };
+      // Proposal 0 stays active, so the phase filter leaves it out. Show it
+      // here as the funding line when this tab has rows, or when the username
+      // search names its creator or receiver. An empty upcoming tab stays empty.
+      var listed = false;
+      for (i = 0; i < list.length; i += 1) {
+        if (isReturnProposal(list[i])) listed = true;
+      }
+      if (!listed) {
+        for (i = 0; i < rows.length; i += 1) {
+          if (!isReturnProposal(rows[i])) continue;
+          if (query && !proposalNameHit(rows[i], query)) break;
+          if (!list.length && !query) break;
+          list.push(rows[i]);
+          break;
+        }
+      }
     }
     var ret = null;
     for (i = 0; i < list.length; i += 1) {
@@ -2109,12 +2123,17 @@
     var i;
     for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
     if (groups.threshold) {
-      var showFundingLine = filter !== "all" && !(filter === "active" && state.proposalQuery);
+      // Active and Upcoming draw the checker when the username field is empty.
+      // The "Currently not funded" note stays on Active. Upcoming has not
+      // started paying, so the line only marks which of those proposals are above it.
+      var showFundingLine = (filter === "active" || filter === "upcoming") && !state.proposalQuery;
       if (showFundingLine) {
         html.push('<p class="dao-split proposal-threshold" aria-hidden="true"><span></span></p>');
       }
       html.push(proposalRowHtml(groups.threshold, now, filter, line));
-      if (showFundingLine) html.push('<p class="proposal-unfunded">Currently not funded</p>');
+      if (showFundingLine && filter === "active") {
+        html.push('<p class="proposal-unfunded">Currently not funded</p>');
+      }
     }
     for (i = 0; i < groups.below.length; i += 1) html.push(proposalRowHtml(groups.below[i], now, filter, line));
     html.push(proposalTotalsHtml(groups, now, line, filter));
