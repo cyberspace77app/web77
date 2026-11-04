@@ -1867,7 +1867,7 @@
   function proposalApprovedHtml() {
     return (
       '<span class="proposal-approved" tabindex="0" aria-label="approved">' +
-      '<svg class="proposal-approved-check" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<svg class="proposal-approved-check" viewBox="-2 -2 28 28" aria-hidden="true">' +
       VOTE_CHECK_SVG +
       "</svg>" +
       '<span class="session-stat-tip" role="tooltip">approved</span></span>'
