@@ -157,11 +157,13 @@ let CS77_FILTER_LOW_REP = 20;
     subspaces: { query: "", looked: false, loading: false, loadingMore: false, error: "", results: [], done: false, cursor: "" },
   };
   const SEARCH_USER_LIMIT = 100;
-  // Users search while typing. Spaces and subspaces still search on submit.
+  // Users and spaces search while typing. Subspaces still search on submit.
   const SEARCH_USER_DEBOUNCE_MS = 200;
   let searchUserTimer = 0;
+  let spaceLiveTimer = 0;
   // Gboard writes a tapped suggestion after compositionend.
   let searchComposeTimer = 0;
+  let spaceComposeTimer = 0;
   const SEARCH_TAG_LIMIT = 100;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
@@ -179,6 +181,9 @@ let CS77_FILTER_LOW_REP = 20;
     cursor: "",
   };
   let spaceTagSearchGen = 0;
+  // Spaces on /search use their own generation so typing there does not
+  // cancel an in-flight user or subspace search.
+  let spacePageSearchGen = 0;
   let trendingTagNamesCache = null;
   let trendingTagNamesAt = 0;
   // History entry id for the feed currently mounted in #view. Leaving that
@@ -11580,9 +11585,10 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  // A tall portrait clip can fill the screen while most of its own box is
-  // still outside. That one stays on. Any other clip pauses as it nears the
-  // top or bottom and less than a quarter of it is still in view.
+  // A clip starts once half of it is in view. It pauses as it nears the top
+  // or bottom and less than a quarter of it is still in view. A tall portrait
+  // clip that still fills the screen stays on, even when most of its box is
+  // outside.
   function feedVideoMetrics(el) {
     if (!el || !el.isConnected || (el.closest && el.closest("template, .nsfw-hold"))) return null;
     const rect = el.getBoundingClientRect();
@@ -11596,7 +11602,7 @@ let CS77_FILTER_LOW_REP = 20;
     const dist = Math.abs(rect.top + rect.height / 2 - vh / 2) / vh;
     return {
       onScreen: ratio >= 0.25 || cover >= 0.5,
-      ready: ratio >= 0.55 || cover >= 0.5,
+      ready: ratio >= 0.5 || cover >= 0.5,
       rank: Math.max(ratio, Math.min(1, cover)) - dist * 0.15,
     };
   }
@@ -12059,30 +12065,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function runSpaceTagSearch() {
-    const input = $("#spaceTagSearchInput");
-    if (!input) return;
-    spaceTagSearch.box = input.value;
-    const raw = String(input.value || "").trim();
-    spaceTagSearchGen += 1;
-    const gen = spaceTagSearchGen;
-    if (!raw) {
-      spaceTagSearch.box = "";
-      input.value = "";
-      resetSearchPageState(spaceTagSearch);
-      setTagsStatus("");
-      setSearchMoreEl($("#spaceTagSearchMore"), false);
-      paintSpaceSearch("directory");
-      return;
-    }
-    resetSearchPageState(spaceTagSearch);
-    spaceTagSearch.box = input.value;
-    spaceTagSearch.query = raw;
-    spaceTagSearch.looked = true;
-    spaceTagSearch.loading = true;
-    setTagsStatus("");
-    setSearchMoreEl($("#spaceTagSearchMore"), false);
-    paintSpaceSearch("directory");
-    await fillSpaceSearch("directory", gen, true);
+    await submitSpaceSearch("directory");
   }
 
   async function renderTagsPage() {
@@ -12111,6 +12094,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintFavoriteTags();
     paintSpaceSearch("directory");
     maybeLoadMoreSpaceSearch("directory");
+    resumeSpaceSearch("directory");
     const needFeed = !feedState.items.length;
     paintSuggestedTags(needFeed);
     const input = $("#spaceTagSearchInput");
@@ -13535,8 +13519,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // One tag search for /search/spaces ("page") and /spaces ("directory").
-  // The directory keeps favorites in their own list and hides suggestions
-  // while results are open. The search page shows favorites in the same list.
+  // A valid typed name is painted immediately. Scan matches are appended
+  // beside it. The directory keeps favorites in their own list and hides
+  // suggestions while results are open. The search page shows favorites
+  // in the same list until a search starts.
   function spaceSearchHost(kind) {
     if (kind === "directory") {
       return {
@@ -13559,7 +13545,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {
       state: searchPages.spaces,
       generation: function () {
-        return searchGen;
+        return spacePageSearchGen;
       },
       isCurrent: function () {
         return searchPageName() === "spaces";
@@ -13584,10 +13570,11 @@ let CS77_FILTER_LOW_REP = 20;
     const list = host.resultsEl();
     if (!list) return;
     if (kind === "page" && !host.isCurrent()) return;
-    if (state.loading) {
+    // A valid typed name stays in the row while later matches are appended.
+    if (state.results.length) {
       list.hidden = false;
-      list.className = "community-list";
-      list.innerHTML = searchLoadingRowHtml();
+      list.className = "tags-fav-list";
+      list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
       return;
     }
     if (!state.looked) {
@@ -13600,25 +13587,16 @@ let CS77_FILTER_LOW_REP = 20;
       paintSearchFavorites(list, "spaces");
       return;
     }
-    if (state.error && !state.results.length) {
+    if (state.loading || !state.done) {
       list.hidden = false;
       list.className = "community-list";
-      list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(state.error)}</p>`;
-      return;
-    }
-    if (!state.results.length) {
-      list.hidden = false;
-      list.className = "community-list";
-      if (!state.done) {
-        list.innerHTML = searchLoadingRowHtml();
-        return;
-      }
-      list.innerHTML = `<p class="feed-hint tags-empty">No spaces matched that search.</p>`;
+      list.innerHTML = searchLoadingRowHtml();
       return;
     }
     list.hidden = false;
-    list.className = "tags-fav-list";
-    list.innerHTML = state.results.map((tag) => searchTagChipHtml(tag)).join("");
+    list.className = "community-list";
+    const message = state.error || "No spaces matched that search.";
+    list.innerHTML = `<p class="feed-hint tags-empty">${HiveMd.escapeHtml(message)}</p>`;
   }
 
   function appendSpaceSearch(kind, items) {
@@ -13649,7 +13627,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (!first && state.loading) return;
     if (first) state.loading = true;
     else state.loadingMore = true;
-    if (!first) setSearchMoreEl(host.moreEl(), true);
+    // The typed name is already in the row. Further matches use the more row.
+    if (!first || state.results.length) setSearchMoreEl(host.moreEl(), true);
     try {
       let added = [];
       let loops = 0;
@@ -13720,9 +13699,210 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
+  // The space a person typed, when it is a real tag. Shown before the scan.
+  function spaceSearchTypedName(raw) {
+    const key = normalizeTag(raw);
+    if (!key || !isValidTag(key)) return "";
+    return normalizeRouteTag(key) || "";
+  }
+
+  function spaceSearchInput(kind) {
+    return $(kind === "directory" ? "#spaceTagSearchInput" : "#searchInput");
+  }
+
+  function bumpSpaceSearchGen(kind) {
+    if (kind === "directory") {
+      spaceTagSearchGen += 1;
+      return spaceTagSearchGen;
+    }
+    spacePageSearchGen += 1;
+    return spacePageSearchGen;
+  }
+
+  function cancelSpaceSearchTimer() {
+    if (spaceLiveTimer) {
+      clearTimeout(spaceLiveTimer);
+      spaceLiveTimer = 0;
+    }
+    if (spaceComposeTimer) {
+      clearTimeout(spaceComposeTimer);
+      spaceComposeTimer = 0;
+    }
+  }
+
+  // Paint the typed space at once. Matching tags are appended when the scan returns.
+  function previewSpaceQuery(kind, raw) {
+    const host = spaceSearchHost(kind);
+    const state = host.state;
+    const typed = spaceSearchTypedName(raw);
+    const trimmed = String(raw || "").trim();
+    const box = kind === "directory" ? String(raw || "") : searchBox;
+    if (kind === "directory") state.box = box;
+    if (!typed) {
+      if (!state.looked && !state.loading && !state.loadingMore && !state.query) return;
+      bumpSpaceSearchGen(kind);
+      resetSearchPageState(state);
+      if (kind === "directory") state.box = box;
+      host.setStatus("");
+      setSearchMoreEl(host.moreEl(), false);
+      if (host.isCurrent()) paintSpaceSearch(kind);
+      return;
+    }
+    if (
+      state.looked &&
+      !state.error &&
+      spaceSearchTypedName(state.query) === typed &&
+      state.results[0] === typed
+    ) {
+      return;
+    }
+    bumpSpaceSearchGen(kind);
+    resetSearchPageState(state);
+    if (kind === "directory") state.box = box;
+    state.query = trimmed;
+    state.looked = true;
+    state.results = [typed];
+    host.setStatus("");
+    setSearchMoreEl(host.moreEl(), false);
+    if (host.isCurrent()) paintSpaceSearch(kind);
+  }
+
+  function resumeSpaceSearch(kind) {
+    const host = spaceSearchHost(kind);
+    if (!host.isCurrent()) return;
+    const state = host.state;
+    if (!state.looked || state.loading || state.loadingMore || state.done) return;
+    if (!spaceSearchTypedName(state.query) || state.results[0] !== spaceSearchTypedName(state.query)) return;
+    fillSpaceSearch(kind, host.generation(), true);
+  }
+
+  async function ensureSpaceSearch(kind) {
+    const host = spaceSearchHost(kind);
+    if (!host.isCurrent()) return;
+    const state = host.state;
+    const typed = spaceSearchTypedName(state.query);
+    if (!typed || state.results[0] !== typed) return;
+    if (state.loading || state.loadingMore) return;
+    if (state.done && !state.error) return;
+    if (state.error) {
+      state.error = "";
+      state.done = false;
+      state.cursor = "";
+      state.results = [typed];
+      state.loading = true;
+      const gen = bumpSpaceSearchGen(kind);
+      host.setStatus("");
+      setSearchMoreEl(host.moreEl(), false);
+      if (host.isCurrent()) paintSpaceSearch(kind);
+      await fillSpaceSearch(kind, gen, true);
+      return;
+    }
+    await fillSpaceSearch(kind, host.generation(), true);
+  }
+
+  async function beginSpaceSearch(kind, raw) {
+    cancelSpaceSearchTimer();
+    const host = spaceSearchHost(kind);
+    const input = spaceSearchInput(kind);
+    const trimmed = String(raw || "").trim();
+    const gen = bumpSpaceSearchGen(kind);
+    resetSearchPageState(host.state);
+    if (kind === "directory") {
+      host.state.box = trimmed && input ? input.value : "";
+      if (!trimmed && input) input.value = "";
+    } else if (!trimmed) {
+      searchBox = "";
+      if (input) input.value = "";
+    } else {
+      searchBox = input ? input.value : trimmed;
+    }
+    host.setStatus("");
+    setSearchMoreEl(host.moreEl(), false);
+    if (!trimmed) {
+      if (host.isCurrent()) paintSpaceSearch(kind);
+      return;
+    }
+    host.state.query = trimmed;
+    host.state.looked = true;
+    const typed = spaceSearchTypedName(trimmed);
+    if (typed) {
+      host.state.results = [typed];
+      host.state.loading = true;
+    } else {
+      host.state.done = true;
+    }
+    if (host.isCurrent()) paintSpaceSearch(kind);
+    if (!typed) return;
+    await fillSpaceSearch(kind, gen, true);
+  }
+
+  function openTypedSpace(raw) {
+    const typed = spaceSearchTypedName(raw);
+    if (!typed) return false;
+    cancelSpaceSearchTimer();
+    navigate(favoriteTagHref(typed));
+    return true;
+  }
+
+  async function submitSpaceSearch(kind) {
+    cancelSpaceSearchTimer();
+    const input = spaceSearchInput(kind);
+    if (!input) return;
+    if (kind === "directory") spaceTagSearch.box = input.value;
+    else searchBox = input.value;
+    const raw = String(input.value || "");
+    const trimmed = raw.trim();
+    const state = spaceSearchHost(kind).state;
+    const typed = spaceSearchTypedName(trimmed);
+    if (
+      typed &&
+      state.looked &&
+      !state.error &&
+      spaceSearchTypedName(state.query) === typed &&
+      state.results[0] === typed
+    ) {
+      await ensureSpaceSearch(kind);
+      return;
+    }
+    await beginSpaceSearch(kind, raw);
+  }
+
+  function scheduleSpaceSearch(kind, composing) {
+    if (spaceLiveTimer) {
+      clearTimeout(spaceLiveTimer);
+      spaceLiveTimer = 0;
+    }
+    const input = spaceSearchInput(kind);
+    if (!input) return;
+    if (kind === "directory") spaceTagSearch.box = input.value;
+    else searchBox = input.value;
+    // A composing input event often still holds the previous word.
+    if (!composing) previewSpaceQuery(kind, input.value);
+    spaceLiveTimer = setTimeout(() => {
+      spaceLiveTimer = 0;
+      const live = spaceSearchInput(kind);
+      if (!live) return;
+      const host = spaceSearchHost(kind);
+      if (!host.isCurrent()) return;
+      if (kind === "directory") spaceTagSearch.box = live.value;
+      else searchBox = live.value;
+      previewSpaceQuery(kind, live.value);
+      ensureSpaceSearch(kind);
+    }, SEARCH_USER_DEBOUNCE_MS);
+  }
+
+  function finishSpaceCompose(kind, input) {
+    if (spaceComposeTimer) clearTimeout(spaceComposeTimer);
+    spaceComposeTimer = setTimeout(() => {
+      spaceComposeTimer = 0;
+      if (!input || !input.isConnected) return;
+      scheduleSpaceSearch(kind, false);
+    }, 0);
+  }
+
   async function fetchSpaceSearchPage(query, cursor, existing) {
     const key = normalizeTag(query);
-    const typed = key && key.length >= 2 && normalizeRouteTag(key) ? normalizeRouteTag(key) : "";
+    const typed = spaceSearchTypedName(query);
     if (!key || key.length < 2) return { items: [], done: true, cursor: "" };
     const rows = await HiveApi.getTrendingTags(cursor || "", SEARCH_TAG_LIMIT);
     const seen = new Set(existing || []);
@@ -13904,6 +14084,10 @@ let CS77_FILTER_LOW_REP = 20;
     const page = searchPageName();
     if (!input || !page) return;
     searchBox = input.value;
+    if (page === "spaces") {
+      await submitSpaceSearch("page");
+      return;
+    }
     const raw = String(input.value || "").trim();
     const state = searchPages[page];
     searchGen += 1;
@@ -13958,8 +14142,16 @@ let CS77_FILTER_LOW_REP = 20;
   function renderSearchPage(page) {
     setPageMeta("Search — CyberSpace77");
     view.innerHTML = searchShellHtml(page);
+    if (page === "spaces") {
+      const typed = spaceSearchTypedName(searchBox);
+      const state = searchPages.spaces;
+      if (typed && (!state.looked || spaceSearchTypedName(state.query) !== typed || state.results[0] !== typed)) {
+        previewSpaceQuery("page", searchBox);
+      }
+    }
     paintSearchResults();
     maybeLoadMoreSearch();
+    if (page === "spaces") resumeSpaceSearch("page");
     const input = $("#searchInput");
     if (input && !isMobileViewport()) {
       input.focus();
@@ -31878,11 +32070,12 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("input", (e) => {
       if (e.target && e.target.id === "searchInput") {
-        scheduleUserSearch();
+        if (searchPageName() === "spaces") scheduleSpaceSearch("page", e.isComposing);
+        else scheduleUserSearch();
         return;
       }
       if (e.target && e.target.id === "spaceTagSearchInput") {
-        spaceTagSearch.box = e.target.value;
+        scheduleSpaceSearch("directory", e.isComposing);
         return;
       }
       const slider = e.target.closest(".vote-slider");
@@ -31944,7 +32137,12 @@ let CS77_FILTER_LOW_REP = 20;
     // the tapped suggestion after compositionend.
     document.addEventListener("compositionupdate", (e) => {
       if (e.target && e.target.id === "searchInput") {
-        scheduleUserSearch();
+        if (searchPageName() === "spaces") scheduleSpaceSearch("page", false);
+        else scheduleUserSearch();
+        return;
+      }
+      if (e.target && e.target.id === "spaceTagSearchInput") {
+        scheduleSpaceSearch("directory", false);
         return;
       }
       if (!e.target || e.target.id !== "publishTitle") return;
@@ -31955,8 +32153,18 @@ let CS77_FILTER_LOW_REP = 20;
     });
     document.addEventListener("compositionend", (e) => {
       if (e.target && e.target.id === "searchInput") {
-        scheduleUserSearch();
-        finishSearchCompose(e.target);
+        if (searchPageName() === "spaces") {
+          scheduleSpaceSearch("page", false);
+          finishSpaceCompose("page", e.target);
+        } else {
+          scheduleUserSearch();
+          finishSearchCompose(e.target);
+        }
+        return;
+      }
+      if (e.target && e.target.id === "spaceTagSearchInput") {
+        scheduleSpaceSearch("directory", false);
+        finishSpaceCompose("directory", e.target);
         return;
       }
       if (!e.target || e.target.id !== "publishTitle") return;
@@ -32393,6 +32601,17 @@ let CS77_FILTER_LOW_REP = 20;
         const composer = submitBtn.closest(".comment-composer");
         if (composer) submitComment(composer);
       }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.repeat || e.isComposing) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const input = e.target;
+      if (!input || !inInteractiveSurface(input)) return;
+      if (input.id !== "spaceTagSearchInput" && input.id !== "searchInput") return;
+      if (input.id === "searchInput" && searchPageName() !== "spaces") return;
+      if (!openTypedSpace(input.value)) return;
+      e.preventDefault();
     });
 
     document.addEventListener("submit", (e) => {
