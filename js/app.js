@@ -140,6 +140,7 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsLegacyRaw = null;
   let settingsBusy = false;
   let lightningBusy = false;
+  let lightningDialogValue = "";
   let communityEditDraft = null;
   let communityEditBaseline = null;
   let communityEditSettings = null;
@@ -5159,6 +5160,18 @@ let CS77_FILTER_LOW_REP = 20;
       return { error: "Enter a Lightning address like name@domain." };
     }
     return { address: text };
+  }
+
+  // A valid address compares in canonical form. Anything else compares as typed,
+  // so an unchanged invalid value is not treated as an edit.
+  function lightningCompareKey(raw) {
+    const parsed = normalizeLightningAddress(raw);
+    if (!parsed.error) return parsed.address;
+    return "\n" + String(raw == null ? "" : raw).trim().toLowerCase();
+  }
+
+  function lightningAddressChanged(nextRaw, prevRaw) {
+    return lightningCompareKey(nextRaw) !== lightningCompareKey(prevRaw);
   }
 
   function lightningFieldFromAccount(account) {
@@ -18346,6 +18359,7 @@ let CS77_FILTER_LOW_REP = 20;
   function closeLightningDialog() {
     const el = $("#lightningOverlay");
     if (el) el.hidden = true;
+    lightningDialogValue = "";
     setLightningStatus("", false);
     setLightningDialogLocked(false);
     document.querySelectorAll(".profile-bitcoin-btn.is-open").forEach((btn) => {
@@ -18363,6 +18377,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeProfileMore();
     const account = ownAccountReady(user) ? accountState.account : null;
     input.value = account ? lightningFieldFromAccount(account) : "";
+    lightningDialogValue = input.value;
     setLightningStatus("", false);
     setLightningDialogLocked(false);
     el.hidden = false;
@@ -18380,10 +18395,20 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const input = $("#lightningAddress");
-    const parsed = normalizeLightningAddress(input && input.value);
+    const raw = input ? input.value : "";
+    if (!lightningAddressChanged(raw, lightningDialogValue)) {
+      closeLightningDialog();
+      return;
+    }
+    const parsed = normalizeLightningAddress(raw);
     if (parsed.error) {
       setLightningStatus(parsed.error, true);
       focusDesktop(input);
+      return;
+    }
+    const known = ownAccountReady(user) ? accountState.account : null;
+    if (known && !lightningAddressChanged(parsed.address, lightningAddressFromAccount(known))) {
+      closeLightningDialog();
       return;
     }
     if (!hasSigner(user)) {
@@ -18400,8 +18425,7 @@ let CS77_FILTER_LOW_REP = 20;
         throw new Error("Could not load this account.");
       }
       if (observer() !== user) return;
-      const stored = normalizeLightningAddress(lightningAddressFromAccount(account));
-      if (!stored.error && stored.address === parsed.address) {
+      if (!lightningAddressChanged(parsed.address, lightningAddressFromAccount(account))) {
         closeLightningDialog();
         return;
       }
@@ -28888,6 +28912,10 @@ let CS77_FILTER_LOW_REP = 20;
     const keys = ["name", "about", "location", "website", "lightning", "profile_image", "cover_image", "custom"];
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
+      if (key === "lightning") {
+        if (lightningAddressChanged(fields && fields[key], baseline[key])) return true;
+        continue;
+      }
       if (String((fields && fields[key]) || "") !== String(baseline[key] || "")) return true;
     }
     return false;
@@ -29167,12 +29195,18 @@ let CS77_FILTER_LOW_REP = 20;
     let metadata = null;
     let json = "";
     if (profileChanged) {
-      const lightning = normalizeLightningAddress(fields.lightning);
-      if (lightning.error) {
-        setSettingsStatus(lightning.error, true);
-        return;
+      const lightningChanged = !base || lightningAddressChanged(fields.lightning, base.lightning);
+      if (lightningChanged) {
+        const lightning = normalizeLightningAddress(fields.lightning);
+        if (lightning.error) {
+          setSettingsStatus(lightning.error, true);
+          focusDesktop($("#settingsLightning"));
+          return;
+        }
+        fields.lightning = lightning.address;
+      } else if (base) {
+        fields.lightning = base.lightning || "";
       }
-      fields.lightning = lightning.address;
       let custom;
       try {
         custom = parseSettingsCustom(fields.custom);
