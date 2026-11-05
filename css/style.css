@@ -4083,13 +4083,43 @@ a.tag:hover {
   user-select: none;
 }
 
+.profile-bitcoin-btn {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
 .profile-more-btn:hover,
 .profile-more.is-open .profile-more-btn {
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
 }
 
-.profile-more-btn:focus-visible {
+.profile-bitcoin-btn:hover,
+.profile-bitcoin-btn.is-open {
+  color: var(--yellow);
+  border-color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.profile-more-btn:focus-visible,
+.profile-bitcoin-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
 }
@@ -5961,13 +5991,15 @@ a.wallet-tx-time:hover {
 #ownerSignStatus:empty,
 #communityRoleStatus:empty,
 #communityTitleStatus:empty,
+#lightningStatus:empty,
 #communityRoleHint:empty {
   display: none;
 }
 
 #ownerSignStatus.is-error,
 #communityRoleStatus.is-error,
-#communityTitleStatus.is-error {
+#communityTitleStatus.is-error,
+#lightningStatus.is-error {
   color: var(--red-bright);
 }
 

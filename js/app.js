@@ -139,6 +139,7 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsProfileBaseline = null;
   let settingsLegacyRaw = null;
   let settingsBusy = false;
+  let lightningBusy = false;
   let communityEditDraft = null;
   let communityEditBaseline = null;
   let communityEditSettings = null;
@@ -5127,6 +5128,63 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // Public receive addresses live only on posting_json_metadata.profile.wallet.
+  // A legacy json_metadata wallet is not a source and is not copied forward.
+  function postingMetadataFromAccount(account) {
+    const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
+    if (!posting || typeof posting !== "object" || Array.isArray(posting)) return {};
+    return posting;
+  }
+
+  function plainObject(value) {
+    return Boolean(value && typeof value === "object" && !Array.isArray(value));
+  }
+
+  function lightningAddressFromAccount(account) {
+    const posting = postingMetadataFromAccount(account);
+    const profile = posting.profile;
+    if (!plainObject(profile) || !plainObject(profile.wallet)) return "";
+    const ln = profile.wallet.ln;
+    return typeof ln === "string" ? ln.trim() : "";
+  }
+
+  // LUD-16 Lightning Address: name@domain. Not a BOLT11 invoice, LNURL, or URL.
+  const LIGHTNING_ADDRESS_RE =
+    /^(?=.{3,254}$)[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+  function normalizeLightningAddress(raw) {
+    const text = String(raw == null ? "" : raw).trim().toLowerCase();
+    if (!text) return { address: "" };
+    if (text.length > 254 || !LIGHTNING_ADDRESS_RE.test(text)) {
+      return { error: "Enter a Lightning address like name@domain." };
+    }
+    return { address: text };
+  }
+
+  function lightningFieldFromAccount(account) {
+    const raw = lightningAddressFromAccount(account);
+    if (!raw) return "";
+    const parsed = normalizeLightningAddress(raw);
+    return parsed.error ? raw : parsed.address;
+  }
+
+  function applyLightningAddress(profile, address) {
+    if (!plainObject(profile)) return;
+    const existing = profile.wallet;
+    const plain = plainObject(existing);
+    if (!address) {
+      if (!plain) return;
+      const wallet = copyJsonKeys(existing);
+      delete wallet.ln;
+      if (Object.keys(wallet).length) profile.wallet = wallet;
+      else delete profile.wallet;
+      return;
+    }
+    const wallet = plain ? copyJsonKeys(existing) : {};
+    wallet.ln = address;
+    profile.wallet = wallet;
+  }
+
   function profileImageFromMetadata(metadata) {
     const profile = metadata && metadata.profile;
     return String((profile && profile.profile_image) || "").trim();
@@ -6190,6 +6248,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (communityTitleDialogOpen()) {
       if (!communityRoleBusy) dismissCommunityTitleDialog();
+      return;
+    }
+    if (lightningDialogOpen()) {
+      if (!lightningBusy) closeLightningDialog();
       return;
     }
     if (overlay && !overlay.hidden) {
@@ -18256,6 +18318,138 @@ let CS77_FILTER_LOW_REP = 20;
       </div>`;
   }
 
+  function profileBitcoinHtml() {
+    return `<button type="button" class="profile-bitcoin-btn" aria-label="Add Bitcoin Lightning">\u20bf</button>`;
+  }
+
+  function lightningDialogOpen() {
+    const el = $("#lightningOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function setLightningStatus(message, isError) {
+    const el = $("#lightningStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setLightningDialogLocked(locked) {
+    const save = $("#lightningSave");
+    const cancel = $("#lightningCancel");
+    const input = $("#lightningAddress");
+    if (save) save.disabled = locked;
+    if (cancel) cancel.disabled = locked;
+    if (input) input.disabled = locked;
+  }
+
+  function closeLightningDialog() {
+    const el = $("#lightningOverlay");
+    if (el) el.hidden = true;
+    setLightningStatus("", false);
+    setLightningDialogLocked(false);
+    document.querySelectorAll(".profile-bitcoin-btn.is-open").forEach((btn) => {
+      btn.classList.remove("is-open");
+    });
+  }
+
+  function openLightningDialog() {
+    if (lightningBusy) return;
+    const user = observer();
+    if (!user || !isOwnAuthor(profileState.author)) return;
+    const el = $("#lightningOverlay");
+    const input = $("#lightningAddress");
+    if (!el || !input) return;
+    closeProfileMore();
+    const account = ownAccountReady(user) ? accountState.account : null;
+    input.value = account ? lightningFieldFromAccount(account) : "";
+    setLightningStatus("", false);
+    setLightningDialogLocked(false);
+    el.hidden = false;
+    document.querySelectorAll(".profile-bitcoin-btn").forEach((btn) => {
+      btn.classList.add("is-open");
+    });
+    focusDesktop(input);
+  }
+
+  async function saveLightningAddress() {
+    if (lightningBusy) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    const input = $("#lightningAddress");
+    const parsed = normalizeLightningAddress(input && input.value);
+    if (parsed.error) {
+      setLightningStatus(parsed.error, true);
+      focusDesktop(input);
+      return;
+    }
+    if (!hasSigner(user)) {
+      setLightningStatus(signerNeededMessage(), true);
+      return;
+    }
+    lightningBusy = true;
+    setLightningDialogLocked(true);
+    setLightningStatus("Saving…", false);
+    try {
+      const rows = await HiveApi.getAccounts([user]);
+      const account = rows && rows[0];
+      if (!account || String(account.name || "").toLowerCase() !== user) {
+        throw new Error("Could not load this account.");
+      }
+      if (observer() !== user) return;
+      const stored = normalizeLightningAddress(lightningAddressFromAccount(account));
+      if (!stored.error && stored.address === parsed.address) {
+        closeLightningDialog();
+        return;
+      }
+      const posting = postingMetadataFromAccount(account);
+      let meta;
+      try {
+        meta = JSON.parse(JSON.stringify(posting));
+      } catch {
+        throw new Error("Could not prepare this profile.");
+      }
+      if (!plainObject(meta)) meta = {};
+      if (!plainObject(meta.profile)) meta.profile = {};
+      applyLightningAddress(meta.profile, parsed.address);
+      meta.profile.version = 2;
+      const json = JSON.stringify(meta);
+      if (json.length > SETTINGS_METADATA_MAX) {
+        throw new Error("Profile settings are too long to save.");
+      }
+      const { promise } = ChainQueue.enqueue({
+        username: user,
+        key: "Posting",
+        operations: [
+          [
+            "account_update2",
+            {
+              account: user,
+              json_metadata: "",
+              posting_json_metadata: json,
+              extensions: [],
+            },
+          ],
+        ],
+        meta: { type: "profile" },
+      });
+      await promise;
+      if (observer() !== user) return;
+      applySavedProfile(user, meta, json);
+      closeLightningDialog();
+    } catch (err) {
+      if (lightningDialogOpen()) {
+        setLightningStatus((err && err.message) || "Could not save profile.", true);
+      }
+    } finally {
+      lightningBusy = false;
+      if (lightningDialogOpen()) setLightningDialogLocked(false);
+    }
+  }
+
   function clearAnchoredMenuStyle(menu) {
     menu.style.position = "";
     menu.style.top = "";
@@ -19028,7 +19222,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<button type="button" class="btn-primary btn-compact profile-follow-btn" data-author="${HiveMd.escapeHtml(author)}" data-followed="${profileState.followed ? "1" : "0"}"${followBusy ? " disabled" : ""}>${profileFollowLabel()}</button>`;
     const handle = `<p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>`;
     const title = own
-      ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}</div>`
+      ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}${profileBitcoinHtml()}</div>`
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
@@ -28486,7 +28680,7 @@ let CS77_FILTER_LOW_REP = 20;
     return out;
   }
 
-  function customSettingsFromMetadata(metadata) {
+  function customSettingsFromMetadata(metadata, account) {
     const { meta, profile } = profileObject(metadata);
     const out = copyJsonKeys(meta, { profile: true });
     const extra = {};
@@ -28494,11 +28688,26 @@ let CS77_FILTER_LOW_REP = 20;
       if (key === "__proto__" || key === "constructor" || key === "prototype") return;
       // Image servers use profile.version. The save sets it, so Custom does not.
       if (key === "version") return;
+      // wallet.ln is the Bitcoin Lightning field. Other wallet keys stay here,
+      // and only when they are already on posting_json_metadata.
+      if (key === "wallet") return;
       if (PROFILE_FIELDS.indexOf(key) !== -1 && (profile[key] == null || typeof profile[key] === "string")) {
         return;
       }
       extra[key] = profile[key];
     });
+    const posting = postingMetadataFromAccount(account);
+    const postingProfile = plainObject(posting.profile) ? posting.profile : null;
+    if (postingProfile && Object.prototype.hasOwnProperty.call(postingProfile, "wallet")) {
+      const rawWallet = postingProfile.wallet;
+      if (plainObject(rawWallet)) {
+        const wallet = copyJsonKeys(rawWallet);
+        delete wallet.ln;
+        if (Object.keys(wallet).length) extra.wallet = wallet;
+      } else {
+        extra.wallet = rawWallet;
+      }
+    }
     if (Object.keys(extra).length) out.profile = extra;
     return out;
   }
@@ -28523,10 +28732,11 @@ let CS77_FILTER_LOW_REP = 20;
     return data;
   }
 
-  function settingsProfileFieldsFromMetadata(metadata) {
+  function settingsProfileFieldsFromMetadata(metadata, account) {
     const { profile } = profileObject(metadata);
     const fields = {
-      custom: formatSettingsCustom(customSettingsFromMetadata(metadata)),
+      custom: formatSettingsCustom(customSettingsFromMetadata(metadata, account)),
+      lightning: lightningFieldFromAccount(account),
     };
     PROFILE_FIELDS.forEach((key) => {
       fields[key] = profileFieldText(profile, key);
@@ -28554,6 +28764,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (text) profile[key] = text;
     });
     profile.version = 2;
+    applyLightningAddress(profile, String(fields.lightning == null ? "" : fields.lightning).trim());
     meta.profile = profile;
     return meta;
   }
@@ -28585,6 +28796,10 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="settings-field">
           <label class="settings-label" for="settingsWebsite">Website</label>
           <input id="settingsWebsite" name="website" type="text" inputmode="url" autocomplete="url" placeholder="https://" value="${esc(fields.website || "")}">
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsLightning">Bitcoin Lightning</label>
+          <input id="settingsLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain" value="${esc(fields.lightning || "")}">
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsAvatar">Avatar picture</label>
@@ -28643,6 +28858,7 @@ let CS77_FILTER_LOW_REP = 20;
       about: ($("#settingsAbout") && $("#settingsAbout").value) || "",
       location: ($("#settingsLocation") && $("#settingsLocation").value) || "",
       website: ($("#settingsWebsite") && $("#settingsWebsite").value) || "",
+      lightning: ($("#settingsLightning") && $("#settingsLightning").value) || "",
       profile_image: ($("#settingsAvatar") && $("#settingsAvatar").value) || "",
       cover_image: ($("#settingsCover") && $("#settingsCover").value) || "",
       custom: ($("#settingsCustom") && $("#settingsCustom").value) || "",
@@ -28658,6 +28874,7 @@ let CS77_FILTER_LOW_REP = 20;
       about: (fields && fields.about) || "",
       location: (fields && fields.location) || "",
       website: (fields && fields.website) || "",
+      lightning: (fields && fields.lightning) || "",
       profile_image: (fields && fields.profile_image) || "",
       cover_image: (fields && fields.cover_image) || "",
       custom: (fields && fields.custom) || "{}",
@@ -28668,7 +28885,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function settingsProfileFieldsChanged(fields, baseline) {
     if (!baseline) return true;
-    const keys = ["name", "about", "location", "website", "profile_image", "cover_image", "custom"];
+    const keys = ["name", "about", "location", "website", "lightning", "profile_image", "cover_image", "custom"];
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       if (String((fields && fields[key]) || "") !== String(baseline[key] || "")) return true;
@@ -28767,6 +28984,7 @@ let CS77_FILTER_LOW_REP = 20;
     set("#settingsAbout", values.about);
     set("#settingsLocation", values.location);
     set("#settingsWebsite", values.website);
+    set("#settingsLightning", values.lightning);
     set("#settingsAvatar", values.profile_image);
     set("#settingsCover", values.cover_image);
     set("#settingsCustom", values.custom);
@@ -28949,6 +29167,12 @@ let CS77_FILTER_LOW_REP = 20;
     let metadata = null;
     let json = "";
     if (profileChanged) {
+      const lightning = normalizeLightningAddress(fields.lightning);
+      if (lightning.error) {
+        setSettingsStatus(lightning.error, true);
+        return;
+      }
+      fields.lightning = lightning.address;
       let custom;
       try {
         custom = parseSettingsCustom(fields.custom);
@@ -29063,7 +29287,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (observer() !== user) return null;
     if (ownAccountReady(user)) {
       rememberSettingsLegacy(user, accountState.account);
-      return accountState.metadata || metadataFromAccount(accountState.account);
+      return {
+        metadata: accountState.metadata || metadataFromAccount(accountState.account),
+        account: accountState.account,
+      };
     }
     const rows = await HiveApi.getAccounts([user]);
     const account = rows && rows[0];
@@ -29071,7 +29298,7 @@ let CS77_FILTER_LOW_REP = 20;
       throw new Error("Could not load this account.");
     }
     rememberSettingsLegacy(user, account);
-    return metadataFromAccount(account);
+    return { metadata: metadataFromAccount(account), account };
   }
 
   async function fillSettingsProfile() {
@@ -29092,9 +29319,9 @@ let CS77_FILTER_LOW_REP = 20;
       if (!draft && !ownAccountReady(user)) {
         panel.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading profile…</div>`;
       }
-      let metadata = null;
+      let loaded = null;
       try {
-        metadata = await loadSettingsMetadata(user);
+        loaded = await loadSettingsMetadata(user);
       } catch (err) {
         if (!routeStill(key)) return;
         panel.innerHTML = `
@@ -29105,8 +29332,11 @@ let CS77_FILTER_LOW_REP = 20;
         `;
         return;
       }
-      if (!routeStill(key) || !metadata) return;
-      settingsProfileBaseline = Object.assign({ user }, copySettingsProfileFields(settingsProfileFieldsFromMetadata(metadata)));
+      if (!routeStill(key) || !loaded) return;
+      settingsProfileBaseline = Object.assign(
+        { user },
+        copySettingsProfileFields(settingsProfileFieldsFromMetadata(loaded.metadata, loaded.account))
+      );
     }
     if (!routeStill(key)) return;
     const fields = draft || settingsProfileBaseline;
@@ -31303,6 +31533,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeLogoMenu();
     hideVoteSlider();
     closeProfileMore();
+    closeLightningDialog();
     closeContentMore();
     closeCommentSort();
     closeWalletMore();
@@ -32682,6 +32913,12 @@ let CS77_FILTER_LOW_REP = 20;
         toggleProfileMore(profileMoreBtn);
         return;
       }
+      const bitcoinBtn = e.target.closest(".profile-bitcoin-btn");
+      if (bitcoinBtn && inInteractiveSurface(bitcoinBtn)) {
+        e.preventDefault();
+        openLightningDialog();
+        return;
+      }
       const removeTag = e.target.closest("[data-remove-tag]");
       if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
@@ -33098,6 +33335,30 @@ let CS77_FILTER_LOW_REP = 20;
     if (communityTitleCancel) communityTitleCancel.addEventListener("click", () => {
       if (!communityRoleBusy) dismissCommunityTitleDialog();
     });
+    const lightningInput = $("#lightningAddress");
+    const lightningSave = $("#lightningSave");
+    const lightningCancel = $("#lightningCancel");
+    if (lightningInput) {
+      lightningInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveLightningAddress();
+        }
+      });
+    }
+    if (lightningSave) lightningSave.addEventListener("click", saveLightningAddress);
+    if (lightningCancel) lightningCancel.addEventListener("click", () => {
+      if (!lightningBusy) closeLightningDialog();
+    });
+    const lightningOverlay = $("#lightningOverlay");
+    if (lightningOverlay) {
+      lightningOverlay.addEventListener("click", (e) => {
+        if (e.target !== lightningOverlay || lightningBusy) return;
+        const active = document.activeElement;
+        if (active && lightningOverlay.contains(active)) return;
+        closeLightningDialog();
+      });
+    }
     ["#communityRoleOverlay", "#communityTitleOverlay"].forEach((id) => {
       const ov = $(id);
       if (!ov) return;
