@@ -385,9 +385,13 @@
     return true;
   }
 
+  // Quote markers are not part of the line. Nested quotes peel the same way.
+  function blockquoteBody(line) {
+    return String(line || "").replace(/^(?:[ \t]{0,3}>[ \t]*)+/, "");
+  }
+
   function renderInlineLine(raw) {
-    let content = String(raw || "");
-    content = content.replace(/^(?:[ \t]{0,3}>[ \t]*)+/, "");
+    let content = blockquoteBody(raw);
     content = content.replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
     return stripInlineMarkdown(content).replace(/[ \t]+/g, " ").trim();
   }
@@ -501,7 +505,7 @@
         parts.push({ break: "sep" });
         continue;
       }
-      const heading = parseAtxHeadingLine(line);
+      const heading = parseAtxHeadingLine(blockquoteBody(line));
       if (heading) {
         flushBuf();
         const text = stripInlineMarkdown(heading.text).replace(/\s+/g, " ").trim();
