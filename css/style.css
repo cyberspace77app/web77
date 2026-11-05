@@ -4116,8 +4116,44 @@ a.tag:hover {
   text-shadow: var(--glow-yellow);
 }
 
+.profile-zap-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.35rem;
+  height: 2.35rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--yellow);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.profile-zap-btn .zap-mark {
+  display: block;
+  width: 1.65rem;
+  height: 1.65rem;
+  filter: drop-shadow(0 0 2px rgba(255, 225, 74, 0.8));
+}
+
+.profile-zap-btn:hover,
+.profile-zap-btn.is-open {
+  color: var(--yellow);
+  background: transparent;
+}
+
+.profile-zap-btn:hover .zap-mark,
+.profile-zap-btn.is-open .zap-mark {
+  filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
+}
+
 .profile-more-btn:focus-visible,
-.profile-bitcoin-btn:focus-visible {
+.profile-bitcoin-btn:focus-visible,
+.profile-zap-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
 }
@@ -5626,24 +5662,43 @@ a.wallet-tx-time:hover {
 #walletOverlay .wallet-amount-row,
 #sendOverlay .wallet-amount-row,
 #convertOverlay .wallet-amount-row,
-#claimTokensOverlay .wallet-amount-row {
+#claimTokensOverlay .wallet-amount-row,
+#zapOverlay .wallet-amount-row {
   margin-bottom: 0.35rem;
 }
 
+#zapOverlay .wallet-amount-row {
+  justify-content: flex-start;
+  margin-bottom: 0.85rem;
+}
+
 #sendOverlay .send-amount-field,
-#convertOverlay .send-amount-field {
+#convertOverlay .send-amount-field,
+#zapOverlay .send-amount-field {
   position: relative;
   flex: 1;
   min-width: 0;
 }
 
+#zapOverlay .send-amount-field {
+  flex: 0 1 auto;
+  width: 12.5rem;
+  max-width: 100%;
+}
+
 #sendOverlay .send-amount-field input,
-#convertOverlay .send-amount-field input {
+#convertOverlay .send-amount-field input,
+#zapOverlay .send-amount-field input {
   padding-right: 4.6rem;
 }
 
+#zapOverlay .send-amount-field input {
+  margin-bottom: 0;
+}
+
 #sendOverlay .send-amount-unit,
-#convertOverlay .send-amount-unit {
+#convertOverlay .send-amount-unit,
+#zapOverlay .send-amount-unit {
   position: absolute;
   top: 1px;
   right: 0.95rem;
@@ -5666,7 +5721,8 @@ a.wallet-tx-time:hover {
 
 /* Same shape as the feed nav and the keychain switch, with the asset names left lowercase. */
 #sendAsset button,
-#convertAsset button {
+#convertAsset button,
+#zapAsset button {
   text-transform: none;
 }
 
@@ -5757,7 +5813,8 @@ a.wallet-tx-time:hover {
 #createAccountStatus:empty,
 #proposalCreateStatus:empty,
 #proposalCancelStatus:empty,
-#proxyStatus:empty {
+#proxyStatus:empty,
+#zapStatus:empty {
   display: none;
 }
 
@@ -5769,8 +5826,111 @@ a.wallet-tx-time:hover {
 #proposalCreateStatus.is-error,
 #proposalCancelStatus.is-error,
 #proxyStatus.is-error,
-#delegateStatus.is-error {
+#delegateStatus.is-error,
+#zapStatus.is-error {
   color: var(--red-bright);
+}
+
+#zapLead:has(+ .zap-address:not([hidden])) {
+  margin-bottom: 0.35rem;
+}
+
+.zap-address {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0 0 0.85rem;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.zap-btc {
+  flex: 0 0 auto;
+  color: var(--yellow);
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.zap-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.9rem;
+}
+
+.zap-choice {
+  appearance: none;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono), "Segoe UI Emoji", sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.zap-choice:hover,
+.zap-choice.is-active {
+  border-color: var(--yellow);
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.zap-choice:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.zap-choice:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.zap-fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  margin: 0 0 0.85rem;
+}
+
+#zapOpenWallet {
+  text-decoration: none;
+}
+
+#zapOverlay {
+  overflow-y: auto;
+  align-items: safe center;
+}
+
+#zapOverlay .overlay-card {
+  overflow: visible;
+}
+
+@media (max-width: 720px) {
+  #zapOverlay {
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+  }
+
+  #zapOverlay .overlay-card {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: auto;
+  }
 }
 
 /* The card is taller than the other wallet dialogs. .panel clips overflow, so this one scrolls. */

@@ -141,6 +141,22 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsBusy = false;
   let lightningBusy = false;
   let lightningDialogValue = "";
+  // Zap dialog. Lightning tries a browser wallet, then Nostr Wallet Connect, then a lightning: link.
+  let zapSendGen = 0;
+  let zapLookGen = 0;
+  let zapHttp = null;
+  const zapState = {
+    author: "",
+    asset: "ln",
+    lnAddress: "",
+    lnStatus: "missing",
+    pending: false,
+    selected: { ln: 21, hive: 1, hbd: 0.21 },
+    custom: { ln: "21", hive: "1", hbd: "0.21" },
+    note: { ln: "", hive: "", hbd: "" },
+    noteEdited: { ln: false, hive: false, hbd: false },
+    invoice: "",
+  };
   let communityEditDraft = null;
   let communityEditBaseline = null;
   let communityEditSettings = null;
@@ -4689,7 +4705,7 @@ let CS77_FILTER_LOW_REP = 20;
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
-      if (signSource === "wallet" || signSource === "memo" || signSource === "dao") {
+      if (signSource === "wallet" || signSource === "memo" || signSource === "dao" || signSource === "zap") {
         cancelOwnerSign();
         if (signSource === "wallet") {
           closeWalletOverlay();
@@ -4707,6 +4723,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeZapOverlay();
       closeProposalOverlay();
       closeProxyOverlay();
     }
@@ -6313,6 +6330,10 @@ let CS77_FILTER_LOW_REP = 20;
     const sendOv = $("#sendOverlay");
     if (sendOv && !sendOv.hidden) {
       closeSendOverlay();
+      return;
+    }
+    if (zapDialogOpen()) {
+      closeZapOverlay();
       return;
     }
     const walletOv = $("#walletOverlay");
@@ -18331,6 +18352,22 @@ let CS77_FILTER_LOW_REP = 20;
       </div>`;
   }
 
+  function zapMarkSvg() {
+    return (
+      '<svg class="zap-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">' +
+      '<path fill="currentColor" d="M18.7 2.2 9.8 14.3h5.4L11.2 29.8 23.6 12.7h-6L18.7 2.2z"/>' +
+      "</svg>"
+    );
+  }
+
+  function profileZapHtml() {
+    return (
+      '<button type="button" class="profile-zap-btn" aria-label="Zap">' +
+      zapMarkSvg() +
+      "</button>"
+    );
+  }
+
   function profileBitcoinHtml() {
     return `<button type="button" class="profile-bitcoin-btn" aria-label="Add Bitcoin Lightning">\u20BF</button>`;
   }
@@ -18471,6 +18508,743 @@ let CS77_FILTER_LOW_REP = 20;
     } finally {
       lightningBusy = false;
       if (lightningDialogOpen()) setLightningDialogLocked(false);
+    }
+  }
+
+  const ZAP_NWC_KEY = "cs77_nwc";
+  const ZAP_PRESETS = {
+    ln: [
+      { amount: 21, label: "\u26A1 21 sats" },
+      { amount: 100, label: "\uD83D\uDC4D 100 Great" },
+      { amount: 1000, label: "\uD83D\uDD25 1,000 Awesome" },
+      { amount: 10000, label: "\uD83E\uDD29 10,000 Laser Eyes" },
+    ],
+    hive: [
+      { amount: 1, label: "1 hive" },
+      { amount: 21, label: "21 hive" },
+      { amount: 100, label: "100 hive" },
+      { amount: 1000, label: "1,000 hive" },
+    ],
+    hbd: [
+      { amount: 0.21, label: "0.21 hbd" },
+      { amount: 1, label: "1 hbd" },
+      { amount: 10, label: "10 hbd" },
+    ],
+  };
+
+  function zapAssetName(asset) {
+    if (asset === "hive" || asset === "hbd") return asset;
+    return "ln";
+  }
+
+  function zapDialogOpen() {
+    const el = $("#zapOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function zapStill(gen) {
+    return gen === zapSendGen && zapDialogOpen();
+  }
+
+  function stopZapHttp() {
+    if (!zapHttp) return;
+    try { zapHttp.abort(); } catch (err) { /* already settled */ }
+    zapHttp = null;
+  }
+
+  function setZapStatus(message, isError) {
+    const el = $("#zapStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function zapFailText(err, fallback) {
+    let msg = err && err.message ? String(err.message) : "";
+    msg = msg.replace(/nostr\+walletconnect:\S+/gi, "wallet connection");
+    if (!msg || msg.length > 180) return fallback;
+    return msg;
+  }
+
+  function walletCancelled(err) {
+    const msg = String((err && (err.message || err.reason || err.code)) || "").toLowerCase();
+    return (
+      msg.indexOf("reject") !== -1 ||
+      msg.indexOf("denied") !== -1 ||
+      msg.indexOf("cancel") !== -1 ||
+      msg.indexOf("dismiss") !== -1 ||
+      msg.indexOf("user closed") !== -1
+    );
+  }
+
+  function walletUnavailable(err) {
+    const msg = String((err && err.message) || "").toLowerCase();
+    return (
+      msg.indexOf("not found") !== -1 ||
+      msg.indexOf("not available") !== -1 ||
+      msg.indexOf("no provider") !== -1 ||
+      msg.indexOf("missing webln") !== -1
+    );
+  }
+
+  function zapCancelled(message) {
+    const err = new Error(message || "The wallet cancelled the payment.");
+    err.zapCancel = true;
+    return err;
+  }
+
+  function normalizeNwcUrl(raw) {
+    const text = String(raw == null ? "" : raw).trim();
+    if (!text) return "";
+    if (!/^nostr\+walletconnect:\/\//i.test(text)) return null;
+    const body = text.slice(text.indexOf("://") + 3);
+    const q = body.indexOf("?");
+    if (q < 1) return null;
+    const pubkey = body.slice(0, q);
+    if (!/^[0-9a-f]{64}$/i.test(pubkey)) return null;
+    let params;
+    try {
+      params = new URLSearchParams(body.slice(q + 1));
+    } catch (err) {
+      return null;
+    }
+    const secret = params.get("secret") || "";
+    if (!/^[0-9a-f]{64}$/i.test(secret)) return null;
+    const relays = params.getAll("relay").filter((relay) => /^wss:\/\//i.test(relay) || /^ws:\/\//i.test(relay));
+    if (!relays.length) return null;
+    return text;
+  }
+
+  function zapNwcField() {
+    const input = $("#zapNwc");
+    return input ? String(input.value || "").trim() : "";
+  }
+
+  function storeZapNwc(url) {
+    try {
+      if (!url) localStorage.removeItem(ZAP_NWC_KEY);
+      else localStorage.setItem(ZAP_NWC_KEY, url);
+    } catch (err) { /* private mode */ }
+  }
+
+  function storeZapNwcFromField() {
+    const text = zapNwcField();
+    if (!text) {
+      storeZapNwc("");
+      return "";
+    }
+    const url = normalizeNwcUrl(text);
+    if (url) storeZapNwc(url);
+    return url;
+  }
+
+  function loadZapNwcField() {
+    const input = $("#zapNwc");
+    if (!input) return;
+    let saved = "";
+    try { saved = localStorage.getItem(ZAP_NWC_KEY) || ""; } catch (err) { saved = ""; }
+    const url = normalizeNwcUrl(saved);
+    input.value = url || "";
+    if (saved && !url) storeZapNwc("");
+  }
+
+  function hideZapFallback() {
+    zapState.invoice = "";
+    const box = $("#zapWalletFallback");
+    if (box) box.hidden = true;
+    const link = $("#zapOpenWallet");
+    if (link) link.removeAttribute("href");
+  }
+
+  function zapSendBlocked() {
+    return zapState.asset === "ln" && zapState.lnStatus !== "ready";
+  }
+
+  function zapPresetAmountText(asset, amount) {
+    if (asset === "ln") return String(amount);
+    const n = roundAsset(Number(amount), 3);
+    if (Math.abs(n - Math.round(n)) < 0.0001) return String(Math.round(n));
+    return n.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function zapParsedFieldAmount(asset, raw) {
+    const text = String(raw || "").trim();
+    if (!text) return null;
+    if (asset === "ln") return parseZapSats(text);
+    const amount = roundAsset(parseAmountInput(text), 3);
+    if (!(amount >= 0.001)) return null;
+    return amount;
+  }
+
+  function zapAmountsMatch(asset, a, b) {
+    if (a == null || b == null) return false;
+    if (asset === "ln") return a === b;
+    return Math.abs(a - b) < 0.0001;
+  }
+
+  function zapPresetForAmount(asset, amount) {
+    const presets = ZAP_PRESETS[asset] || [];
+    for (let i = 0; i < presets.length; i++) {
+      if (zapAmountsMatch(asset, presets[i].amount, amount)) return presets[i];
+    }
+    return null;
+  }
+
+  function zapLeadAmount(asset, amount) {
+    if (asset === "ln") return formatGroupedNumber(amount, 0) + " sats";
+    const rounded = roundAsset(amount, 3);
+    const whole = Math.abs(rounded - Math.round(rounded)) < 0.0001;
+    let text = formatGroupedNumber(rounded, whole ? 0 : 3);
+    if (!whole) text = text.replace(/0+$/, "").replace(/\.$/, "");
+    return text + " " + asset;
+  }
+
+  function zapNoteValue(asset) {
+    if (zapState.noteEdited[asset]) return zapState.note[asset] || "";
+    const amount = zapParsedFieldAmount(asset, zapState.custom[asset]);
+    const preset = amount == null ? null : zapPresetForAmount(asset, amount);
+    return preset ? preset.label : "";
+  }
+
+  function zapNoteText() {
+    const note = $("#zapNote");
+    const raw = note ? String(note.value || "") : zapNoteValue(zapAssetName(zapState.asset));
+    return raw.trim().slice(0, 250);
+  }
+
+  function paintZapLead() {
+    const lead = $("#zapLead");
+    if (!lead) return;
+    const asset = zapAssetName(zapState.asset);
+    const field = $("#zapCustom");
+    const raw = field ? field.value : zapState.custom[asset];
+    const parsed = zapParsedFieldAmount(asset, raw);
+    const amountText = parsed == null ? (asset === "ln" ? "sats" : asset) : zapLeadAmount(asset, parsed);
+    const who = zapState.author ? " to @" + zapState.author : "";
+    lead.textContent = "Send " + amountText + who + ".";
+  }
+
+  function paintZapChoices() {
+    const root = $("#zapChoices");
+    if (!root) return;
+    const asset = zapAssetName(zapState.asset);
+    const presets = ZAP_PRESETS[asset] || [];
+    const field = $("#zapCustom");
+    const raw = field ? field.value : zapState.custom[asset];
+    const current = zapParsedFieldAmount(asset, raw);
+    root.replaceChildren();
+    presets.forEach((preset) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "zap-choice";
+      btn.setAttribute("data-zap-amount", String(preset.amount));
+      const on = zapAmountsMatch(asset, preset.amount, current);
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.textContent = preset.label;
+      btn.disabled = zapState.pending;
+      root.appendChild(btn);
+    });
+  }
+
+  function paintZapForm() {
+    const asset = zapAssetName(zapState.asset);
+    zapState.asset = asset;
+    const address = $("#zapAddress");
+    const addressText = $("#zapAddressText");
+    if (address) {
+      const showAddress = zapState.lnStatus === "ready" && zapState.lnAddress;
+      address.hidden = !showAddress;
+      if (addressText) addressText.textContent = showAddress ? zapState.lnAddress : "";
+    }
+    const tabs = $("#zapAsset");
+    if (tabs) {
+      tabs.querySelectorAll("[data-zap-asset]").forEach((btn) => {
+        const on = btn.getAttribute("data-zap-asset") === asset;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.disabled = zapState.pending;
+      });
+    }
+    const missing = $("#zapLnMissing");
+    if (missing) {
+      const show = asset === "ln" && zapState.lnStatus !== "ready";
+      missing.hidden = !show;
+      if (zapState.lnStatus === "loading") missing.textContent = "Checking the Lightning address\u2026";
+      else if (zapState.lnStatus === "error") missing.textContent = "Could not load the Lightning address.";
+      else if (zapState.lnStatus === "invalid") missing.textContent = "The Lightning address on this profile cannot be used.";
+      else missing.textContent = "This user has not added a Bitcoin Lightning address yet.";
+    }
+    const amountBlock = $("#zapAmountBlock");
+    if (amountBlock) amountBlock.hidden = asset === "ln" && zapState.lnStatus !== "ready";
+    const nwcBlock = $("#zapNwcBlock");
+    if (nwcBlock) nwcBlock.hidden = asset !== "ln" || zapState.lnStatus !== "ready";
+    const label = $("#zapCustomLabel");
+    if (label) label.textContent = "Custom amount";
+    const unit = $("#zapCustomUnit");
+    if (unit) unit.textContent = asset === "ln" ? "sats" : asset;
+    const input = $("#zapCustom");
+    if (input) {
+      const next = zapState.custom[asset] || "";
+      if (input.value !== next) input.value = next;
+      input.inputMode = asset === "ln" ? "numeric" : "decimal";
+      input.placeholder = "0";
+      input.disabled = zapState.pending;
+    }
+    const note = $("#zapNote");
+    if (note) {
+      const next = zapNoteValue(asset);
+      zapState.note[asset] = next;
+      if (note.value !== next) note.value = next;
+      note.disabled = zapState.pending;
+    }
+    const nwc = $("#zapNwc");
+    if (nwc) nwc.disabled = zapState.pending;
+    const submit = $("#zapSubmit");
+    if (submit) submit.disabled = zapState.pending || zapSendBlocked();
+    paintZapChoices();
+    paintZapLead();
+  }
+
+  function zapDialogBusy(on) {
+    zapState.pending = on;
+    paintZapForm();
+  }
+
+  function setZapAsset(asset) {
+    if (zapState.pending) return;
+    const previous = zapAssetName(zapState.asset);
+    const input = $("#zapCustom");
+    if (input) zapState.custom[previous] = input.value;
+    const note = $("#zapNote");
+    if (note) zapState.note[previous] = note.value;
+    zapState.asset = zapAssetName(asset);
+    hideZapFallback();
+    setZapStatus("", false);
+    paintZapForm();
+  }
+
+  function closeZapOverlay() {
+    if (ownerSignSession && ownerSignSession.source === "zap") {
+      const ov = $("#zapOverlay");
+      if (ov && !ov.hidden) return;
+    }
+    zapSendGen += 1;
+    zapLookGen += 1;
+    stopZapHttp();
+    if (zapDialogOpen()) storeZapNwcFromField();
+    const ov = $("#zapOverlay");
+    if (ov) ov.hidden = true;
+    zapState.pending = false;
+    hideZapFallback();
+    setZapStatus("", false);
+    document.querySelectorAll(".profile-zap-btn.is-open").forEach((btn) => {
+      btn.classList.remove("is-open");
+    });
+  }
+
+  function openZapDialog() {
+    const author = profileState.author;
+    if (!author || isOwnAuthor(author)) return;
+    closeProfileMore();
+    zapLookGen += 1;
+    zapSendGen += 1;
+    stopZapHttp();
+    zapState.author = author;
+    zapState.asset = "ln";
+    zapState.lnAddress = "";
+    zapState.lnStatus = "loading";
+    zapState.pending = false;
+    zapState.selected = { ln: 21, hive: 1, hbd: 0.21 };
+    zapState.custom = { ln: "21", hive: "1", hbd: "0.21" };
+    zapState.note = {
+      ln: ZAP_PRESETS.ln[0].label,
+      hive: ZAP_PRESETS.hive[0].label,
+      hbd: ZAP_PRESETS.hbd[0].label,
+    };
+    zapState.noteEdited = { ln: false, hive: false, hbd: false };
+    hideZapFallback();
+    setZapStatus("", false);
+    loadZapNwcField();
+    const ov = $("#zapOverlay");
+    if (!ov) return;
+    ov.hidden = false;
+    document.querySelectorAll(".profile-zap-btn").forEach((btn) => {
+      btn.classList.add("is-open");
+    });
+    paintZapForm();
+    loadZapLightning(author, zapLookGen);
+  }
+
+  async function loadZapLightning(author, gen) {
+    try {
+      const rows = await HiveApi.getAccounts([author]);
+      if (gen !== zapLookGen || zapState.author !== author || !zapDialogOpen()) return;
+      const account = rows && rows[0];
+      const named = account && walletHiveName(account.name) === author;
+      const raw = named ? lightningAddressFromAccount(account) : "";
+      const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
+      if (raw && parsed.error) {
+        zapState.lnAddress = "";
+        zapState.lnStatus = "invalid";
+      } else if (parsed.address) {
+        zapState.lnAddress = parsed.address;
+        zapState.lnStatus = "ready";
+      } else {
+        zapState.lnAddress = "";
+        zapState.lnStatus = "missing";
+      }
+    } catch (err) {
+      if (gen !== zapLookGen || !zapDialogOpen()) return;
+      zapState.lnAddress = "";
+      zapState.lnStatus = "error";
+    }
+    if (gen !== zapLookGen || !zapDialogOpen()) return;
+    paintZapForm();
+  }
+
+  function parseZapSats(raw) {
+    const text = String(raw || "").trim().replace(/[, ]/g, "");
+    if (!/^\d+$/.test(text)) return null;
+    const n = Number(text);
+    if (!Number.isFinite(n) || n < 1 || n > 1000000000) return null;
+    return n;
+  }
+
+  function zapChosenAmount() {
+    const asset = zapAssetName(zapState.asset);
+    const raw = (($("#zapCustom") && $("#zapCustom").value) || "").trim();
+    if (raw) {
+      if (asset === "ln") {
+        const sats = parseZapSats(raw);
+        if (sats == null) return { error: "Enter a whole number of sats." };
+        return { amount: sats };
+      }
+      const amount = roundAsset(parseAmountInput(raw), 3);
+      if (amount < 0.001) return { error: "Enter an amount of at least 0.001." };
+      return { amount: amount };
+    }
+    const selected = Number(zapState.selected[asset]);
+    if (!(selected > 0)) return { error: "Choose an amount." };
+    return { amount: selected };
+  }
+
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      Promise.resolve(promise).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  async function fetchLightningPayRequest(address, signal) {
+    const at = address.indexOf("@");
+    const name = address.slice(0, at);
+    const domain = address.slice(at + 1);
+    if (!name || !domain || /\.onion$/i.test(domain)) {
+      throw new Error("Could not reach that Lightning address.");
+    }
+    const url = "https://" + domain + "/.well-known/lnurlp/" + encodeURIComponent(name);
+    let res;
+    try {
+      res = await fetch(url, { headers: { accept: "application/json" }, signal: signal });
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        const quiet = new Error("aborted");
+        quiet.zapAbort = true;
+        throw quiet;
+      }
+      throw new Error("Could not reach that Lightning address.");
+    }
+    if (!res.ok) throw new Error("Could not reach that Lightning address.");
+    let data = null;
+    try { data = await res.json(); } catch (err) { data = null; }
+    if (!data || data.status === "ERROR") {
+      throw new Error((data && data.reason) || "That Lightning address refused the request.");
+    }
+    if (data.tag !== "payRequest" || typeof data.callback !== "string" || !data.callback) {
+      throw new Error("That Lightning address cannot receive a payment.");
+    }
+    let callback;
+    try { callback = new URL(data.callback); } catch (err) { callback = null; }
+    if (!callback || (callback.protocol !== "https:" && callback.protocol !== "http:")) {
+      throw new Error("That Lightning address cannot receive a payment.");
+    }
+    return data;
+  }
+
+  async function fetchLightningInvoice(pay, sats, comment, signal) {
+    const callback = new URL(pay.callback);
+    callback.searchParams.set("amount", String(Math.round(sats * 1000)));
+    const allowed = Number(pay.commentAllowed);
+    const note = String(comment || "").trim();
+    if (note && allowed > 0) callback.searchParams.set("comment", note.slice(0, allowed));
+    let res;
+    try {
+      res = await fetch(callback.toString(), { headers: { accept: "application/json" }, signal: signal });
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        const quiet = new Error("aborted");
+        quiet.zapAbort = true;
+        throw quiet;
+      }
+      throw new Error("Could not create a Lightning invoice.");
+    }
+    if (!res.ok) throw new Error("Could not create a Lightning invoice.");
+    let data = null;
+    try { data = await res.json(); } catch (err) { data = null; }
+    if (!data || data.status === "ERROR") {
+      throw new Error((data && data.reason) || "Could not create a Lightning invoice.");
+    }
+    const pr = String(data.pr || "");
+    if (!/^ln(bc|tb|bcrt)/i.test(pr)) throw new Error("The Lightning address did not return an invoice.");
+    return pr;
+  }
+
+  async function payWithNwc(url, pr) {
+    let mod;
+    try {
+      mod = await import("https://esm.sh/@getalby/sdk@5.1.0");
+    } catch (err) {
+      throw new Error("Could not load the wallet connection. Clear it to open a lightning invoice instead.");
+    }
+    const LN = mod && (mod.LN || mod.LNClient);
+    if (typeof LN !== "function") {
+      throw new Error("Could not load the wallet connection. Clear it to open a lightning invoice instead.");
+    }
+    const client = new LN(url);
+    try {
+      return await withTimeout(client.pay(pr), 45000, "The connected wallet did not answer.");
+    } finally {
+      try { client.close(); } catch (err) { /* socket already closed */ }
+    }
+  }
+
+  function offerLightningUri(pr) {
+    zapState.invoice = pr;
+    const href = "lightning:" + pr;
+    const link = $("#zapOpenWallet");
+    if (link) link.href = href;
+    const box = $("#zapWalletFallback");
+    if (box) box.hidden = false;
+    setZapStatus("Opening a lightning wallet\u2026", false);
+    const a = document.createElement("a");
+    a.href = href;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function sendZapLightning(sats, gen) {
+    const address = zapState.lnAddress;
+    const provider = window.webln;
+    const hasExt = Boolean(
+      provider && typeof provider.enable === "function" && typeof provider.sendPayment === "function"
+    );
+    // enable() has to start in this click, before the invoice fetch, or the extension popup is blocked.
+    let enablePromise = null;
+    if (hasExt) {
+      try {
+        enablePromise = Promise.resolve(provider.enable());
+      } catch (err) {
+        enablePromise = Promise.reject(err);
+      }
+    }
+    stopZapHttp();
+    const controller = new AbortController();
+    zapHttp = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { controller.abort(); } catch (err) { /* ignore */ }
+    }, 20000);
+    let pr = "";
+    try {
+      const pay = await fetchLightningPayRequest(address, controller.signal);
+      if (!zapStill(gen)) return;
+      const minSats = Math.ceil(Number(pay.minSendable) / 1000);
+      const maxSats = Math.floor(Number(pay.maxSendable) / 1000);
+      if (!Number.isFinite(minSats) || !Number.isFinite(maxSats) || maxSats < minSats) {
+        throw new Error("That Lightning address cannot receive a payment.");
+      }
+      if (sats < minSats || sats > maxSats) {
+        throw new Error(
+          "That address accepts " +
+            formatGroupedNumber(minSats, 0) +
+            " to " +
+            formatGroupedNumber(maxSats, 0) +
+            " sats."
+        );
+      }
+      pr = await fetchLightningInvoice(pay, sats, zapNoteText(), controller.signal);
+    } catch (err) {
+      if (err && err.zapAbort) {
+        if (!zapStill(gen)) return;
+        if (timedOut) throw new Error("The Lightning address took too long to answer.");
+        return;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (zapHttp === controller) zapHttp = null;
+    }
+    if (!zapStill(gen) || !pr) return;
+
+    if (enablePromise) {
+      let enabled = false;
+      try {
+        await enablePromise;
+        enabled = true;
+      } catch (err) {
+        if (!zapStill(gen)) return;
+        if (walletCancelled(err)) throw zapCancelled();
+        if (!walletUnavailable(err)) throw err;
+      }
+      if (enabled) {
+        if (!zapStill(gen)) return;
+        setZapStatus("Waiting for the browser wallet\u2026", false);
+        try {
+          await provider.sendPayment(pr);
+        } catch (err) {
+          if (!zapStill(gen)) return;
+          if (walletCancelled(err)) throw zapCancelled();
+          throw err;
+        }
+        if (!zapStill(gen)) return;
+        setZapStatus("Sent " + formatGroupedNumber(sats, 0) + " sats to " + address + ".", false);
+        return;
+      }
+    }
+
+    const typed = zapNwcField();
+    if (typed) {
+      const nwcUrl = normalizeNwcUrl(typed);
+      if (!nwcUrl) {
+        throw new Error("Paste a nostr+walletconnect link, or clear it to open a lightning invoice.");
+      }
+      storeZapNwc(nwcUrl);
+      if (!zapStill(gen)) return;
+      setZapStatus("Waiting for the connected wallet\u2026", false);
+      try {
+        await payWithNwc(nwcUrl, pr);
+      } catch (err) {
+        if (!zapStill(gen)) return;
+        if (walletCancelled(err)) throw zapCancelled();
+        throw err;
+      }
+      if (!zapStill(gen)) return;
+      setZapStatus("Sent " + formatGroupedNumber(sats, 0) + " sats to " + address + ".", false);
+      return;
+    }
+
+    if (!zapStill(gen)) return;
+    offerLightningUri(pr);
+  }
+
+  async function submitZapHive(asset, amount, gen) {
+    const user = observer();
+    const target = walletHiveName(zapState.author);
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!target || target === walletHiveName(user)) {
+      throw new Error("Choose another hive account.");
+    }
+    if (amount < 0.001) throw new Error("Enter an amount of at least 0.001.");
+    const accounts = await HiveApi.getAccounts([user, target]);
+    if (!zapStill(gen)) return;
+    let sender = null;
+    let recipient = null;
+    const rows = accounts || [];
+    for (let i = 0; i < rows.length; i++) {
+      const name = walletHiveName(rows[i] && rows[i].name);
+      if (name === walletHiveName(user)) sender = rows[i];
+      if (name === target) recipient = rows[i];
+    }
+    if (!sender) throw new Error("Could not load your account.");
+    if (!recipient) throw new Error("That hive account does not exist.");
+    const liquid = roundAsset(HiveApi.parseAsset(asset === "hbd" ? sender.hbd_balance : sender.balance), 3);
+    if (amount > liquid + 0.0000001) {
+      throw new Error("That is more than " + formatHiveAsset(Math.max(0, liquid), asset) + ".");
+    }
+    const chainSymbol = asset === "hbd" ? "HBD" : "HIVE";
+    const shown = formatHiveAsset(amount, asset);
+    const operations = [
+      [
+        "transfer",
+        {
+          from: user,
+          to: target,
+          amount: formatChainAmount(amount, chainSymbol, 3),
+          memo: zapNoteText(),
+        },
+      ],
+    ];
+    setZapStatus("", false);
+    await signWithDialog(user, operations, {
+      source: "zap",
+      authority: "Active",
+      title: "Sign zap",
+      lead:
+        "Use hive keychain (recommended) or enter the active key of @" +
+        user +
+        ". Sends " +
+        shown +
+        " to @" +
+        target +
+        ".",
+      cancelMessage: "The zap was cancelled.",
+      failMessage: "Could not sign this zap.",
+      onKeychain: function () {
+        setZapStatus("Waiting for Keychain\u2026", false);
+      },
+    });
+    if (!zapStill(gen)) return;
+    setZapStatus("Sent " + shown + " to @" + target + ".", false);
+  }
+
+  async function submitZap() {
+    if (zapState.pending || ownerSignOpen()) return;
+    const asset = zapAssetName(zapState.asset);
+    const picked = zapChosenAmount();
+    if (picked.error) {
+      setZapStatus(picked.error, true);
+      focusDesktop($("#zapCustom"));
+      return;
+    }
+    if (asset !== "ln" && !observer()) {
+      openLogin();
+      return;
+    }
+    if (asset === "ln" && zapSendBlocked()) return;
+    const gen = ++zapSendGen;
+    hideZapFallback();
+    zapDialogBusy(true);
+    setZapStatus(asset === "ln" ? "Requesting an invoice\u2026" : "Checking account\u2026", false);
+    try {
+      if (asset === "ln") await sendZapLightning(picked.amount, gen);
+      else await submitZapHive(asset, picked.amount, gen);
+    } catch (err) {
+      if (!zapStill(gen)) return;
+      const cancelled = Boolean(err && (err.ownerCancel || err.zapCancel));
+      setZapStatus(
+        cancelled
+          ? (err && err.message) || "The zap was cancelled."
+          : zapFailText(err, asset === "ln" ? "Could not send the lightning payment." : "Could not send this zap."),
+        !cancelled
+      );
+    } finally {
+      if (zapStill(gen)) zapDialogBusy(false);
     }
   }
 
@@ -19250,7 +20024,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
-      : `<div class="profile-head-actions">${followBtn}${profileMoreHtml(author)}</div>`;
+      : `<div class="profile-head-actions">${followBtn}${profileZapHtml()}${profileMoreHtml(author)}</div>`;
     return `
       <div class="profile-banner">
         <div class="profile-head">
@@ -31579,7 +32353,7 @@ let CS77_FILTER_LOW_REP = 20;
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
       const signSource = ownerSignSession.source;
-      if (signSource === "wallet" || signSource === "memo" || signSource === "dao") {
+      if (signSource === "wallet" || signSource === "memo" || signSource === "dao" || signSource === "zap") {
         cancelOwnerSign();
         if (signSource === "wallet") {
           closeWalletOverlay();
@@ -31597,6 +32371,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeZapOverlay();
       closeProposalOverlay();
       closeProxyOverlay();
     }
@@ -33010,6 +33785,12 @@ let CS77_FILTER_LOW_REP = 20;
         else if (action === "approve") approveCommunityMember(account, title);
         return;
       }
+      const zapBtn = e.target.closest(".profile-zap-btn");
+      if (zapBtn && inInteractiveSurface(zapBtn)) {
+        e.preventDefault();
+        openZapDialog();
+        return;
+      }
       const followBtn = e.target.closest(".profile-follow-btn");
       if (followBtn && inInteractiveSurface(followBtn)) {
         e.preventDefault();
@@ -33391,6 +34172,108 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && lightningOverlay.contains(active)) return;
         closeLightningDialog();
+      });
+    }
+    const zapAsset = $("#zapAsset");
+    if (zapAsset) {
+      zapAsset.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-zap-asset]");
+        if (!btn) return;
+        setZapAsset(btn.getAttribute("data-zap-asset"));
+      });
+    }
+    const zapChoices = $("#zapChoices");
+    if (zapChoices) {
+      zapChoices.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-zap-amount]");
+        if (!btn || zapState.pending) return;
+        const amount = Number(btn.getAttribute("data-zap-amount"));
+        if (!(amount > 0)) return;
+        const asset = zapAssetName(zapState.asset);
+        const preset = zapPresetForAmount(asset, amount);
+        zapState.selected[asset] = amount;
+        zapState.custom[asset] = zapPresetAmountText(asset, amount);
+        const input = $("#zapCustom");
+        if (input) input.value = zapState.custom[asset];
+        zapState.noteEdited[asset] = false;
+        zapState.note[asset] = preset ? preset.label : "";
+        hideZapFallback();
+        setZapStatus("", false);
+        paintZapForm();
+      });
+    }
+    const zapCustom = $("#zapCustom");
+    if (zapCustom) {
+      zapCustom.addEventListener("input", () => {
+        const asset = zapAssetName(zapState.asset);
+        zapState.custom[asset] = zapCustom.value;
+        if (!zapState.noteEdited[asset]) {
+          const parsed = zapParsedFieldAmount(asset, zapCustom.value);
+          const preset = parsed == null ? null : zapPresetForAmount(asset, parsed);
+          zapState.note[asset] = preset ? preset.label : "";
+          const note = $("#zapNote");
+          if (note && note.value !== zapState.note[asset]) note.value = zapState.note[asset];
+        }
+        hideZapFallback();
+        setZapStatus("", false);
+        paintZapChoices();
+        paintZapLead();
+      });
+      zapCustom.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitZap();
+        }
+      });
+    }
+    const zapNote = $("#zapNote");
+    if (zapNote) {
+      zapNote.addEventListener("input", () => {
+        const asset = zapAssetName(zapState.asset);
+        zapState.noteEdited[asset] = true;
+        zapState.note[asset] = zapNote.value;
+        hideZapFallback();
+        setZapStatus("", false);
+      });
+      zapNote.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitZap();
+        }
+      });
+    }
+    const zapNwc = $("#zapNwc");
+    if (zapNwc) {
+      zapNwc.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitZap();
+        }
+      });
+    }
+    const zapSubmit = $("#zapSubmit");
+    if (zapSubmit) zapSubmit.addEventListener("click", submitZap);
+    const zapCancel = $("#zapCancel");
+    if (zapCancel) zapCancel.addEventListener("click", closeZapOverlay);
+    const zapCopyInvoice = $("#zapCopyInvoice");
+    if (zapCopyInvoice) {
+      zapCopyInvoice.addEventListener("click", async () => {
+        if (!zapState.invoice) return;
+        try {
+          await copyToClipboard(zapState.invoice);
+          setZapStatus("Invoice copied.", false);
+        } catch (err) {
+          setZapStatus("Could not copy the invoice.", true);
+        }
+      });
+    }
+    const zapOverlay = $("#zapOverlay");
+    if (zapOverlay) {
+      zapOverlay.addEventListener("click", (e) => {
+        if (e.target !== zapOverlay) return;
+        const active = document.activeElement;
+        if (active && zapOverlay.contains(active)) return;
+        closeZapOverlay();
       });
     }
     ["#communityRoleOverlay", "#communityTitleOverlay"].forEach((id) => {
