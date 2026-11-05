@@ -731,11 +731,12 @@ let CS77_FILTER_LOW_REP = 20;
     document.querySelectorAll(".node-menu").forEach((menu) => {
       const trigger = menu.querySelector(".status-pill");
       if (!trigger) return;
-      // Same as the username menu: a fine-pointer hover drops the notification
-      // panel before this menu is shown, so the two panels do not stack.
+      // A fine-pointer hover still drops the username menu. It must not drop
+      // the notification panel or open this list while that panel is open.
       menu.addEventListener("pointerenter", () => {
         if (!hoverFine() || menu.classList.contains("node-menu-in-menu")) return;
-        setSessionMenuOpen(false);
+        const session = document.getElementById("sessionMenu");
+        if (session && session.classList.contains("is-open")) return;
         setAccountMenuOpen(false);
       });
       trigger.addEventListener("click", (e) => {

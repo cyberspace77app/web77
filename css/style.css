@@ -494,6 +494,11 @@ html.has-mouse .node-menu:hover .node-dropdown {
   display: block;
 }
 
+/* The notification panel is beside this pill. Hover must not open the node list over it. */
+html.has-mouse .header-right:has(.session-menu.is-open) > .node-menu:not(.is-open):hover .node-dropdown {
+  display: none;
+}
+
 .node-dropdown-panel {
   display: flex;
   flex-direction: column;
