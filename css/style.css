@@ -2472,8 +2472,8 @@ a.community:hover {
   min-height: 11.5rem;
 }
 
-.post-body > .nsfw-hold {
-  margin-top: 0.35rem;
+.nsfw-hold-post {
+  min-height: 12rem;
 }
 
 .post-card > .nsfw-hold {
