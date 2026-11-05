@@ -3461,6 +3461,121 @@ a.tag:hover {
   padding-top: 0;
 }
 
+.comments > .comment-composer {
+  margin-bottom: 0.4rem;
+}
+
+.comment-sort {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 0.85rem;
+  z-index: 1;
+}
+
+.comment-sort.is-open {
+  z-index: 5;
+}
+
+.comment-sort-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--gray);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.comment-sort-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.comment-sort-btn:hover,
+.comment-sort.is-open .comment-sort-btn {
+  color: var(--yellow);
+}
+
+.comment-sort-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.comment-sort-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 8.5rem;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-red), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.comment-sort-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  border: none;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--gray);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.comment-sort-item:hover,
+.comment-sort-item:focus-visible,
+.comment-sort-item.is-selected {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.comment-sort-item:hover,
+.comment-sort-item:focus-visible {
+  background: rgba(227, 19, 55, 0.12);
+}
+
+.comment-sort-check {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: 0 0 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.comment-sort-check svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  display: none;
+}
+
+.comment-sort-item.is-selected .comment-sort-check svg {
+  display: block;
+}
+
 .comment-head {
   display: flex;
   align-items: center;
@@ -8718,6 +8833,11 @@ min-height: 0;
 .settings-weight-unit {
   font-family: var(--font-mono);
   color: var(--gray);
+}
+
+.settings-form select.settings-comment-sort {
+  width: auto;
+  min-width: 12rem;
 }
 
 .settings-media {

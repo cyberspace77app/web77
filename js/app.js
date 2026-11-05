@@ -40,6 +40,14 @@ let CS77_FILTER_LOW_REP = 20;
   const SHOW_NSFW_KEY = "cs77_show_nsfw";
   // Missing key stays on. "0" is the explicit off.
   const AUTOPLAY_VIDEOS_KEY = "cs77_autoplay_videos";
+  // Missing key sorts comments by reward. "votes", "oldest", and "newest" are the others.
+  const COMMENT_SORT_KEY = "cs77_comment_sort";
+  const COMMENT_SORTS = [
+    ["reward", "Reward"],
+    ["votes", "Votes"],
+    ["oldest", "Oldest"],
+    ["newest", "Newest"],
+  ];
   const VOTERS_PAGE = 40;
   const VOTERS_SCROLL_PX = 72;
   const IMAGE_HOST = "https://images.hive.blog";
@@ -233,6 +241,13 @@ let CS77_FILTER_LOW_REP = 20;
   let accountMenuProfile = false;
   let welcomeHold = false;
   let currentPost = null;
+  // Per opened post, set only when the sort menu is used. Otherwise the
+  // General setting (cs77_comment_sort) decides.
+  const commentSortByPost = new Map();
+  // Comments written in this view, keyed by the opened post. Higher numbers
+  // were written later and stay above the chosen sort.
+  let freshCommentSeq = 0;
+  const freshCommentsByPost = new Map();
   let metaDefaults = null;
   const postLayer = {
     open: false,
@@ -6241,6 +6256,10 @@ let CS77_FILTER_LOW_REP = 20;
     const peopleOv = $("#peopleOverlay");
     if (peopleOv && !peopleOv.hidden) {
       closePeoplePanel();
+      return;
+    }
+    if (commentSortOpen()) {
+      closeCommentSort();
       return;
     }
     setSessionMenuOpen(false);
@@ -14190,6 +14209,83 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   /* ─── Post + comments ─── */
+  function normalizeCommentSort(value) {
+    const mode = String(value || "").trim().toLowerCase();
+    if (mode === "oldest" || mode === "newest" || mode === "reward" || mode === "votes") return mode;
+    return "reward";
+  }
+
+  function readCommentSort() {
+    try {
+      return normalizeCommentSort(localStorage.getItem(COMMENT_SORT_KEY));
+    } catch (err) {
+      return "reward";
+    }
+  }
+
+  function storeCommentSort(value) {
+    const mode = normalizeCommentSort(value);
+    try {
+      localStorage.setItem(COMMENT_SORT_KEY, mode);
+    } catch (err) {
+      // The choice stays on the control when storage is blocked.
+    }
+    return mode;
+  }
+
+  function commentSortKey(author, permlink) {
+    return authorImageKey(author) + "/" + String(permlink || "").toLowerCase();
+  }
+
+  function commentNodeKey(node) {
+    return commentSortKey(node && node.author, node && node.permlink);
+  }
+
+  function activeCommentSort(author, permlink) {
+    const key = commentSortKey(author, permlink);
+    if (commentSortByPost.has(key)) return commentSortByPost.get(key);
+    return readCommentSort();
+  }
+
+  function commentTime(node) {
+    const ts = parseCreatedTs(node && node.created);
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function commentReward(node) {
+    return roundHbd(payoutAmount(node));
+  }
+
+  function compareComments(a, b, mode, fresh) {
+    const fa = (fresh && fresh.get(commentNodeKey(a))) || 0;
+    const fb = (fresh && fresh.get(commentNodeKey(b))) || 0;
+    if (fa !== fb) return fb - fa;
+    if (mode === "oldest") return commentTime(a) - commentTime(b);
+    if (mode === "newest") return commentTime(b) - commentTime(a);
+    if (mode === "votes") {
+      const votes = voteCount(b) - voteCount(a);
+      if (votes) return votes;
+      return commentTime(a) - commentTime(b);
+    }
+    const reward = commentReward(b) - commentReward(a);
+    if (reward) return reward;
+    return commentTime(a) - commentTime(b);
+  }
+
+  function sortCommentTree(node, author, permlink) {
+    if (!node) return;
+    const mode = activeCommentSort(author, permlink);
+    const fresh = freshCommentsByPost.get(commentSortKey(author, permlink));
+    const walk = (current) => {
+      if (!current || !Array.isArray(current._replies)) return;
+      if (current._replies.length > 1) {
+        current._replies.sort((a, b) => compareComments(a, b, mode, fresh));
+      }
+      for (let i = 0; i < current._replies.length; i++) walk(current._replies[i]);
+    };
+    walk(node);
+  }
+
   function buildCommentTree(discussion, author, permlink) {
     const nodes = Object.values(discussion || {});
     const byKey = {};
@@ -14204,10 +14300,121 @@ let CS77_FILTER_LOW_REP = 20;
       const parent = byKey[`${n.parent_author}/${n.parent_permlink}`];
       if (parent) parent._replies.push(n);
     }
-    for (const n of nodes) {
-      n._replies.sort((a, b) => parseCreatedTs(a.created) - parseCreatedTs(b.created));
+    const root = byKey[rootKey] || null;
+    if (root) sortCommentTree(root, author, permlink);
+    return root;
+  }
+
+  const COMMENT_SORT_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter"><path d="M7 4v16"/><path d="M3.6 7.4 7 4l3.4 3.4"/><path d="M17 20V4"/><path d="M13.6 16.6 17 20l3.4-3.4"/></g></svg>';
+  const COMMENT_SORT_CHECK =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" d="M3.1 8.2 6.3 11.4 12.9 4.6"/></svg>';
+
+  function commentSortHtml(author, permlink) {
+    const mode = activeCommentSort(author, permlink);
+    const items = COMMENT_SORTS.map((row) => {
+      const on = row[0] === mode;
+      return `<button type="button" class="comment-sort-item${on ? " is-selected" : ""}" role="menuitemradio" data-sort="${row[0]}" aria-checked="${on ? "true" : "false"}"><span class="comment-sort-check">${COMMENT_SORT_CHECK}</span>${row[1]}</button>`;
+    }).join("");
+    return `
+      <div class="comment-sort" data-sort="${mode}">
+        <button type="button" class="comment-sort-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Sort comments" title="Sort comments">${COMMENT_SORT_ICON}</button>
+        <div class="comment-sort-menu" role="menu" hidden>${items}</div>
+      </div>`;
+  }
+
+  function commentSortRoot() {
+    const section = document.getElementById("comments");
+    return section ? section.querySelector(":scope > .comment-sort") : null;
+  }
+
+  function commentSortOpen() {
+    const root = commentSortRoot();
+    return Boolean(root && root.classList.contains("is-open"));
+  }
+
+  function closeCommentSort() {
+    const root = commentSortRoot();
+    if (!root) return;
+    root.classList.remove("is-open");
+    const menu = root.querySelector(".comment-sort-menu");
+    const btn = root.querySelector(".comment-sort-btn");
+    if (menu) menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleCommentSort() {
+    const root = commentSortRoot();
+    if (!root) return;
+    if (root.classList.contains("is-open")) {
+      closeCommentSort();
+      return;
     }
-    return byKey[rootKey] || null;
+    root.classList.add("is-open");
+    const menu = root.querySelector(".comment-sort-menu");
+    const btn = root.querySelector(".comment-sort-btn");
+    if (menu) menu.hidden = false;
+    if (btn) btn.setAttribute("aria-expanded", "true");
+  }
+
+  function paintCommentSortMenu(mode) {
+    const root = commentSortRoot();
+    if (!root) return;
+    root.setAttribute("data-sort", mode);
+    root.querySelectorAll(".comment-sort-item").forEach((btn) => {
+      const on = btn.getAttribute("data-sort") === mode;
+      btn.classList.toggle("is-selected", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function commentListSortable() {
+    const section = document.getElementById("comments");
+    const list = section && section.querySelector(".comment-list");
+    if (!list || !currentPost || !Array.isArray(currentPost._replies)) return false;
+    if (list.querySelector(".post-comments-pending, .post-comments-error")) return false;
+    return true;
+  }
+
+  function applyCommentSort(mode) {
+    const next = normalizeCommentSort(mode);
+    const author = postLayer.author;
+    const permlink = postLayer.permlink;
+    const key = commentSortKey(author, permlink);
+    const prev = author && permlink && commentSortByPost.has(key)
+      ? commentSortByPost.get(key)
+      : readCommentSort();
+    if (author && permlink) commentSortByPost.set(key, next);
+    paintCommentSortMenu(next);
+    closeCommentSort();
+    if (prev === next || !commentListSortable()) return;
+    sortCommentTree(currentPost, author, permlink);
+    fillCommentList(renderedCommentsHtml(currentPost));
+  }
+
+  function pinFreshComment(node) {
+    if (!currentPost || !node) return;
+    const rootKey = commentNodeKey(currentPost);
+    let fresh = freshCommentsByPost.get(rootKey);
+    if (!fresh) {
+      fresh = new Map();
+      freshCommentsByPost.set(rootKey, fresh);
+    }
+    freshCommentSeq += 1;
+    fresh.set(commentNodeKey(node), freshCommentSeq);
+  }
+
+  // A comment just written stays at the top of its thread, ahead of the sort.
+  function rememberPostedComment(node) {
+    pinFreshComment(node);
+    const parent = findLoadedComment(node.parent_author, node.parent_permlink);
+    if (!parent) return;
+    if (!Array.isArray(parent._replies)) parent._replies = [];
+    const key = commentNodeKey(node);
+    for (let i = 0; i < parent._replies.length; i++) {
+      if (commentNodeKey(parent._replies[i]) === key) return;
+    }
+    parent._replies.unshift(node);
   }
 
   function commentPermlink(parentAuthor, parentPermlink) {
@@ -14522,7 +14729,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!list) return;
       const hint = list.querySelector(":scope > .feed-hint");
       if (hint) hint.remove();
-      list.insertAdjacentHTML("beforeend", html);
+      list.insertAdjacentHTML("afterbegin", html);
       mountCommentPolls(list);
       return;
     }
@@ -14534,7 +14741,7 @@ let CS77_FILTER_LOW_REP = 20;
       replies.className = "comment-replies";
       parent.appendChild(replies);
     }
-    replies.insertAdjacentHTML("beforeend", html);
+    replies.insertAdjacentHTML("afterbegin", html);
     mountCommentPolls(replies);
     noteParentReply(parentAuthor, parentPermlink, 1);
   }
@@ -15250,7 +15457,7 @@ let CS77_FILTER_LOW_REP = 20;
       } catch {
         // renderComment escapes the body when the markdown scripts fail.
       }
-      const html = renderComment({
+      const node = {
         author: user,
         permlink,
         body,
@@ -15262,8 +15469,9 @@ let CS77_FILTER_LOW_REP = 20;
         parent_permlink: parentPermlink,
         children: 0,
         _replies: [],
-      });
-      appendPostedComment(parentAuthor, parentPermlink, html);
+      };
+      rememberPostedComment(node);
+      appendPostedComment(parentAuthor, parentPermlink, renderComment(node));
       bumpCommentCount(1);
       noteReplayCommentCount();
       composerStatus(composer, "");
@@ -16752,6 +16960,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
           ${composer}
+          ${commentSortHtml(root.author, root.permlink)}
           <div class="comment-list">
             ${commentsBody}
           </div>
@@ -28184,6 +28393,15 @@ let CS77_FILTER_LOW_REP = 20;
             </span>
           </label>
         </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsCommentSort">Default comment sort</label>
+          <select id="settingsCommentSort" class="settings-comment-sort">
+            <option value="reward">Reward</option>
+            <option value="votes">Votes</option>
+            <option value="oldest">Oldest</option>
+            <option value="newest">Newest</option>
+          </select>
+        </div>
         <p class="settings-note">Saved in this browser.</p>
       </form>
     `;
@@ -28233,6 +28451,13 @@ let CS77_FILTER_LOW_REP = 20;
       nsfw.addEventListener("change", () => {
         storeShowNsfw(nsfw.checked);
         if (nsfw.checked) revealAllNsfwHolds();
+      });
+    }
+    const commentSort = $("#settingsCommentSort");
+    if (commentSort) {
+      commentSort.value = readCommentSort();
+      commentSort.addEventListener("change", () => {
+        commentSort.value = storeCommentSort(commentSort.value);
       });
     }
   }
@@ -31078,6 +31303,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideVoteSlider();
     closeProfileMore();
     closeContentMore();
+    closeCommentSort();
     closeWalletMore();
     closeDaoProxyMenu();
     hideContentDelete(true);
@@ -32339,6 +32565,8 @@ let CS77_FILTER_LOW_REP = 20;
 
     document.addEventListener("click", (e) => {
       const profileMoreEl = eventElement(e.target);
+      const inCommentSort = Boolean(profileMoreEl && profileMoreEl.closest(".comment-sort"));
+      if (!inCommentSort) closeCommentSort();
       const inProfileMoreMenu = Boolean(profileMoreEl && profileMoreEl.closest(".profile-more-menu"));
       const inProfileMore = Boolean(
         profileMoreEl && (profileMoreEl.closest(".profile-more") || inProfileMoreMenu)
@@ -32437,6 +32665,13 @@ let CS77_FILTER_LOW_REP = 20;
           e.preventDefault();
           toggleContentMore(contentMoreBtn);
         }
+        return;
+      }
+      if (inCommentSort) {
+        e.preventDefault();
+        const sortItem = profileMoreEl.closest(".comment-sort-item");
+        if (sortItem) applyCommentSort(sortItem.getAttribute("data-sort"));
+        else toggleCommentSort();
         return;
       }
       if (!inInteractiveSurface(e.target)) return;
