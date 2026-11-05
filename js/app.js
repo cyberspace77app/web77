@@ -345,10 +345,9 @@ let CS77_FILTER_LOW_REP = 20;
   };
   let peopleSearchTimer = 0;
   let peopleChainGen = 0;
-  // The open panel is its own history entry so the browser back button closes it.
-  let peopleHistoryOn = false;
-  let peopleHistoryPop = false;
-  let pendingPeopleNav = null;
+  // Same-URL history entries. Back closes the panel and stays on this page.
+  const peopleHist = { on: false, pop: false, pending: null };
+  const votersHist = { on: false, pop: false, pending: null };
   const walletOpState = {
     kind: "",
     max: 0,
@@ -2107,8 +2106,98 @@ let CS77_FILTER_LOW_REP = 20;
     return el;
   }
 
+  function clearVotersPanelPos(panel) {
+    panel.style.position = "";
+    panel.style.zIndex = "";
+    panel.style.top = "";
+    panel.style.right = "";
+    panel.style.bottom = "";
+    panel.style.left = "";
+    panel.style.width = "";
+    panel.style.maxWidth = "";
+    panel.style.height = "";
+    panel.style.maxHeight = "";
+  }
+
+  function rememberVotersHistory(fromHistory) {
+    if (!isMobileViewport() || !openVoters) return;
+    const open = openVoters;
+    writePanelHistory(
+      votersHist,
+      {
+        votersPanel: true,
+        votersKind: open.kind || "vote",
+        votersAuthor: open.author || "",
+        votersPermlink: open.permlink || "",
+        votersDir: open.dir || "up",
+      },
+      fromHistory
+    );
+  }
+
+  function syncVotersSheet(panel) {
+    const sheet = isMobileViewport();
+    panel.classList.toggle("viewport-sheet", sheet);
+    if (!sheet) {
+      panel.setAttribute("role", "tooltip");
+      panel.removeAttribute("aria-modal");
+      panel.removeAttribute("aria-label");
+      return;
+    }
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    const caption = panel.querySelector(".vote-voters-caption");
+    if (caption && caption.textContent) panel.setAttribute("aria-label", caption.textContent);
+  }
+
+  function findVotersAnchor(state) {
+    if (!state) return null;
+    const author = state.votersAuthor;
+    const permlink = state.votersPermlink;
+    if (!author || !permlink) return null;
+    if (state.votersKind === "reblog") {
+      const nodes = document.querySelectorAll(".reblog-btn");
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i];
+        if (
+          el.getAttribute("data-reblog-author") === author &&
+          el.getAttribute("data-reblog-permlink") === permlink
+        ) {
+          return el;
+        }
+      }
+      return null;
+    }
+    const dir = state.votersDir === "down" ? "down" : "up";
+    const nodes = document.querySelectorAll(".vote-count-btn, .vote-hit");
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (
+        el.getAttribute("data-vote-author") === author &&
+        el.getAttribute("data-vote-permlink") === permlink &&
+        voteDirFromEl(el) === dir
+      ) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function reopenVotersFromHistory(state) {
+    const el = findVotersAnchor(state);
+    if (!el) return;
+    if (state.votersKind === "reblog") showReblogUsers(el, true, { fromHistory: true });
+    else showVoteVoters(el, true, { fromHistory: true });
+  }
+
   function placeVoteVoters(anchor, panel) {
     if (!anchor || !panel || panel.hidden) return;
+    syncVotersSheet(panel);
+    if (panel.classList.contains("viewport-sheet")) {
+      clearVotersPanelPos(panel);
+      if (!votersHist.on) rememberVotersHistory(false);
+      return;
+    }
     const rect = anchor.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
       if (votersTouching) return;
@@ -2119,6 +2208,10 @@ let CS77_FILTER_LOW_REP = 20;
     panel.style.position = "fixed";
     panel.style.zIndex = "70";
     panel.style.right = "auto";
+    panel.style.bottom = "";
+    panel.style.width = "";
+    panel.style.maxWidth = "";
+    panel.style.height = "";
     const spaceBelow = window.innerHeight - rect.bottom - 12;
     const spaceAbove = rect.top - 12;
     const contentH = panel.scrollHeight;
@@ -2141,7 +2234,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (panel.scrollTop !== scrollTop) panel.scrollTop = scrollTop;
   }
 
-  function hideVoteVoters() {
+  function hideVoteVoters(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
     window.clearTimeout(votersShowTimer);
     window.clearTimeout(votersHideTimer);
     votersShowTimer = 0;
@@ -2150,17 +2244,21 @@ let CS77_FILTER_LOW_REP = 20;
     votersTouching = false;
     openVoters = null;
     const panel = votersPanelNode || document.getElementById("voteVotersPanel");
-    if (!panel) return;
-    panel.hidden = true;
-    panel.innerHTML = "";
-    panel.classList.remove("is-down");
-    panel.style.top = "";
-    panel.style.left = "";
-    panel.style.maxHeight = "";
+    if (panel) {
+      panel.hidden = true;
+      panel.innerHTML = "";
+      panel.classList.remove("is-down", "viewport-sheet");
+      panel.setAttribute("role", "tooltip");
+      panel.removeAttribute("aria-modal");
+      panel.removeAttribute("aria-label");
+      clearVotersPanelPos(panel);
+    }
+    releasePanelHistory(votersHist, skipHistory);
   }
 
   function scheduleHideVoters(e) {
     if (votersTouching) return;
+    if (votersPanelNode && votersPanelNode.classList.contains("viewport-sheet") && !votersPanelNode.hidden) return;
     if (e && e.pointerType && e.pointerType !== "mouse") return;
     if (!hoverFine()) return;
     window.clearTimeout(votersShowTimer);
@@ -2344,7 +2442,7 @@ let CS77_FILTER_LOW_REP = 20;
     maybeLoadMoreVoters();
   }
 
-  function showVoteVoters(el, force) {
+  function showVoteVoters(el, force, opts) {
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider) return;
     hidePayoutPanel();
@@ -2353,6 +2451,7 @@ let CS77_FILTER_LOW_REP = 20;
     const permlink = el.getAttribute("data-vote-permlink");
     const dir = voteDirFromEl(el);
     if (!author || !permlink) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
     window.clearTimeout(votersHideTimer);
     votersHideTimer = 0;
     const panel = votersPanelEl();
@@ -2364,12 +2463,15 @@ let CS77_FILTER_LOW_REP = 20;
       openVoters.dir === dir
     ) {
       openVoters.el = el;
+      if (fromHistory) votersHist.on = true;
       panel.hidden = false;
       placeVoteVoters(el, panel);
+      rememberVotersHistory(fromHistory);
       return;
     }
     const gen = ++votersGen;
     openVoters = { el, author, permlink, dir, kind: "vote", gen };
+    if (fromHistory) votersHist.on = true;
     panel.classList.toggle("is-down", dir === "down");
     panel.innerHTML = `<p class="vote-voters-caption">${
       dir === "down" ? "Downvotes" : "Upvotes"
@@ -2377,6 +2479,7 @@ let CS77_FILTER_LOW_REP = 20;
     panel.hidden = false;
     document.body.appendChild(panel);
     placeVoteVoters(el, panel);
+    rememberVotersHistory(fromHistory);
     loadActiveVotes(author, permlink)
       .then((votes) => {
         if (!openVoters || openVoters.gen !== gen) return;
@@ -2524,13 +2627,14 @@ let CS77_FILTER_LOW_REP = 20;
     maybeLoadMoreVoters();
   }
 
-  function showReblogUsers(el, force) {
+  function showReblogUsers(el, force, opts) {
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider || openReblog) return;
     hidePayoutPanel();
     const author = el.getAttribute("data-reblog-author");
     const permlink = el.getAttribute("data-reblog-permlink");
     if (!author || !permlink) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
     window.clearTimeout(votersHideTimer);
     votersHideTimer = 0;
     const panel = votersPanelEl();
@@ -2541,18 +2645,22 @@ let CS77_FILTER_LOW_REP = 20;
       openVoters.permlink === permlink
     ) {
       openVoters.el = el;
+      if (fromHistory) votersHist.on = true;
       panel.hidden = false;
       placeVoteVoters(el, panel);
+      rememberVotersHistory(fromHistory);
       return;
     }
     const gen = ++votersGen;
     openVoters = { el, author, permlink, dir: "reblog", kind: "reblog", gen };
+    if (fromHistory) votersHist.on = true;
     panel.classList.remove("is-down");
     panel.innerHTML =
       `<p class="vote-voters-caption">Reblogs</p><p class="vote-voters-status">Loading…</p>`;
     panel.hidden = false;
     document.body.appendChild(panel);
     placeVoteVoters(el, panel);
+    rememberVotersHistory(fromHistory);
     loadRebloggedBy(author, permlink)
       .then((names) => {
         if (!openVoters || openVoters.gen !== gen) return;
@@ -4533,6 +4641,109 @@ let CS77_FILTER_LOW_REP = 20;
     return "";
   }
 
+  function historyRecord() {
+    return history.state && typeof history.state === "object" ? Object.assign({}, history.state) : {};
+  }
+
+  // One same-URL entry. A Back or Forward restore only marks the panel open.
+  function writePanelHistory(session, extra, fromHistory) {
+    if (fromHistory) {
+      session.on = true;
+      return;
+    }
+    const state = Object.assign(historyRecord(), extra);
+    if (session.on) history.replaceState(state, "", location.href);
+    else {
+      history.pushState(state, "", location.href);
+      session.on = true;
+    }
+  }
+
+  function stripPanelHistory(session, keys) {
+    session.on = false;
+    const state = history.state;
+    if (!state || !state[keys[0]]) return;
+    const next = Object.assign({}, state);
+    for (let i = 0; i < keys.length; i++) delete next[keys[i]];
+    history.replaceState(next, "", location.href);
+  }
+
+  function releasePanelHistory(session, skipHistory) {
+    const had = session.on;
+    session.on = false;
+    if (had && !skipHistory) {
+      session.pop = true;
+      history.back();
+    }
+    return had;
+  }
+
+  // Pop the panel entry before leaving the page, so Back does not reopen it.
+  function leavePanelForNav(session, alsoOpen, close, href, replace) {
+    if (!session.on && !alsoOpen) return false;
+    const had = session.on;
+    close({ skipHistory: true });
+    session.on = false;
+    if (had && !replace) {
+      session.pending = { href: href, replace: false };
+      history.back();
+      return true;
+    }
+    return false;
+  }
+
+  function leavePanelForReload(session, close) {
+    if (!session.on) return false;
+    close({ skipHistory: true });
+    session.on = false;
+    session.pending = { reloadSection: true };
+    history.back();
+    return true;
+  }
+
+  function resumePanelNavigation(session, close) {
+    if (session.pending) {
+      const job = session.pending;
+      session.pending = null;
+      close({ skipHistory: true });
+      session.on = false;
+      if (job.logoutRoute) {
+        if (parseRoute().name === "publish") navigate(appHref("/"), true);
+        else route();
+      } else if (job.reloadSection) beginSectionReload();
+      else navigate(job.href, job.replace);
+      return true;
+    }
+    if (session.pop) {
+      session.pop = false;
+      return true;
+    }
+    return false;
+  }
+
+  // The entry we landed on still names this panel, or the panel is still open.
+  function keepPanelOnPop(flag, isShown, reopen, shouldDismiss, close, session) {
+    if (history.state && history.state[flag]) {
+      if (!isShown()) reopen(history.state);
+      return true;
+    }
+    if (shouldDismiss()) {
+      close({ skipHistory: true });
+      session.on = false;
+      return true;
+    }
+    return false;
+  }
+
+  const PEOPLE_HISTORY_KEYS = ["peoplePanel", "peopleKind", "peopleId"];
+  const VOTERS_HISTORY_KEYS = [
+    "votersPanel",
+    "votersKind",
+    "votersAuthor",
+    "votersPermlink",
+    "votersDir",
+  ];
+
   function navigate(href, replace) {
     if (pollVotes.open) closePollVotes();
     if (editHistoryOn) {
@@ -4545,16 +4756,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
       editHistoryPost = null;
     }
-    if (peopleList.open || peopleHistoryOn) {
-      const hadHistory = peopleHistoryOn;
-      closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
-      if (hadHistory && !replace) {
-        pendingPeopleNav = { href: href, replace: false };
-        history.back();
-        return;
-      }
-    }
+    if (leavePanelForNav(peopleHist, peopleList.open, closePeoplePanel, href, replace)) return;
+    if (leavePanelForNav(votersHist, false, hideVoteVoters, href, replace)) return;
     const path = hrefToPath(href);
     hidePayoutPanel();
     if (parseRoute(path).name === "publish") rememberNonPublishPath();
@@ -4755,14 +4958,9 @@ let CS77_FILTER_LOW_REP = 20;
       history.back();
       return;
     }
-    if (peopleHistoryOn) {
-      closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
-      pendingPeopleNav = { reloadSection: true };
-      history.back();
-      return;
-    }
+    if (leavePanelForReload(peopleHist, closePeoplePanel)) return;
     if (peopleList.open) closePeoplePanel({ skipHistory: true });
+    if (leavePanelForReload(votersHist, hideVoteVoters)) return;
     beginSectionReload();
   }
 
@@ -4980,31 +5178,30 @@ let CS77_FILTER_LOW_REP = 20;
       stripEditHistoryFlag();
       if (same) return;
     }
-    if (pendingPeopleNav) {
-      const job = pendingPeopleNav;
-      pendingPeopleNav = null;
-      closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
-      if (job.reloadSection) {
-        beginSectionReload();
-        return;
-      }
-      navigate(job.href, job.replace);
+    if (resumePanelNavigation(peopleHist, closePeoplePanel)) return;
+    if (
+      keepPanelOnPop(
+        "peoplePanel",
+        () => peopleList.open,
+        (state) => openPeoplePanel(state.peopleKind, state.peopleId, { fromHistory: true }),
+        () => peopleList.open,
+        closePeoplePanel,
+        peopleHist
+      )
+    ) {
       return;
     }
-    if (peopleHistoryPop) {
-      peopleHistoryPop = false;
-      return;
-    }
-    if (history.state && history.state.peoplePanel) {
-      if (!peopleList.open) {
-        openPeoplePanel(history.state.peopleKind, history.state.peopleId, { fromHistory: true });
-      }
-      return;
-    }
-    if (peopleList.open) {
-      closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
+    if (resumePanelNavigation(votersHist, hideVoteVoters)) return;
+    if (
+      keepPanelOnPop(
+        "votersPanel",
+        () => !!openVoters,
+        reopenVotersFromHistory,
+        () => votersHist.on,
+        hideVoteVoters,
+        votersHist
+      )
+    ) {
       return;
     }
     if (!HASH_ROUTING) {
@@ -5957,6 +6154,8 @@ let CS77_FILTER_LOW_REP = 20;
     reblogsCache.clear();
     payoutByKey.clear();
     voteRefreshGen.clear();
+    const closeVotersForLogout = votersHist.on;
+    if (closeVotersForLogout) hideVoteVoters({ skipHistory: true });
     hideVoteUi();
     pendingPublish = false;
     pendingCrossPost = null;
@@ -5978,6 +6177,11 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryOn = false;
       editHistoryPost = null;
       pendingEditNav = { logoutRoute: true };
+      history.back();
+      return;
+    }
+    if (closeVotersForLogout) {
+      votersHist.pending = { logoutRoute: true };
       history.back();
       return;
     }
@@ -25381,15 +25585,6 @@ let CS77_FILTER_LOW_REP = 20;
     }, 200);
   }
 
-  function peopleHistoryState(kind, id) {
-    const prev = history.state && typeof history.state === "object" ? history.state : {};
-    return Object.assign({}, prev, {
-      peoplePanel: true,
-      peopleKind: kind,
-      peopleId: id,
-    });
-  }
-
   function closePeoplePanel(opts) {
     const skipHistory = !!(opts && opts.skipHistory);
     const overlayEl = $("#peopleOverlay");
@@ -25418,11 +25613,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (peopleSearch) peopleSearch.value = "";
     if (overlayEl) overlayEl.hidden = true;
     paintPeopleCounts();
-    if (peopleHistoryOn && !skipHistory) {
-      peopleHistoryOn = false;
-      peopleHistoryPop = true;
-      history.back();
-    }
+    releasePanelHistory(peopleHist, skipHistory);
   }
 
   function openPeoplePanel(kind, rawId, opts) {
@@ -25474,14 +25665,11 @@ let CS77_FILTER_LOW_REP = 20;
     paintPeopleCounts();
     const opener = document.activeElement;
     if (opener && opener.closest && opener.closest("[data-people]")) opener.blur();
-    if (opts && opts.fromHistory) {
-      peopleHistoryOn = true;
-    } else if (peopleHistoryOn) {
-      history.replaceState(peopleHistoryState(kind, id), "", location.href);
-    } else {
-      history.pushState(peopleHistoryState(kind, id), "", location.href);
-      peopleHistoryOn = true;
-    }
+    writePanelHistory(
+      peopleHist,
+      { peoplePanel: true, peopleKind: kind, peopleId: id },
+      Boolean(opts && opts.fromHistory)
+    );
     fillAndChainPeople();
   }
 
@@ -30853,13 +31041,22 @@ let CS77_FILTER_LOW_REP = 20;
     return !!(history.state && history.state.peoplePanel);
   }
 
+  function logoVotersOn() {
+    return !!(history.state && history.state.votersPanel);
+  }
+
   function logoEditOn() {
     return !!(history.state && history.state.editDialog);
   }
 
-  function logoCap(steps, people) {
+  // People, voters, and the edit dialog each add one same-page history entry.
+  function logoSamePageExtra() {
+    return (logoPeopleOn() ? 1 : 0) + (logoVotersOn() ? 1 : 0) + (logoEditOn() ? 1 : 0);
+  }
+
+  function logoCap(steps) {
     const depth = historyDepth() || 1;
-    const canPop = Math.max(0, depth - 1) + (people ? 1 : 0) + (logoEditOn() ? 1 : 0);
+    const canPop = Math.max(0, depth - 1) + logoSamePageExtra();
     if (steps > canPop) return canPop > 0 ? canPop : 0;
     return steps > 0 ? steps : 0;
   }
@@ -30871,10 +31068,10 @@ let CS77_FILTER_LOW_REP = 20;
     return index;
   }
 
-  function logoStepsAfter(layers, index, people) {
-    let steps = (people ? 1 : 0) + (logoEditOn() ? 1 : 0);
+  function logoStepsAfter(layers, index) {
+    let steps = logoSamePageExtra();
     for (let i = index + 1; i < layers.length; i++) steps += Number(layers[i].n) || 1;
-    return logoCap(steps, people);
+    return logoCap(steps);
   }
 
   // Where the brand is allowed to land, walking backward from origin.
@@ -30891,12 +31088,18 @@ let CS77_FILTER_LOW_REP = 20;
 
   function logoBrandJump() {
     const people = logoPeopleOn();
+    const voters = logoVotersOn();
     const layers = cloneLayers(history.state && history.state.layers);
     if (!layers.length) {
       if (isOnTopLevelFeed(parseRoute())) {
-        return { top: true, steps: (people ? 1 : 0) + (logoEditOn() ? 1 : 0), closePeople: false };
+        return {
+          top: true,
+          steps: logoSamePageExtra(),
+          closePeople: false,
+          closeVoters: false,
+        };
       }
-      return { top: false, steps: logoLayerJump(), closePeople: false };
+      return { top: false, steps: logoLayerJump(), closePeople: false, closeVoters: false };
     }
     const originIndex = logoOriginIndex(layers);
     const origin = layers[originIndex];
@@ -30910,16 +31113,24 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     }
-    if (stop < 0) return { top: false, steps: 0, closePeople: false };
-    const steps = logoStepsAfter(layers, stop, people);
-    return { top: onGlobal, steps: steps, closePeople: people && steps > 1 };
+    if (stop < 0) return { top: false, steps: 0, closePeople: false, closeVoters: false };
+    const steps = logoStepsAfter(layers, stop);
+    return {
+      top: onGlobal,
+      steps: steps,
+      closePeople: people && steps > 1,
+      closeVoters: voters && steps > 1,
+    };
   }
 
   function followLogoBrand() {
     const jump = logoBrandJump();
     if (jump.closePeople && peopleList.open) {
       closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
+      peopleHist.on = false;
+    }
+    if (jump.closeVoters && votersHist.on) {
+      hideVoteVoters({ skipHistory: true });
     }
     if (jump.steps > 1) history.go(-jump.steps);
     else if (jump.steps === 1) history.back();
@@ -30929,15 +31140,12 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Used when this entry has no layer trail yet. Pops the open tab group.
   function logoLayerJump() {
-    let bonus = 0;
-    if (history.state && history.state.peoplePanel) {
-      bonus = 1;
-      if (peopleList.open) {
-        closePeoplePanel({ skipHistory: true });
-        peopleHistoryOn = false;
-      }
+    const bonus = logoSamePageExtra();
+    if (logoPeopleOn() && peopleList.open) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHist.on = false;
     }
-    if (logoEditOn()) bonus += 1;
+    if (logoVotersOn() && votersHist.on) hideVoteVoters({ skipHistory: true });
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
     const canPop = Math.max(0, depth - 1) + bonus;
@@ -32315,16 +32523,13 @@ let CS77_FILTER_LOW_REP = 20;
       delete prev.editDialog;
       history.replaceState(prev, "", location.href);
     }
-    if (peopleList.open || peopleHistoryOn) {
+    if (peopleList.open || peopleHist.on) {
       closePeoplePanel({ skipHistory: true });
-      peopleHistoryOn = false;
-      if (history.state && history.state.peoplePanel) {
-        const prev = Object.assign({}, history.state);
-        delete prev.peoplePanel;
-        delete prev.peopleKind;
-        delete prev.peopleId;
-        history.replaceState(prev, "", location.href);
-      }
+      stripPanelHistory(peopleHist, PEOPLE_HISTORY_KEYS);
+    }
+    if (votersHist.on) {
+      hideVoteVoters({ skipHistory: true });
+      stripPanelHistory(votersHist, VOTERS_HISTORY_KEYS);
     }
     persistCommentDraftNow();
     const fromPop = routeFromPop;

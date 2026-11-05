@@ -6245,7 +6245,9 @@ body:has(#publishOverlay:not([hidden])),
 html:has(#peopleOverlay:not([hidden])),
 body:has(#peopleOverlay:not([hidden])),
 html:has(#pollVotesOverlay:not([hidden])),
-body:has(#pollVotesOverlay:not([hidden])) {
+body:has(#pollVotesOverlay:not([hidden])),
+html:has(#voteVotersPanel.viewport-sheet:not([hidden])),
+body:has(#voteVotersPanel.viewport-sheet:not([hidden])) {
   overflow: hidden;
 }
 
@@ -8308,17 +8310,13 @@ body:has(#pollVotesOverlay:not([hidden])) {
     padding:1.5rem 0 0 0;
   }
 
-  /* Publish meets the top of the screen. margin:auto would center a short card.
-     The card is full-bleed, so the panel frame is only a line against the viewport. */
+  /* Publish meets the top of the screen. margin:auto would center a short card. */
   #publishOverlay {
     padding-top: 0;
   }
 
   #publishOverlay .publish-card {
     margin-top: 0;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
   }
 
   #peopleOverlay,
@@ -8347,10 +8345,32 @@ body:has(#pollVotesOverlay:not([hidden])) {
     margin-bottom: 0;
   }
 
-  #peopleOverlay .people-card {
+  /* A border on these sheets is a line against the viewport. Poll votes stay framed. */
+  #peopleOverlay .people-card.viewport-sheet,
+  #publishOverlay .publish-card.viewport-sheet,
+  .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .vote-voters-panel.viewport-sheet {
+    position: fixed;
+    z-index: 70;
+    top: 0;
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    padding-bottom: max(0.45rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .vote-voters-panel.viewport-sheet .vote-voters-caption {
+    padding-top: max(0.85rem, env(safe-area-inset-top, 0px));
   }
 
   #peopleOverlay .people-scroll,
