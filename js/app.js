@@ -716,6 +716,13 @@ let CS77_FILTER_LOW_REP = 20;
     document.querySelectorAll(".node-menu").forEach((menu) => {
       const trigger = menu.querySelector(".status-pill");
       if (!trigger) return;
+      // Same as the username menu: a fine-pointer hover drops the notification
+      // panel before this menu is shown, so the two panels do not stack.
+      menu.addEventListener("pointerenter", () => {
+        if (!hoverFine() || menu.classList.contains("node-menu-in-menu")) return;
+        setSessionMenuOpen(false);
+        setAccountMenuOpen(false);
+      });
       trigger.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -723,7 +730,13 @@ let CS77_FILTER_LOW_REP = 20;
         closeNodeMenus();
         menu.classList.toggle("is-open", open);
         trigger.setAttribute("aria-expanded", open ? "true" : "false");
-        if (open) revealLogoNodeList(menu);
+        if (open) {
+          if (!menu.classList.contains("node-menu-in-menu")) {
+            setSessionMenuOpen(false);
+            setAccountMenuOpen(false);
+          }
+          revealLogoNodeList(menu);
+        }
       });
     });
 
