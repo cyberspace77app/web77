@@ -9859,6 +9859,39 @@ a.dao-stat-treasury:focus-visible {
   margin-bottom: 1.15rem;
 }
 
+.dao-proposal-side {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 0.35rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.dao-tools .proposal-sort {
+  margin: 0;
+  flex: 0 0 auto;
+  z-index: 1;
+}
+
+.dao-tools .proposal-sort[hidden] {
+  display: none;
+}
+
+.dao-tools .proposal-sort.is-open {
+  z-index: 9;
+}
+
+.dao-tools .proposal-sort .comment-sort-menu {
+  min-width: 10.5rem;
+}
+
+.dao-tools .proposal-sort .comment-sort-menu.is-up {
+  top: auto;
+  bottom: calc(100% + 0.3rem);
+}
+
 .dao-page .dao-tools #proposalSearchForm {
   flex: 1 1 14rem;
   width: auto;
@@ -10564,7 +10597,8 @@ span.witness-vote.is-voted::before {
   color: var(--yellow);
 }
 
-#proposalList.is-all .proposal-row.is-return {
+#proposalList.is-all .proposal-row.is-return,
+#proposalList.is-return-yellow .proposal-row.is-return {
   border-color: var(--yellow);
 }
 

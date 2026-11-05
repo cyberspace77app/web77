@@ -64,6 +64,10 @@
     proposalFilter: "active",
     proposalQuery: "",
     proposalExcludeStabilizer: false,
+    proposalSortAll: "paid",
+    proposalSortPast: "end",
+    proposalSortActive: "hp",
+    proposalSortUpcoming: "hp",
     proposalSearchTimer: 0,
     proposalSerial: 0,
     proposals: emptyProposals(),
@@ -942,6 +946,11 @@
     state.proposalFilter = "active";
     state.proposalQuery = "";
     state.proposalExcludeStabilizer = false;
+    state.proposalSortAll = "paid";
+    state.proposalSortPast = "end";
+    state.proposalSortActive = "hp";
+    state.proposalSortUpcoming = "hp";
+    closeProposalSort();
     state.proposalSerial += 1;
     state.proposals = emptyProposals();
     state.proposalVotes = emptyProposalVotes();
@@ -1652,6 +1661,35 @@
     };
   }
 
+  // Million-scale and up. Always two decimal places.
+  function compactTwo(milli) {
+    var n = milli < 0n ? -milli : milli;
+    var scales = [
+      [1000000000000000000n, "Q"],
+      [1000000000000000n, "T"],
+      [1000000000000n, "B"],
+      [1000000000n, "M"],
+    ];
+    var factor = 100n;
+    var i;
+    for (i = 0; i < scales.length; i += 1) {
+      var scale = scales[i][0];
+      if (n < scale) continue;
+      var scaled = (n * factor + scale / 2n) / scale;
+      var whole = (scaled / factor).toString();
+      var frac = (scaled % factor).toString();
+      if (frac.length < 2) frac = "0" + frac;
+      return whole + "." + frac + scales[i][1];
+    }
+    return "";
+  }
+
+  // Above zero shows three decimals. A million-scale figure always shows two. Zero stays "0".
+  function proposalFigureText(milli) {
+    if (milli == null || milli <= 0n) return hbdCell(milli).cell;
+    return compactTwo(milli) || formatHiveMilli(milli);
+  }
+
   function paidMilli(raw) {
     var s = String(raw == null ? "" : raw).trim();
     if (!s) return 0n;
@@ -1720,6 +1758,93 @@
     return (proposalId(b) || 0) - (proposalId(a) || 0);
   }
 
+  // Largest amount, latest date, and highest stake first. A missing figure sorts last.
+  var PROPOSAL_SORTS = [
+    ["total", "Total"],
+    ["paid", "Paid"],
+    ["topay", "To pay"],
+    ["daily", "Daily"],
+    ["start", "Start date"],
+    ["end", "End date"],
+    ["hp", "HP"],
+  ];
+
+  function normalizeProposalSort(value, fallback) {
+    var i;
+    for (i = 0; i < PROPOSAL_SORTS.length; i += 1) {
+      if (PROPOSAL_SORTS[i][0] === value) return value;
+    }
+    return fallback;
+  }
+
+  function proposalSortFallback(filter) {
+    if (filter === "past") return "end";
+    if (filter === "all") return "paid";
+    return "hp";
+  }
+
+  function proposalSortMode() {
+    var filter = proposalFilter();
+    if (filter === "past") return normalizeProposalSort(state.proposalSortPast, "end");
+    if (filter === "all") return normalizeProposalSort(state.proposalSortAll, "paid");
+    if (filter === "upcoming") return normalizeProposalSort(state.proposalSortUpcoming, "hp");
+    return normalizeProposalSort(state.proposalSortActive, "hp");
+  }
+
+  // The funding line is the HP order. Any other sort is one flat list.
+  function proposalSortKeepsLine() {
+    var filter = proposalFilter();
+    return (filter === "active" || filter === "upcoming") && proposalSortMode() === "hp";
+  }
+
+  function compareBigDesc(a, b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    if (a === b) return 0;
+    return a > b ? -1 : 1;
+  }
+
+  function compareTimeDesc(a, b) {
+    var aOk = Number.isFinite(a);
+    var bOk = Number.isFinite(b);
+    if (!aOk && !bOk) return 0;
+    if (!aOk) return 1;
+    if (!bOk) return -1;
+    if (a === b) return 0;
+    return a > b ? -1 : 1;
+  }
+
+  function compareProposalSort(a, b, key, now, line) {
+    var cmp = 0;
+    if (key === "start" || key === "end") {
+      cmp = compareTimeDesc(
+        hiveTime(key === "start" ? a.start_date : a.end_date),
+        hiveTime(key === "start" ? b.start_date : b.end_date)
+      );
+    } else if (key === "hp") {
+      cmp = compareBigDesc(bigIntOf(a.total_votes, 0n), bigIntOf(b.total_votes, 0n));
+    } else {
+      var ap = proposalPay(a, now, line);
+      var bp = proposalPay(b, now, line);
+      var av = ap.paid;
+      var bv = bp.paid;
+      if (key === "total") {
+        av = ap.total;
+        bv = bp.total;
+      } else if (key === "daily") {
+        av = ap.daily;
+        bv = bp.daily;
+      } else if (key === "topay") {
+        av = ap.toPay;
+        bv = bp.toPay;
+      }
+      cmp = compareBigDesc(av, bv);
+    }
+    if (cmp) return cmp;
+    return compareVotes(a, b);
+  }
+
   function proposalGroups() {
     var filter = proposalFilter();
     var now = chainNow();
@@ -1733,22 +1858,6 @@
       if (query && !proposalNameHit(rows[i], query)) continue;
       if (hideStabilizer && proposalIsStabilizer(rows[i])) continue;
       list.push(rows[i]);
-    }
-    if (filter === "past") {
-      list.sort(function (a, b) {
-        var ap = recordedPaid(a);
-        var bp = recordedPaid(b);
-        if (state.proposals.paidReady) {
-          if (ap == null) ap = 0n;
-          if (bp == null) bp = 0n;
-        }
-        if (ap == null && bp == null) return compareVotes(a, b);
-        if (ap == null) return 1;
-        if (bp == null) return -1;
-        if (ap !== bp) return ap > bp ? -1 : 1;
-        return compareVotes(a, b);
-      });
-      return { above: list, threshold: null, below: [] };
     }
     if (filter === "upcoming") {
       // Proposal 0 stays active, so the phase filter leaves it out. Show it
@@ -1767,6 +1876,14 @@
           break;
         }
       }
+    }
+    if (filter === "all" || filter === "past" || !proposalSortKeepsLine()) {
+      var sortKey = proposalSortMode();
+      var payLine = returnVotes();
+      list.sort(function (a, b) {
+        return compareProposalSort(a, b, sortKey, now, payLine);
+      });
+      return { above: list, threshold: null, below: [] };
     }
     var ret = null;
     for (i = 0; i < list.length; i += 1) {
@@ -1845,6 +1962,7 @@
 
   function moneyCell(label, milli, end) {
     var shown = hbdCell(milli);
+    if (label === "Paid" || label === "To pay") shown = { cell: proposalFigureText(milli) };
     return (
       '<span class="proposal-cell' +
       (end ? " is-end" : "") +
@@ -2127,10 +2245,11 @@
     var i;
     for (i = 0; i < groups.above.length; i += 1) html.push(proposalRowHtml(groups.above[i], now, filter, line));
     if (groups.threshold) {
-      // Active and Upcoming draw the checker when the username field is empty.
-      // The "Currently not funded" note stays on Active. Upcoming has not
-      // started paying, so the line only marks which of those proposals are above it.
-      var showFundingLine = (filter === "active" || filter === "upcoming") && !state.proposalQuery;
+      // Active and Upcoming draw the checker on the HP sort when the username
+      // field is empty. The "Currently not funded" note stays on Active.
+      // Upcoming has not started paying, so the line only marks which of
+      // those proposals are above it. Any other sort is a flat list.
+      var showFundingLine = proposalSortKeepsLine() && !state.proposalQuery;
       if (showFundingLine) {
         html.push('<p class="dao-split proposal-threshold" aria-hidden="true"><span></span></p>');
       }
@@ -2196,6 +2315,7 @@
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-checked", on ? "true" : "false");
     });
+    paintProposalSort();
   }
 
   function setProposalStat(id, text) {
@@ -2232,6 +2352,10 @@
     var list = document.getElementById("proposalList");
     if (!list) return;
     list.classList.toggle("is-all", proposalFilter() === "all");
+    list.classList.toggle(
+      "is-return-yellow",
+      (proposalFilter() === "active" || proposalFilter() === "upcoming") && proposalSortMode() !== "hp"
+    );
     paintProposalFilter();
     if (state.proposals.error && !state.proposals.rows.length) {
       list.innerHTML = "";
@@ -3600,6 +3724,113 @@
     );
   }
 
+  var PROPOSAL_SORT_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter"><path d="M7 4v16"/><path d="M3.6 7.4 7 4l3.4 3.4"/><path d="M17 20V4"/><path d="M13.6 16.6 17 20l3.4-3.4"/></g></svg>';
+  var PROPOSAL_SORT_CHECK =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" d="M3.1 8.2 6.3 11.4 12.9 4.6"/></svg>';
+
+  function proposalSortHtml() {
+    var mode = proposalSortMode() || "paid";
+    var items = "";
+    var i;
+    for (i = 0; i < PROPOSAL_SORTS.length; i += 1) {
+      var on = PROPOSAL_SORTS[i][0] === mode;
+      items +=
+        '<button type="button" class="comment-sort-item' +
+        (on ? " is-selected" : "") +
+        '" role="menuitemradio" data-proposal-sort="' +
+        PROPOSAL_SORTS[i][0] +
+        '" aria-checked="' +
+        (on ? "true" : "false") +
+        '"><span class="comment-sort-check">' +
+        PROPOSAL_SORT_CHECK +
+        "</span>" +
+        esc(PROPOSAL_SORTS[i][1]) +
+        "</button>";
+    }
+    return (
+      '<div class="comment-sort proposal-sort" data-sort="' +
+      esc(mode) +
+      '">' +
+      '<button type="button" class="comment-sort-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Sort proposals" title="Sort proposals">' +
+      PROPOSAL_SORT_ICON +
+      "</button>" +
+      '<div class="comment-sort-menu" role="menu" hidden>' +
+      items +
+      "</div></div>"
+    );
+  }
+
+  function proposalSortRoot() {
+    return document.querySelector(".dao-page .proposal-sort");
+  }
+
+  function closeProposalSort() {
+    var root = proposalSortRoot();
+    if (!root) return;
+    root.classList.remove("is-open");
+    var menu = root.querySelector(".comment-sort-menu");
+    var btn = root.querySelector(".comment-sort-btn");
+    if (menu) menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function placeProposalSortMenu(menu, btn) {
+    if (!menu || !btn) return;
+    menu.classList.remove("is-up");
+    var rect = btn.getBoundingClientRect();
+    var needed = menu.offsetHeight + 12;
+    var below = window.innerHeight - rect.bottom;
+    var above = rect.top;
+    if (below < needed && above > below) menu.classList.add("is-up");
+  }
+
+  function toggleProposalSort() {
+    var root = proposalSortRoot();
+    if (!root || root.hidden) return;
+    if (root.classList.contains("is-open")) {
+      closeProposalSort();
+      return;
+    }
+    closeProxyMenu();
+    root.classList.add("is-open");
+    var menu = root.querySelector(".comment-sort-menu");
+    var btn = root.querySelector(".comment-sort-btn");
+    if (menu) menu.hidden = false;
+    if (btn) btn.setAttribute("aria-expanded", "true");
+    placeProposalSortMenu(menu, btn);
+  }
+
+  function paintProposalSort() {
+    var root = proposalSortRoot();
+    if (!root) return;
+    var mode = proposalSortMode();
+    root.hidden = false;
+    root.setAttribute("data-sort", mode);
+    var items = root.querySelectorAll(".comment-sort-item");
+    items.forEach(function (btn) {
+      var on = btn.getAttribute("data-proposal-sort") === mode;
+      btn.classList.toggle("is-selected", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function applyProposalSort(next) {
+    var filter = proposalFilter();
+    var mode = normalizeProposalSort(next, proposalSortFallback(filter));
+    var prev = proposalSortMode();
+    if (filter === "past") state.proposalSortPast = mode;
+    else if (filter === "all") state.proposalSortAll = mode;
+    else if (filter === "upcoming") state.proposalSortUpcoming = mode;
+    else state.proposalSortActive = mode;
+    closeProposalSort();
+    if (prev === mode) {
+      paintProposalSort();
+      return;
+    }
+    paintProposalList();
+  }
+
   function proxyMenuHtml() {
     var label = state.votes.proxy ? "Remove proxy" : "Set proxy";
     var waiting = (Boolean(state.votes.user) && !state.votes.ready) || state.proxyBusy;
@@ -3645,6 +3876,7 @@
     if (!root) return;
     var open = root.classList.contains("is-open");
     closeProxyMenu();
+    closeProposalSort();
     if (open) return;
     root.classList.add("is-open");
     btn.setAttribute("aria-expanded", "true");
@@ -3964,8 +4196,10 @@
       glassHtml() +
       "</form>" +
       proxyMenuHtml() +
+      '<div class="dao-proposal-side">' +
       proposalExcludeHtml() +
-      "</div>" +
+      proposalSortHtml() +
+      "</div></div>" +
       '<p class="tags-status" id="daoStatus" hidden></p>' +
       '<div class="proposal-table" id="proposalTable">' +
       '<div id="proposalList"></div>' +
@@ -5060,6 +5294,16 @@
   }
 
   function onClick(event) {
+    var inSort = event.target.closest && event.target.closest(".proposal-sort");
+    if (inSort) {
+      event.preventDefault();
+      closeProxyMenu();
+      var sortItem = event.target.closest("[data-proposal-sort]");
+      if (sortItem) applyProposalSort(sortItem.getAttribute("data-proposal-sort") || "");
+      else toggleProposalSort();
+      return;
+    }
+    closeProposalSort();
     var proxyMenuBtn = event.target.closest && event.target.closest(".dao-more-btn");
     if (proxyMenuBtn) {
       event.preventDefault();
@@ -5229,6 +5473,8 @@
       window.addEventListener("resize", onScroll);
       document.addEventListener("click", function (event) {
         var el = event.target;
+        if (el && el.closest && el.closest(".proposal-sort")) return;
+        closeProposalSort();
         if (el && el.closest && el.closest(".dao-more")) return;
         closeProxyMenu();
       });
