@@ -4089,16 +4089,15 @@ a.tag:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.15rem;
-  height: 2.15rem;
+  min-height: 2.15rem;
   margin: 0;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 999px;
+  padding: 0 0.15rem;
+  border: none;
   background: transparent;
   color: #fff;
-  font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
-  font-size: 1.05rem;
+  font-family: var(--font-serif);
+  font-size: 1.7rem;
+  font-weight: 400;
   line-height: 1;
   cursor: pointer;
   touch-action: manipulation;
@@ -4114,7 +4113,6 @@ a.tag:hover {
 .profile-bitcoin-btn:hover,
 .profile-bitcoin-btn.is-open {
   color: var(--yellow);
-  border-color: var(--yellow);
   text-shadow: var(--glow-yellow);
 }
 

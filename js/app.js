@@ -18319,7 +18319,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function profileBitcoinHtml() {
-    return `<button type="button" class="profile-bitcoin-btn" aria-label="Add Bitcoin Lightning">\u20bf</button>`;
+    return `<button type="button" class="profile-bitcoin-btn" aria-label="Add Bitcoin Lightning">\u20BF</button>`;
   }
 
   function lightningDialogOpen() {
