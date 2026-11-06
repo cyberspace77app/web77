@@ -18908,17 +18908,57 @@ let CS77_FILTER_LOW_REP = 20;
     return preset.emoji + " " + zapLeadAmount(asset, preset.amount);
   }
 
-  function zapPresetNote(preset) {
-    if (!preset || !preset.emoji) return "";
+  const ZAP_EMOJIS = ["\u26A1", "\uD83D\uDC4D", "\uD83D\uDD25", "\uD83E\uDD29"];
+
+  // Below the next preset keeps the earlier emoji. Above the last keeps that emoji.
+  function zapEmojiForAmount(asset, amount) {
+    const presets = ZAP_PRESETS[asset] || [];
+    if (!presets.length) return "";
+    let emoji = presets[0].emoji;
+    for (let i = 0; i < presets.length; i++) {
+      if (zapAmountAtLeast(asset, amount, presets[i].amount)) emoji = presets[i].emoji;
+    }
+    return emoji;
+  }
+
+  function zapAmountAtLeast(asset, amount, floor) {
+    if (amount == null || floor == null) return false;
+    if (asset === "ln") return amount >= floor;
+    return amount >= floor - 0.00005;
+  }
+
+  function zapNoteFromEmoji(emoji) {
+    if (!emoji) return "";
     const user = normalizeLoginUser(observer());
-    return user ? preset.emoji + " zapped by @" + user : preset.emoji + " zapped";
+    const by = user ? " zapped by @" + user : " zapped";
+    return emoji + by + " on " + APP_ID;
+  }
+
+  function zapReplaceLeadingEmoji(note, emoji) {
+    const text = String(note || "");
+    for (let i = 0; i < ZAP_EMOJIS.length; i++) {
+      if (text.indexOf(ZAP_EMOJIS[i]) === 0) return emoji + text.slice(ZAP_EMOJIS[i].length);
+    }
+    return text;
+  }
+
+  function zapPresetNote(preset) {
+    return zapNoteFromEmoji(preset && preset.emoji);
+  }
+
+  function zapNoteForAmount(asset, amount) {
+    const emoji = zapEmojiForAmount(asset, amount);
+    if (!emoji) return zapState.note[asset] || "";
+    if (zapState.noteEdited[asset]) return zapReplaceLeadingEmoji(zapState.note[asset], emoji);
+    return zapNoteFromEmoji(emoji);
   }
 
   function zapNoteValue(asset) {
-    if (zapState.noteEdited[asset]) return zapState.note[asset] || "";
     const amount = zapParsedFieldAmount(asset, zapState.custom[asset]);
-    const preset = amount == null ? null : zapPresetForAmount(asset, amount);
-    return preset ? zapPresetNote(preset) : "";
+    if (amount == null) {
+      return zapState.note[asset] || zapNoteFromEmoji((ZAP_PRESETS[asset] || [{}])[0].emoji);
+    }
+    return zapNoteForAmount(asset, amount);
   }
 
   function zapNoteText() {
@@ -34423,10 +34463,9 @@ let CS77_FILTER_LOW_REP = 20;
       zapCustom.addEventListener("input", () => {
         const asset = zapAssetName(zapState.asset);
         zapState.custom[asset] = zapCustom.value;
-        if (!zapState.noteEdited[asset]) {
-          const parsed = zapParsedFieldAmount(asset, zapCustom.value);
-          const preset = parsed == null ? null : zapPresetForAmount(asset, parsed);
-          zapState.note[asset] = preset ? zapPresetNote(preset) : "";
+        const parsed = zapParsedFieldAmount(asset, zapCustom.value);
+        if (parsed != null) {
+          zapState.note[asset] = zapNoteForAmount(asset, parsed);
           const note = $("#zapNote");
           if (note && note.value !== zapState.note[asset]) note.value = zapState.note[asset];
         }
