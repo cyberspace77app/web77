@@ -5392,12 +5392,44 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
   }
 
-  function lightningAddressFromAccount(account) {
-    const posting = postingMetadataFromAccount(account);
-    const profile = posting.profile;
-    if (!plainObject(profile) || !plainObject(profile.wallet)) return "";
-    const ln = profile.wallet.ln;
+  function lightningAddressFromWallet(wallet) {
+    if (!plainObject(wallet)) return "";
+    const ln = wallet.ln;
     return typeof ln === "string" ? ln.trim() : "";
+  }
+
+  // posting_json_metadata.profile.wallet. Null when that object is absent.
+  function receiveWalletFromAccount(account) {
+    const posting = postingMetadataFromAccount(account);
+    const info = posting.profile;
+    if (!plainObject(info) || !plainObject(info.wallet)) return null;
+    const wallet = copyJsonKeys(info.wallet);
+    const ln = lightningAddressFromWallet(wallet);
+    if (ln) wallet.ln = ln;
+    else delete wallet.ln;
+    return Object.keys(wallet).length ? wallet : null;
+  }
+
+  function lightningAddressFromAccount(account) {
+    const wallet = receiveWalletFromAccount(account);
+    return wallet && typeof wallet.ln === "string" ? wallet.ln : "";
+  }
+
+  function profileReceiveWallet(profile) {
+    const meta = profile && profile.metadata;
+    const info = meta && plainObject(meta.profile) ? meta.profile : null;
+    if (!info || !plainObject(info.wallet)) return null;
+    return info.wallet;
+  }
+
+  function stampProfileReceiveWallet(profile, account) {
+    if (!profile) return;
+    if (!plainObject(profile.metadata)) profile.metadata = {};
+    if (!plainObject(profile.metadata.profile)) profile.metadata.profile = {};
+    const wallet = account ? receiveWalletFromAccount(account) : null;
+    if (wallet) profile.metadata.profile.wallet = wallet;
+    else delete profile.metadata.profile.wallet;
+    profile.walletLoaded = true;
   }
 
   // LUD-16 Lightning Address: name@domain. Not a BOLT11 invoice, LNURL, or URL.
@@ -19190,10 +19222,12 @@ let CS77_FILTER_LOW_REP = 20;
       const routeNow = parseRoute();
       if (!routeNow || routeNow.name !== "profile" || routeNow.author !== author) return;
     }
-    openZapDialog({ fromHistory: true, author: author });
+    openLoadedProfileZap({ fromHistory: true, author: author });
   }
 
-  function openZapDialog(opts) {
+  // wallet is posting profile.wallet, or null when the user has no Lightning address.
+  // loadWallet true reads that object from the chain. false uses wallet as given.
+  function openZapDialog(wallet, loadWallet, opts) {
     const fromHistory = Boolean(opts && opts.fromHistory);
     const hinted = opts && opts.author ? String(opts.author) : "";
     const author = String(fromHistory ? hinted || profileState.author : profileState.author || "")
@@ -19205,10 +19239,11 @@ let CS77_FILTER_LOW_REP = 20;
     zapLookGen += 1;
     zapSendGen += 1;
     stopZapHttp();
+    const fetchWallet = loadWallet !== false;
     zapState.author = author;
     zapState.asset = "ln";
     zapState.lnAddress = "";
-    zapState.lnStatus = "loading";
+    zapState.lnStatus = fetchWallet ? "loading" : "missing";
     zapState.pending = false;
     zapState.selected = { ln: 21, hive: 1, hbd: 0.21 };
     zapState.custom = { ln: "21", hive: "1", hbd: "0.21" };
@@ -19227,9 +19262,16 @@ let CS77_FILTER_LOW_REP = 20;
     document.querySelectorAll(".profile-zap-btn").forEach((btn) => {
       btn.classList.add("is-open");
     });
+    if (!fetchWallet) applyZapWallet(wallet);
     paintZapForm();
-    loadZapLightning(author, zapLookGen);
+    if (fetchWallet) loadZapLightning(author, zapLookGen);
     writePanelHistory(zapHist, { zapPanel: true, zapAuthor: author }, fromHistory);
+  }
+
+  function openLoadedProfileZap(opts) {
+    const profile = profileState.profile;
+    if (profile && profile.walletLoaded) openZapDialog(profileReceiveWallet(profile), false, opts);
+    else openZapDialog(null, true, opts);
   }
 
   async function loadZapLightning(author, gen) {
@@ -19238,18 +19280,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (gen !== zapLookGen || zapState.author !== author || !zapDialogOpen()) return;
       const account = rows && rows[0];
       const named = account && walletHiveName(account.name) === author;
-      const raw = named ? lightningAddressFromAccount(account) : "";
-      const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
-      if (raw && parsed.error) {
-        zapState.lnAddress = "";
-        zapState.lnStatus = "invalid";
-      } else if (parsed.address) {
-        zapState.lnAddress = parsed.address;
-        zapState.lnStatus = "ready";
-      } else {
-        zapState.lnAddress = "";
-        zapState.lnStatus = "missing";
-      }
+      applyZapWallet(named ? receiveWalletFromAccount(account) : null);
     } catch (err) {
       if (gen !== zapLookGen || !zapDialogOpen()) return;
       zapState.lnAddress = "";
@@ -19262,6 +19293,21 @@ let CS77_FILTER_LOW_REP = 20;
     if (!wasChecking) return;
     if (zapState.lnStatus === "ready") setZapStatus("", false);
     else setZapStatus(zapLnStatusMessage(), true);
+  }
+
+  function applyZapWallet(wallet) {
+    const raw = lightningAddressFromWallet(wallet);
+    const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
+    if (raw && parsed.error) {
+      zapState.lnAddress = "";
+      zapState.lnStatus = "invalid";
+    } else if (parsed.address) {
+      zapState.lnAddress = parsed.address;
+      zapState.lnStatus = "ready";
+    } else {
+      zapState.lnAddress = "";
+      zapState.lnStatus = "missing";
+    }
   }
 
   function parseZapSats(raw) {
@@ -25951,6 +25997,24 @@ let CS77_FILTER_LOW_REP = 20;
     await historyPromise;
   }
 
+  // Same account read the Hive Power line already needed. Keeps profile.wallet for Zap.
+  async function loadProfileChain(name) {
+    const accountsPromise = HiveApi.getAccounts([name]).then(
+      (rows) => ({ ok: true, rows: rows }),
+      () => ({ ok: false, rows: null })
+    );
+    const propsPromise = HiveApi.getDynamicGlobalProperties().then(
+      (props) => props,
+      () => null
+    );
+    const [accounts, props] = await Promise.all([accountsPromise, propsPromise]);
+    if (!accounts.ok) return { account: null, power: null, loaded: false };
+    const row = accounts.rows && accounts.rows[0];
+    const account = row && walletHiveName(row.name) === name ? row : null;
+    const power = account && props ? hivePowerFromAccount(account, props) : null;
+    return { account: account, power: power, loaded: true };
+  }
+
   async function renderProfile(author, page) {
     const pageLoad = initialPageLoad;
     const name = String(author || "")
@@ -25997,13 +26061,14 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
       if (!profile) {
-        const [bridge, hp] = await Promise.all([
+        const [bridge, chain] = await Promise.all([
           HiveApi.getProfile(name, observer()),
-          HiveApi.getHivePower(name).catch(() => null),
+          loadProfileChain(name),
         ]);
         if (!profileRouteStill(name, tab)) return;
         profile = bridge;
-        power = hp;
+        power = chain.power;
+        if (profile && chain.loaded) stampProfileReceiveWallet(profile, chain.account);
       }
       if (!profile || !profile.name) {
         showMissingProfile();
@@ -34179,7 +34244,7 @@ let CS77_FILTER_LOW_REP = 20;
       const zapBtn = e.target.closest(".profile-zap-btn");
       if (zapBtn && inInteractiveSurface(zapBtn)) {
         e.preventDefault();
-        openZapDialog();
+        openLoadedProfileZap();
         return;
       }
       const followBtn = e.target.closest(".profile-follow-btn");
