@@ -12307,18 +12307,18 @@ let CS77_FILTER_LOW_REP = 20;
           const following = isFollowingFeed();
           list.innerHTML = following
             ? `
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>Your feed is empty</h2>
             <p>Posts from accounts you follow will show up here.</p>
           </div>`
             : t
               ? `
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>No posts for #${HiveMd.escapeHtml(t)}</h2>
             <p>Try another sort, or check back later.</p>
           </div>`
               : `
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>No posts matched the filter</h2>
             <p>Try a different filter, or load again in a moment.</p>
           </div>`;
@@ -21227,9 +21227,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (rows.length) {
       body = `<div class="wallet-tx-list">${rows.join("")}</div>`;
     } else if (state.started && !state.loading && state.error) {
-      body = `<div class="panel empty-state"><h2>Transactions unavailable</h2><p>${HiveMd.escapeHtml(state.error)}</p></div>`;
+      body = `<div class="empty-state"><h2>Transactions unavailable</h2><p>${HiveMd.escapeHtml(state.error)}</p></div>`;
     } else if (state.started && !state.loading && state.done) {
-      body = `<div class="panel empty-state"><h2>No recent transactions</h2><p>Wallet activity for this account will show up here.</p></div>`;
+      body = `<div class="empty-state"><h2>No recent transactions</h2><p>Wallet activity for this account will show up here.</p></div>`;
     }
     const note =
       rows.length && state.error && !state.loading
@@ -25353,7 +25353,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (!feedState.items.length && feedState.done) {
           status.hidden = true;
           list.innerHTML = `
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>${HiveMd.escapeHtml(emptyTitle)}</h2>
             <p>${HiveMd.escapeHtml(emptyDetail)}</p>
           </div>`;
@@ -25543,7 +25543,7 @@ let CS77_FILTER_LOW_REP = 20;
         : kind === "subscribers"
           ? "Subscribers unavailable"
           : "Followers unavailable";
-    return `<div class="panel empty-state"><h2>${HiveMd.escapeHtml(title)}</h2><p>${HiveMd.escapeHtml(error)}</p></div>`;
+    return `<div class="empty-state"><h2>${HiveMd.escapeHtml(title)}</h2><p>${HiveMd.escapeHtml(error)}</p></div>`;
   }
 
   function peopleSubscriberNames(rows, cursor, seen) {
@@ -25975,7 +25975,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!profileRouteStill(name, tab)) return;
     if (!wallet) {
       profileSectionHtml(
-        `<div class="wallet-page"><div class="panel empty-state"><h2>Wallet unavailable</h2><p>Could not load balances for this account.</p></div></div>`
+        `<div class="wallet-page"><div class="empty-state"><h2>Wallet unavailable</h2><p>Could not load balances for this account.</p></div></div>`
       );
       releaseProfileSectionHold();
       return;
@@ -26423,7 +26423,7 @@ let CS77_FILTER_LOW_REP = 20;
       return `
         <div class="community-panel community-about">
           ${coverHtml}
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>No about posted</h2>
             <p>This subspace has not published an about yet.</p>
           </div>
@@ -27188,7 +27188,7 @@ let CS77_FILTER_LOW_REP = 20;
   function communityEditGuestHtml() {
     return `
       <div class="community-panel community-edit">
-        <div class="panel empty-state">
+        <div class="empty-state">
           <h2>Log in to edit this subspace</h2>
           <p>Title, about, and pictures are stored on Hive.</p>
           <button type="button" class="btn-primary" id="communityEditLogin">Login</button>
@@ -27200,7 +27200,7 @@ let CS77_FILTER_LOW_REP = 20;
   function communityEditDeniedHtml() {
     return `
       <div class="community-panel community-edit">
-        <div class="panel empty-state">
+        <div class="empty-state">
           <h2>Only the owner and admins can edit this subspace</h2>
           <p>An owner or an admin can change it.</p>
         </div>
@@ -29248,7 +29248,7 @@ let CS77_FILTER_LOW_REP = 20;
     host.innerHTML = `
       <p id="communityPeopleStatus" class="community-people-status" hidden></p>
       ${sectionsHtml}
-      <div id="communityPeopleEmpty" class="panel empty-state" hidden>
+      <div id="communityPeopleEmpty" class="empty-state" hidden>
         <h2>No members yet</h2>
         <p>Be the first to subscribe.</p>
       </div>
@@ -29623,7 +29623,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (!feedState.items.length && feedState.done) {
           feedStatus.hidden = true;
           list.innerHTML = `
-            <div class="panel empty-state">
+            <div class="empty-state">
               <h2>No posts in this subspace</h2>
               <p>Try another sort, or check back later.</p>
             </div>`;
@@ -30069,7 +30069,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function settingsProfileGuestHtml() {
     return `
-      <div class="panel empty-state">
+      <div class="empty-state">
         <h2>Log in to edit your profile</h2>
         <p>Name, about, and pictures are stored on Hive.</p>
         <button type="button" class="btn-primary" id="settingsLoginBtn">Login</button>
@@ -30562,7 +30562,7 @@ let CS77_FILTER_LOW_REP = 20;
       } catch (err) {
         if (!routeStill(key)) return;
         panel.innerHTML = `
-          <div class="panel empty-state">
+          <div class="empty-state">
             <h2>Could not load profile</h2>
             <p>${HiveMd.escapeHtml((err && err.message) || "Could not load this account.")}</p>
           </div>
@@ -31008,7 +31008,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function notFoundHtml(msg) {
     return `
-      <div class="panel empty-state">
+      <div class="empty-state">
         <h2>Signal lost</h2>
         <p>${HiveMd.escapeHtml(msg || "Nothing at this URL.")}</p>
         <p style="margin-top:1rem"><a href="${appHref("/")}">Return to the feed</a></p>
