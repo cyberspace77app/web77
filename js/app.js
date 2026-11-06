@@ -18718,21 +18718,22 @@ let CS77_FILTER_LOW_REP = 20;
   const ZAP_NWC_KEY = "cs77_nwc";
   const ZAP_PRESETS = {
     ln: [
-      { amount: 21, label: "\u26A1 21 sats" },
-      { amount: 100, label: "\uD83D\uDC4D 100 Great" },
-      { amount: 1000, label: "\uD83D\uDD25 1,000 Awesome" },
-      { amount: 10000, label: "\uD83E\uDD29 10,000 Laser Eyes" },
+      { amount: 21, emoji: "\u26A1" },
+      { amount: 100, emoji: "\uD83D\uDC4D" },
+      { amount: 1000, emoji: "\uD83D\uDD25" },
+      { amount: 10000, emoji: "\uD83E\uDD29" },
     ],
     hive: [
-      { amount: 1, label: "1 hive" },
-      { amount: 21, label: "21 hive" },
-      { amount: 100, label: "100 hive" },
-      { amount: 1000, label: "1,000 hive" },
+      { amount: 1, emoji: "\u26A1" },
+      { amount: 21, emoji: "\uD83D\uDC4D" },
+      { amount: 100, emoji: "\uD83D\uDD25" },
+      { amount: 1000, emoji: "\uD83E\uDD29" },
     ],
     hbd: [
-      { amount: 0.21, label: "0.21 hbd" },
-      { amount: 1, label: "1 hbd" },
-      { amount: 10, label: "10 hbd" },
+      { amount: 0.21, emoji: "\u26A1" },
+      { amount: 1, emoji: "\uD83D\uDC4D" },
+      { amount: 5, emoji: "\uD83D\uDD25" },
+      { amount: 10, emoji: "\uD83E\uDD29" },
     ],
   };
 
@@ -18903,11 +18904,21 @@ let CS77_FILTER_LOW_REP = 20;
     return text + " " + asset;
   }
 
+  function zapChoiceLabel(asset, preset) {
+    return preset.emoji + " " + zapLeadAmount(asset, preset.amount);
+  }
+
+  function zapPresetNote(preset) {
+    if (!preset || !preset.emoji) return "";
+    const user = normalizeLoginUser(observer());
+    return user ? preset.emoji + " zapped by @" + user : preset.emoji + " zapped";
+  }
+
   function zapNoteValue(asset) {
     if (zapState.noteEdited[asset]) return zapState.note[asset] || "";
     const amount = zapParsedFieldAmount(asset, zapState.custom[asset]);
     const preset = amount == null ? null : zapPresetForAmount(asset, amount);
-    return preset ? preset.label : "";
+    return preset ? zapPresetNote(preset) : "";
   }
 
   function zapNoteText() {
@@ -18945,7 +18956,7 @@ let CS77_FILTER_LOW_REP = 20;
       const on = zapAmountsMatch(asset, preset.amount, current);
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.textContent = preset.label;
+      btn.textContent = zapChoiceLabel(asset, preset);
       btn.disabled = zapState.pending;
       root.appendChild(btn);
     });
@@ -19062,9 +19073,9 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.selected = { ln: 21, hive: 1, hbd: 0.21 };
     zapState.custom = { ln: "21", hive: "1", hbd: "0.21" };
     zapState.note = {
-      ln: ZAP_PRESETS.ln[0].label,
-      hive: ZAP_PRESETS.hive[0].label,
-      hbd: ZAP_PRESETS.hbd[0].label,
+      ln: zapPresetNote(ZAP_PRESETS.ln[0]),
+      hive: zapPresetNote(ZAP_PRESETS.hive[0]),
+      hbd: zapPresetNote(ZAP_PRESETS.hbd[0]),
     };
     zapState.noteEdited = { ln: false, hive: false, hbd: false };
     hideZapFallback();
@@ -29784,7 +29795,7 @@ let CS77_FILTER_LOW_REP = 20;
           <input id="settingsWebsite" name="website" type="text" inputmode="url" autocomplete="url" placeholder="https://" value="${esc(fields.website || "")}">
         </div>
         <div class="settings-field">
-          <label class="settings-label" for="settingsLightning">Bitcoin Lightning</label>
+          <label class="settings-label" for="settingsLightning">Bitcoin Lightning Address</label>
           <input id="settingsLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain" value="${esc(fields.lightning || "")}">
         </div>
         <div class="settings-field">
@@ -34401,7 +34412,7 @@ let CS77_FILTER_LOW_REP = 20;
         const input = $("#zapCustom");
         if (input) input.value = zapState.custom[asset];
         zapState.noteEdited[asset] = false;
-        zapState.note[asset] = preset ? preset.label : "";
+        zapState.note[asset] = preset ? zapPresetNote(preset) : "";
         hideZapFallback();
         setZapStatus("", false);
         paintZapForm();
@@ -34415,7 +34426,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (!zapState.noteEdited[asset]) {
           const parsed = zapParsedFieldAmount(asset, zapCustom.value);
           const preset = parsed == null ? null : zapPresetForAmount(asset, parsed);
-          zapState.note[asset] = preset ? preset.label : "";
+          zapState.note[asset] = preset ? zapPresetNote(preset) : "";
           const note = $("#zapNote");
           if (note && note.value !== zapState.note[asset]) note.value = zapState.note[asset];
         }
