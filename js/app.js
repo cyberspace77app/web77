@@ -141,7 +141,7 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsBusy = false;
   let lightningBusy = false;
   let lightningDialogValue = "";
-  // Zap dialog. Lightning tries a browser wallet, then Nostr Wallet Connect, then a lightning: link.
+  // Zap dialog. Lightning tries Nostr Wallet Connect when one is filled in, then a browser wallet, then a lightning: link.
   let zapSendGen = 0;
   let zapLookGen = 0;
   let zapHttp = null;
@@ -156,6 +156,7 @@ let CS77_FILTER_LOW_REP = 20;
     note: { ln: "", hive: "", hbd: "" },
     noteEdited: { ln: false, hive: false, hbd: false },
     invoice: "",
+    sent: false,
   };
   let communityEditDraft = null;
   let communityEditBaseline = null;
@@ -18891,6 +18892,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideZapFallback() {
     zapState.invoice = "";
+    zapState.sent = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
     syncZapPayAction();
@@ -18907,17 +18909,22 @@ let CS77_FILTER_LOW_REP = 20;
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
-  // No WebLN and no NWC leaves a lightning: link in the Send slot.
+  // A paid NWC or WebLN zap turns Send into Close. Otherwise a lightning: invoice replaces Send.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
     const link = $("#zapOpenWallet");
     const cancel = $("#zapCancel");
-    const showWallet = zapAssetName(zapState.asset) === "ln" && Boolean(zapState.invoice);
+    const sent = Boolean(zapState.sent);
+    const showWallet = !sent && zapAssetName(zapState.asset) === "ln" && Boolean(zapState.invoice);
     if (submit) {
       submit.hidden = showWallet;
-      submit.disabled = zapState.pending;
+      submit.textContent = sent ? "Close" : "Send";
+      submit.disabled = sent ? false : zapState.pending;
     }
-    if (cancel) cancel.textContent = showWallet ? "Close" : "Cancel";
+    if (cancel) {
+      cancel.hidden = sent;
+      if (!sent) cancel.textContent = showWallet ? "Close" : "Cancel";
+    }
     if (!link) return;
     if (showWallet) {
       link.href = "lightning:" + zapState.invoice;
@@ -19384,6 +19391,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function offerLightningUri(pr) {
     zapState.invoice = pr;
+    zapState.sent = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = false;
     syncZapPayAction();
@@ -19397,13 +19405,20 @@ let CS77_FILTER_LOW_REP = 20;
     a.remove();
   }
 
+  function markZapLightningSent(sats) {
+    zapState.sent = true;
+    const who = zapState.author ? "@" + zapState.author : "this user";
+    setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
+  }
+
   async function sendZapLightning(sats, gen) {
     const address = zapState.lnAddress;
+    const typed = zapNwcField();
     const provider = window.webln;
-    const hasExt = Boolean(
+    // A filled-in connection is the payer. enable() stays inside this click, and only when WebLN may run.
+    const hasExt = !typed && Boolean(
       provider && typeof provider.enable === "function" && typeof provider.sendPayment === "function"
     );
-    // enable() has to start in this click, before the invoice fetch, or the extension popup is blocked.
     let enablePromise = null;
     if (hasExt) {
       try {
@@ -19452,6 +19467,26 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!zapStill(gen) || !pr) return;
 
+    if (typed) {
+      const nwcUrl = normalizeNwcUrl(typed);
+      if (!nwcUrl) {
+        throw new Error("Paste a nostr+walletconnect link, or clear it to open a lightning invoice.");
+      }
+      storeZapNwc(nwcUrl);
+      if (!zapStill(gen)) return;
+      setZapStatus("Waiting for the connected wallet\u2026", false);
+      try {
+        await payWithNwc(nwcUrl, pr);
+      } catch (err) {
+        if (!zapStill(gen)) return;
+        if (walletCancelled(err)) throw zapCancelled();
+        throw err;
+      }
+      if (!zapStill(gen)) return;
+      markZapLightningSent(sats);
+      return;
+    }
+
     if (enablePromise) {
       let enabled = false;
       try {
@@ -19473,30 +19508,9 @@ let CS77_FILTER_LOW_REP = 20;
           throw err;
         }
         if (!zapStill(gen)) return;
-        setZapStatus("Sent " + formatGroupedNumber(sats, 0) + " sats to " + address + ".", false);
+        markZapLightningSent(sats);
         return;
       }
-    }
-
-    const typed = zapNwcField();
-    if (typed) {
-      const nwcUrl = normalizeNwcUrl(typed);
-      if (!nwcUrl) {
-        throw new Error("Paste a nostr+walletconnect link, or clear it to open a lightning invoice.");
-      }
-      storeZapNwc(nwcUrl);
-      if (!zapStill(gen)) return;
-      setZapStatus("Waiting for the connected wallet\u2026", false);
-      try {
-        await payWithNwc(nwcUrl, pr);
-      } catch (err) {
-        if (!zapStill(gen)) return;
-        if (walletCancelled(err)) throw zapCancelled();
-        throw err;
-      }
-      if (!zapStill(gen)) return;
-      setZapStatus("Sent " + formatGroupedNumber(sats, 0) + " sats to " + address + ".", false);
-      return;
     }
 
     if (!zapStill(gen)) return;
@@ -19567,6 +19581,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function submitZap() {
+    if (zapState.sent) {
+      closeZapOverlay();
+      return;
+    }
     if (zapState.pending || ownerSignOpen()) return;
     const asset = zapAssetName(zapState.asset);
     const picked = zapChosenAmount();
