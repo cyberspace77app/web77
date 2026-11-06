@@ -18893,12 +18893,39 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.invoice = "";
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
-    const link = $("#zapOpenWallet");
-    if (link) link.removeAttribute("href");
+    syncZapPayAction();
   }
 
   function zapSendBlocked() {
     return zapState.asset === "ln" && zapState.lnStatus !== "ready";
+  }
+
+  function zapLnStatusMessage() {
+    if (zapState.lnStatus === "loading") return "Checking the Lightning address\u2026";
+    if (zapState.lnStatus === "error") return "Could not load the Lightning address.";
+    if (zapState.lnStatus === "invalid") return "The Lightning address on this profile cannot be used.";
+    return "This user has not added a Bitcoin Lightning address yet.";
+  }
+
+  // No WebLN and no NWC leaves a lightning: link in the Send slot.
+  function syncZapPayAction() {
+    const submit = $("#zapSubmit");
+    const link = $("#zapOpenWallet");
+    const cancel = $("#zapCancel");
+    const showWallet = zapAssetName(zapState.asset) === "ln" && Boolean(zapState.invoice);
+    if (submit) {
+      submit.hidden = showWallet;
+      submit.disabled = zapState.pending;
+    }
+    if (cancel) cancel.textContent = showWallet ? "Close" : "Cancel";
+    if (!link) return;
+    if (showWallet) {
+      link.href = "lightning:" + zapState.invoice;
+      link.hidden = false;
+    } else {
+      link.hidden = true;
+      link.removeAttribute("href");
+    }
   }
 
   function zapPresetAmountText(asset, amount) {
@@ -19061,10 +19088,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (missing) {
       const show = asset === "ln" && zapState.lnStatus !== "ready";
       missing.hidden = !show;
-      if (zapState.lnStatus === "loading") missing.textContent = "Checking the Lightning address\u2026";
-      else if (zapState.lnStatus === "error") missing.textContent = "Could not load the Lightning address.";
-      else if (zapState.lnStatus === "invalid") missing.textContent = "The Lightning address on this profile cannot be used.";
-      else missing.textContent = "This user has not added a Bitcoin Lightning address yet.";
+      if (show) missing.textContent = zapLnStatusMessage();
     }
     const amountBlock = $("#zapAmountBlock");
     if (amountBlock) amountBlock.hidden = asset === "ln" && zapState.lnStatus !== "ready";
@@ -19091,8 +19115,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const nwc = $("#zapNwc");
     if (nwc) nwc.disabled = zapState.pending;
-    const submit = $("#zapSubmit");
-    if (submit) submit.disabled = zapState.pending || zapSendBlocked();
+    syncZapPayAction();
     paintZapChoices();
     paintZapLead();
   }
@@ -19226,7 +19249,12 @@ let CS77_FILTER_LOW_REP = 20;
       zapState.lnStatus = "error";
     }
     if (gen !== zapLookGen || !zapDialogOpen()) return;
+    const status = $("#zapStatus");
+    const wasChecking = Boolean(status && status.textContent === "Checking the Lightning address\u2026");
     paintZapForm();
+    if (!wasChecking) return;
+    if (zapState.lnStatus === "ready") setZapStatus("", false);
+    else setZapStatus(zapLnStatusMessage(), true);
   }
 
   function parseZapSats(raw) {
@@ -19356,12 +19384,11 @@ let CS77_FILTER_LOW_REP = 20;
 
   function offerLightningUri(pr) {
     zapState.invoice = pr;
-    const href = "lightning:" + pr;
-    const link = $("#zapOpenWallet");
-    if (link) link.href = href;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = false;
+    syncZapPayAction();
     setZapStatus("Opening a lightning wallet\u2026", false);
+    const href = "lightning:" + pr;
     const a = document.createElement("a");
     a.href = href;
     a.style.display = "none";
@@ -19552,7 +19579,10 @@ let CS77_FILTER_LOW_REP = 20;
       openLogin();
       return;
     }
-    if (asset === "ln" && zapSendBlocked()) return;
+    if (asset === "ln" && zapSendBlocked()) {
+      setZapStatus(zapLnStatusMessage(), true);
+      return;
+    }
     const gen = ++zapSendGen;
     hideZapFallback();
     zapDialogBusy(true);
