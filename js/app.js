@@ -2121,8 +2121,14 @@ let CS77_FILTER_LOW_REP = 20;
     panel.style.maxHeight = "";
   }
 
+  // Upvotes and downvotes fill the phone. The reblog list stays the anchored
+  // tooltip, including when List opens it, and does not add a history entry.
+  function votersSheetWanted() {
+    return isMobileViewport() && !(openVoters && openVoters.kind === "reblog");
+  }
+
   function rememberVotersHistory(fromHistory) {
-    if (!isMobileViewport() || !openVoters) return;
+    if (!votersSheetWanted() || !openVoters) return;
     const open = openVoters;
     writePanelHistory(
       votersHist,
@@ -2138,7 +2144,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function syncVotersSheet(panel) {
-    const sheet = isMobileViewport();
+    const sheet = votersSheetWanted();
     panel.classList.toggle("viewport-sheet", sheet);
     if (!sheet) {
       panel.setAttribute("role", "tooltip");
