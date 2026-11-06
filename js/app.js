@@ -348,6 +348,7 @@ let CS77_FILTER_LOW_REP = 20;
   // Same-URL history entries. Back closes the panel and stays on this page.
   const peopleHist = { on: false, pop: false, pending: null };
   const votersHist = { on: false, pop: false, pending: null };
+  const zapHist = { on: false, pop: false, pending: null };
   const walletOpState = {
     kind: "",
     max: 0,
@@ -4736,6 +4737,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const PEOPLE_HISTORY_KEYS = ["peoplePanel", "peopleKind", "peopleId"];
+  const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor"];
   const VOTERS_HISTORY_KEYS = [
     "votersPanel",
     "votersKind",
@@ -4756,6 +4758,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
       editHistoryPost = null;
     }
+    if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (!zapSignBlocksClose() && leavePanelForNav(zapHist, zapDialogOpen(), closeZapOverlay, href, replace)) return;
     if (leavePanelForNav(peopleHist, peopleList.open, closePeoplePanel, href, replace)) return;
     if (leavePanelForNav(votersHist, false, hideVoteVoters, href, replace)) return;
     const path = hrefToPath(href);
@@ -4926,7 +4930,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
-      closeZapOverlay();
+      closeZapOverlay({ skipHistory: true });
+      stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
       closeProxyOverlay();
     }
@@ -4958,6 +4963,9 @@ let CS77_FILTER_LOW_REP = 20;
       history.back();
       return;
     }
+    if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (!zapSignBlocksClose() && leavePanelForReload(zapHist, closeZapOverlay)) return;
+    if (zapDialogOpen() && !zapSignBlocksClose()) closeZapOverlay({ skipHistory: true });
     if (leavePanelForReload(peopleHist, closePeoplePanel)) return;
     if (peopleList.open) closePeoplePanel({ skipHistory: true });
     if (leavePanelForReload(votersHist, hideVoteVoters)) return;
@@ -5177,6 +5185,34 @@ let CS77_FILTER_LOW_REP = 20;
       }
       stripEditHistoryFlag();
       if (same) return;
+    }
+    if (resumePanelNavigation(zapHist, closeZapOverlay)) return;
+    if (zapSignBlocksClose()) {
+      if (!ownerSignBusy) cancelOwnerSign();
+      if (zapDialogOpen() && !(history.state && history.state.zapPanel)) {
+        history.pushState(
+          Object.assign(historyRecord(), {
+            zapPanel: true,
+            zapAuthor: zapState.author || "",
+          }),
+          "",
+          location.href
+        );
+        zapHist.on = true;
+      }
+      return true;
+    }
+    if (
+      keepPanelOnPop(
+        "zapPanel",
+        zapDialogOpen,
+        reopenZapFromHistory,
+        zapDialogOpen,
+        closeZapOverlay,
+        zapHist
+      )
+    ) {
+      return;
     }
     if (resumePanelNavigation(peopleHist, closePeoplePanel)) return;
     if (
@@ -19079,27 +19115,61 @@ let CS77_FILTER_LOW_REP = 20;
     paintZapForm();
   }
 
-  function closeZapOverlay() {
-    if (ownerSignSession && ownerSignSession.source === "zap") {
-      const ov = $("#zapOverlay");
-      if (ov && !ov.hidden) return;
+  function zapSignBlocksClose() {
+    if (!(ownerSignSession && ownerSignSession.source === "zap")) return false;
+    const ov = $("#zapOverlay");
+    return Boolean(ov && !ov.hidden);
+  }
+
+  function closeZapOverlay(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
+    if (zapSignBlocksClose()) return false;
+    const ov = $("#zapOverlay");
+    const wasOpen = Boolean(ov && !ov.hidden);
+    if (!wasOpen) {
+      if (zapHist.on) releasePanelHistory(zapHist, skipHistory);
+      return false;
     }
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
-    if (zapDialogOpen()) storeZapNwcFromField();
-    const ov = $("#zapOverlay");
-    if (ov) ov.hidden = true;
+    storeZapNwcFromField();
+    ov.hidden = true;
     zapState.pending = false;
     hideZapFallback();
     setZapStatus("", false);
     document.querySelectorAll(".profile-zap-btn.is-open").forEach((btn) => {
       btn.classList.remove("is-open");
     });
+    releasePanelHistory(zapHist, skipHistory);
+    return true;
   }
 
-  function openZapDialog() {
-    const author = profileState.author;
+  function reopenZapFromHistory(state) {
+    const author = String((state && state.zapAuthor) || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    if (!author || isOwnAuthor(author)) return;
+    const here = String(profileState.author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    if (here && here !== author) return;
+    if (!here) {
+      const routeNow = parseRoute();
+      if (!routeNow || routeNow.name !== "profile" || routeNow.author !== author) return;
+    }
+    openZapDialog({ fromHistory: true, author: author });
+  }
+
+  function openZapDialog(opts) {
+    const fromHistory = Boolean(opts && opts.fromHistory);
+    const hinted = opts && opts.author ? String(opts.author) : "";
+    const author = String(fromHistory ? hinted || profileState.author : profileState.author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
     if (!author || isOwnAuthor(author)) return;
     closeProfileMore();
     zapLookGen += 1;
@@ -19129,6 +19199,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
     paintZapForm();
     loadZapLightning(author, zapLookGen);
+    writePanelHistory(zapHist, { zapPanel: true, zapAuthor: author }, fromHistory);
   }
 
   async function loadZapLightning(author, gen) {
@@ -31100,9 +31171,13 @@ let CS77_FILTER_LOW_REP = 20;
     return !!(history.state && history.state.editDialog);
   }
 
-  // People, voters, and the edit dialog each add one same-page history entry.
+  function logoZapOn() {
+    return !!(history.state && history.state.zapPanel);
+  }
+
+  // People, voters, the zap dialog, and the edit dialog each add one same-page history entry.
   function logoSamePageExtra() {
-    return (logoPeopleOn() ? 1 : 0) + (logoVotersOn() ? 1 : 0) + (logoEditOn() ? 1 : 0);
+    return (logoPeopleOn() ? 1 : 0) + (logoVotersOn() ? 1 : 0) + (logoZapOn() ? 1 : 0) + (logoEditOn() ? 1 : 0);
   }
 
   function logoCap(steps) {
@@ -31148,9 +31223,10 @@ let CS77_FILTER_LOW_REP = 20;
           steps: logoSamePageExtra(),
           closePeople: false,
           closeVoters: false,
+          closeZap: false,
         };
       }
-      return { top: false, steps: logoLayerJump(), closePeople: false, closeVoters: false };
+      return { top: false, steps: logoLayerJump(), closePeople: false, closeVoters: false, closeZap: false };
     }
     const originIndex = logoOriginIndex(layers);
     const origin = layers[originIndex];
@@ -31164,13 +31240,15 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     }
-    if (stop < 0) return { top: false, steps: 0, closePeople: false, closeVoters: false };
+    if (stop < 0) return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false };
     const steps = logoStepsAfter(layers, stop);
+    const zap = logoZapOn();
     return {
       top: onGlobal,
       steps: steps,
       closePeople: people && steps > 1,
       closeVoters: voters && steps > 1,
+      closeZap: zap && steps > 1,
     };
   }
 
@@ -31182,6 +31260,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (jump.closeVoters && votersHist.on) {
       hideVoteVoters({ skipHistory: true });
+    }
+    if (jump.closeZap && zapHist.on) {
+      closeZapOverlay({ skipHistory: true });
+      zapHist.on = false;
     }
     if (jump.steps > 1) history.go(-jump.steps);
     else if (jump.steps === 1) history.back();
@@ -31197,6 +31279,10 @@ let CS77_FILTER_LOW_REP = 20;
       peopleHist.on = false;
     }
     if (logoVotersOn() && votersHist.on) hideVoteVoters({ skipHistory: true });
+    if (logoZapOn() && zapHist.on) {
+      closeZapOverlay({ skipHistory: true });
+      zapHist.on = false;
+    }
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
     const canPop = Math.max(0, depth - 1) + bonus;
@@ -32627,7 +32713,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
-      closeZapOverlay();
+      closeZapOverlay({ skipHistory: true });
+      stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
       closeProxyOverlay();
     }

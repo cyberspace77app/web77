@@ -5906,6 +5906,7 @@ a.wallet-tx-time:hover {
 
 #zapOverlay {
   overflow-y: auto;
+  overscroll-behavior: contain;
   align-items: safe center;
 }
 
@@ -5914,22 +5915,23 @@ a.wallet-tx-time:hover {
 }
 
 @media (max-width: 720px) {
+  /* Full viewport sheet. Border, radius, and shadow reset with the other viewport-sheet rules. */
   #zapOverlay {
+    flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
     padding: 0;
   }
 
-  #zapOverlay .overlay-card {
+  #zapOverlay .overlay-card.viewport-sheet {
+    flex: 1 1 auto;
     width: 100%;
     max-width: none;
-    height: 100%;
+    min-height: 0;
     max-height: none;
     margin: 0;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
     overflow: auto;
+    overscroll-behavior: contain;
   }
 }
 
@@ -6239,7 +6241,7 @@ a.publish-fab:hover {
   height: 1.25rem;
 }
 
-/* The page behind the publish dialog stays put. Only this layer scrolls. */
+/* The page behind these dialogs stays put. Only the open layer scrolls. */
 html:has(#publishOverlay:not([hidden])),
 body:has(#publishOverlay:not([hidden])),
 html:has(#peopleOverlay:not([hidden])),
@@ -6247,7 +6249,9 @@ body:has(#peopleOverlay:not([hidden])),
 html:has(#pollVotesOverlay:not([hidden])),
 body:has(#pollVotesOverlay:not([hidden])),
 html:has(#voteVotersPanel.viewport-sheet:not([hidden])),
-body:has(#voteVotersPanel.viewport-sheet:not([hidden])) {
+body:has(#voteVotersPanel.viewport-sheet:not([hidden])),
+html:has(#zapOverlay:not([hidden])),
+body:has(#zapOverlay:not([hidden])) {
   overflow: hidden;
 }
 
@@ -8348,6 +8352,7 @@ body:has(#voteVotersPanel.viewport-sheet:not([hidden])) {
   /* A border on these sheets is a line against the viewport. Poll votes stay framed. */
   #peopleOverlay .people-card.viewport-sheet,
   #publishOverlay .publish-card.viewport-sheet,
+  #zapOverlay .overlay-card.viewport-sheet,
   .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
