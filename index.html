@@ -56,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.20.33">
+  <link rel="stylesheet" href="/css/style.css?v=0.20.37">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -328,6 +328,12 @@
       <p class="login-lead" id="lightningLead">Link a Bitcoin Lightning address to your profile so that anyone with a Lightning wallet can zap you.</p>
       <label class="login-label" for="lightningAddress">Lightning address</label>
       <input id="lightningAddress" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain">
+      <p class="settings-note" id="lightningAddressNote">Saved in your profile.</p>
+      <h2 class="settings-section-title settings-section-line" id="lightningZapTitle"><span>Zap settings</span></h2>
+      <p class="settings-note">Zapping requires a nostr web connection, or the alby extension, or an external Lightning wallet.</p>
+      <label class="login-label" for="zapNwc">Nostr web connect</label>
+      <input id="zapNwc" type="text" autocomplete="off" autocorrect="off" spellcheck="false" autocapitalize="off" placeholder="nostr+walletconnect://">
+      <p class="settings-note zap-nwc-hint" id="zapNwcHint"><span id="zapNwcHintText">Optional. Saved in this browser.</span><button type="button" id="zapNwcClear" hidden>Clear</button></p>
       <p id="lightningStatus" role="status"></p>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="lightningSave">Save</button>
@@ -359,11 +365,6 @@
         <label class="login-label" for="zapNote">Note</label>
         <input id="zapNote" type="text" maxlength="250" autocomplete="off" spellcheck="false" placeholder="note">
       </div>
-      <div id="zapNwcBlock">
-        <label class="login-label" for="zapNwc">Nostr Wallet Connect</label>
-        <input id="zapNwc" type="text" autocomplete="off" autocorrect="off" spellcheck="false" autocapitalize="off" placeholder="nostr+walletconnect://">
-        <p class="login-hint zap-nwc-hint" id="zapNwcHint"><span id="zapNwcHintText">Optional. Saved in this browser.</span><button type="button" id="zapNwcClear" hidden>Clear</button></p>
-      </div>
       <div id="zapWalletFallback" hidden>
         <p class="login-hint">The invoice is ready. Open it in an installed wallet, or copy it.</p>
         <div class="zap-fallback-actions">
@@ -375,6 +376,11 @@
         <button type="button" class="btn-primary" id="zapSubmit">Zap</button>
         <a id="zapOpenWallet" class="btn-primary" href="" hidden>Open wallet</a>
         <button type="button" class="btn-ghost" id="zapCancel">Cancel</button>
+        <button type="button" class="zap-settings-btn" id="zapSettings" aria-label="Zap settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" fill-rule="evenodd" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 15.6 12 3.6 3.6 0 0 1 12 15.6z"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -855,6 +861,6 @@
   <script src="/js/auth.js?v=0.20.2"></script>
   <script src="/js/chain-queue.js?v=0.20.1"></script>
   <script src="/js/blacklist.js?v=0.20.0"></script>
-  <script src="/js/app.js?v=0.20.53"></script>
+  <script src="/js/app.js?v=0.20.55"></script>
 </body>
 </html>

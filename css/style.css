@@ -5957,6 +5957,52 @@ a.wallet-tx-time:hover {
   text-decoration: none;
 }
 
+#zapOverlay .overlay-actions {
+  align-items: center;
+}
+
+.zap-settings-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.zap-settings-btn svg {
+  display: block;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.zap-settings-btn:hover,
+.zap-settings-btn:focus-visible {
+  color: var(--yellow);
+}
+
+.zap-settings-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.zap-settings-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Above the zap dialog, under login (55) and the sign dialog (60). */
+#lightningOverlay {
+  z-index: 52;
+}
+
 #zapOverlay {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -6207,6 +6253,59 @@ a.wallet-tx-time:hover {
 #lightningStatus:empty,
 #communityRoleHint:empty {
   display: none;
+}
+
+#lightningOverlay .overlay-card {
+  margin-bottom: 0;
+  max-height: calc(100dvh - 3rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#lightningOverlay h2.settings-section-line {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 1.75rem 0 0.45rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--yellow);
+  line-height: 1.45;
+}
+
+#lightningOverlay h2.settings-section-line span {
+  white-space: nowrap;
+}
+
+#lightningOverlay h2.settings-section-line::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 0;
+  border-top: 1px solid #fff;
+}
+
+#lightningOverlay .settings-note {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--gray-dim);
+  margin: 0 0 0.7rem;
+}
+
+#lightningOverlay .settings-section-line + .settings-note {
+  margin: 0 0 1.25rem;
+}
+
+#lightningOverlay #lightningAddress,
+#lightningOverlay #zapNwc {
+  margin-bottom: 0.45rem;
+}
+
+#lightningOverlay #lightningAddressNote {
+  margin: 0;
 }
 
 #ownerSignStatus.is-error,

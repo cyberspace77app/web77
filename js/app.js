@@ -141,14 +141,18 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsBusy = false;
   let lightningBusy = false;
   let lightningDialogValue = "";
-  // Zap dialog. Lightning tries a saved or pasted Nostr Wallet Connect secret,
-  // then a browser wallet, then a lightning: link.
+  // Lightning pay uses a saved Nostr web connect secret, then a browser wallet,
+  // then a lightning: link. The secret is edited in Add Bitcoin Lightning.
   let zapSendGen = 0;
   let zapLookGen = 0;
   let zapHttp = null;
   let zapNwcSaved = false;
   let zapNwcWrite = Promise.resolve();
   let zapNwcGen = 0;
+  let lightningNwcLook = 0;
+  let lightningAddressLook = 0;
+  let lightningAddressKnown = true;
+  let lightningAddressLoad = Promise.resolve();
   const zapState = {
     author: "",
     permlink: "",
@@ -18683,12 +18687,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (save) save.disabled = locked;
     if (cancel) cancel.disabled = locked;
     if (input) input.disabled = locked;
+    paintZapNwc();
   }
 
   function closeLightningDialog() {
     const el = $("#lightningOverlay");
+    const nwcInput = $("#zapNwc");
+    if (nwcInput) nwcInput.value = "";
     if (el) el.hidden = true;
     lightningDialogValue = "";
+    lightningNwcLook += 1;
     setLightningStatus("", false);
     setLightningDialogLocked(false);
     document.querySelectorAll(".profile-bitcoin-btn.is-open").forEach((btn) => {
@@ -18696,35 +18704,89 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function openLightningDialog() {
+  // opts.focus "nwc" lands on the wallet connection. The address is this user's,
+  // including when the dialog is opened from a zap on someone else's profile.
+  function openLightningDialog(opts) {
     if (lightningBusy) return;
-    const user = observer();
-    if (!user || !isOwnAuthor(profileState.author)) return;
     const el = $("#lightningOverlay");
     const input = $("#lightningAddress");
     if (!el || !input) return;
     closeProfileMore();
-    const account = ownAccountReady(user) ? accountState.account : null;
-    input.value = account ? lightningFieldFromAccount(account) : "";
-    lightningDialogValue = input.value;
+    const user = observer();
+    const look = ++lightningAddressLook;
+    const account = user && ownAccountReady(user) ? accountState.account : null;
+    if (account || !user) {
+      input.value = account ? lightningFieldFromAccount(account) : "";
+      lightningDialogValue = input.value;
+      lightningAddressKnown = true;
+      lightningAddressLoad = Promise.resolve();
+    } else {
+      input.value = "";
+      lightningDialogValue = "";
+      lightningAddressKnown = false;
+      lightningAddressLoad = loadLightningDialogAddress(user, look);
+    }
+    const nwcInput = $("#zapNwc");
+    if (nwcInput) nwcInput.value = "";
+    zapNwcSaved = Boolean(window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc());
     setLightningStatus("", false);
     setLightningDialogLocked(false);
+    if (!lightningAddressKnown) input.disabled = true;
     el.hidden = false;
+    refreshLightningNwc();
     document.querySelectorAll(".profile-bitcoin-btn").forEach((btn) => {
       btn.classList.add("is-open");
     });
-    focusDesktop(input);
+    focusDesktop(opts && opts.focus === "nwc" ? nwcInput : input);
+  }
+
+  async function loadLightningDialogAddress(user, look) {
+    try {
+      const rows = await HiveApi.getAccounts([user]);
+      if (look !== lightningAddressLook || !lightningDialogOpen() || observer() !== user) return;
+      const account = rows && rows[0];
+      const named = account && String(account.name || "").toLowerCase() === user;
+      const next = named ? lightningFieldFromAccount(account) : "";
+      const field = $("#lightningAddress");
+      if (field && !String(field.value || "").trim()) field.value = next;
+      lightningDialogValue = next;
+      lightningAddressKnown = true;
+    } catch (err) {
+      if (look !== lightningAddressLook || !lightningDialogOpen()) return;
+      lightningAddressKnown = false;
+    } finally {
+      if (look !== lightningAddressLook || !lightningDialogOpen() || lightningBusy) return;
+      const field = $("#lightningAddress");
+      if (field) field.disabled = false;
+    }
   }
 
   async function saveLightningAddress() {
     if (lightningBusy) return;
     const user = observer();
-    if (!user) {
-      openLogin();
-      return;
+    lightningBusy = true;
+    setLightningDialogLocked(true);
+    let nwcOk = false;
+    try {
+      await lightningAddressLoad;
+      if (!lightningDialogOpen()) return;
+      nwcOk = await commitLightningNwc();
+    } finally {
+      lightningBusy = false;
+      if (lightningDialogOpen()) setLightningDialogLocked(false);
     }
+    if (!nwcOk || !lightningDialogOpen()) return;
     const input = $("#lightningAddress");
     const raw = input ? input.value : "";
+    if (!lightningAddressKnown) {
+      if (String(raw || "").trim()) {
+        setLightningStatus("Could not load your Lightning address.", true);
+        focusDesktop(input);
+        return;
+      }
+      closeLightningDialog();
+      return;
+    }
     if (!lightningAddressChanged(raw, lightningDialogValue)) {
       closeLightningDialog();
       return;
@@ -18733,6 +18795,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (parsed.error) {
       setLightningStatus(parsed.error, true);
       focusDesktop(input);
+      return;
+    }
+    if (!user) {
+      openLogin();
       return;
     }
     const known = ownAccountReady(user) ? accountState.account : null;
@@ -18928,22 +18994,40 @@ let CS77_FILTER_LOW_REP = 20;
 
   function paintZapNwc() {
     const input = $("#zapNwc");
-    const hint = $("#zapNwcHintText");
     const clearBtn = $("#zapNwcClear");
     const showingSaved = zapNwcSaved && !zapNwcField();
+    const locked = zapState.pending || lightningBusy;
     if (input) {
       input.placeholder = showingSaved ? "Saved in this browser" : "nostr+walletconnect://";
-      input.disabled = zapState.pending;
-    }
-    if (hint) {
-      hint.textContent = showingSaved
-        ? "Encrypted in this browser. Paste a new link to replace it."
-        : "Optional. Encrypted in this browser.";
+      input.disabled = locked;
     }
     if (clearBtn) {
       clearBtn.hidden = !zapNwcSaved;
-      clearBtn.disabled = zapState.pending;
+      clearBtn.disabled = locked;
     }
+  }
+
+  // Empty keeps the saved connection. A valid paste replaces it and leaves the field blank.
+  async function commitLightningNwc() {
+    const text = zapNwcField();
+    if (!text) return true;
+    const url = normalizeNwcUrl(text);
+    if (!url) {
+      setLightningStatus("Paste a nostr+walletconnect link, or clear the field.", true);
+      focusDesktop($("#zapNwc"));
+      return false;
+    }
+    try {
+      await storeZapNwc(url);
+    } catch (err) {
+      setLightningStatus((err && err.message) || "Could not save the wallet connection.", true);
+      focusDesktop($("#zapNwc"));
+      return false;
+    }
+    const input = $("#zapNwc");
+    if (input) input.value = "";
+    paintZapNwc();
+    return true;
   }
 
   function storeZapNwc(url) {
@@ -18968,18 +19052,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapNwcSaved = true;
   }
 
-  // An empty field keeps the saved connection. A valid paste replaces it.
-  // The secret is not written back into the field.
-  function rememberZapNwcFromField() {
-    const text = zapNwcField();
-    const input = $("#zapNwc");
-    if (input) input.value = "";
-    if (!text) return;
-    const url = normalizeNwcUrl(text);
-    if (!url) return;
-    storeZapNwc(url).catch(() => {});
-  }
-
   function clearZapNwc() {
     const input = $("#zapNwc");
     if (input) input.value = "";
@@ -18989,11 +19061,11 @@ let CS77_FILTER_LOW_REP = 20;
     storeZapNwc("").catch(() => {});
   }
 
-  function refreshZapNwcSaved(lookGen) {
+  function refreshZapNwcSaved(still) {
     zapNwcWrite
       .catch(() => {})
       .then(() => {
-        if (lookGen !== zapLookGen || !zapDialogOpen()) return null;
+        if (!still()) return null;
         const writeGen = zapNwcGen;
         if (!window.cs77Auth || typeof cs77Auth.peekNwc !== "function") {
           return { saved: false, writeGen: writeGen };
@@ -19001,12 +19073,17 @@ let CS77_FILTER_LOW_REP = 20;
         return cs77Auth.peekNwc().then((saved) => ({ saved: Boolean(saved), writeGen: writeGen }));
       })
       .then((result) => {
-        if (!result || lookGen !== zapLookGen || !zapDialogOpen()) return;
+        if (!result || !still()) return;
         if (result.writeGen !== zapNwcGen) return;
         zapNwcSaved = result.saved;
         paintZapNwc();
       })
       .catch(() => {});
+  }
+
+  function refreshLightningNwc() {
+    const look = ++lightningNwcLook;
+    refreshZapNwcSaved(() => look === lightningNwcLook && lightningDialogOpen());
   }
 
   function hideZapFallback() {
@@ -19044,6 +19121,8 @@ let CS77_FILTER_LOW_REP = 20;
       cancel.hidden = sent;
       if (!sent) cancel.textContent = showWallet ? "Close" : "Cancel";
     }
+    const settings = $("#zapSettings");
+    if (settings) settings.disabled = zapState.pending;
     if (!link) return;
     if (showWallet) {
       link.href = "lightning:" + zapState.invoice;
@@ -19218,8 +19297,6 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const amountBlock = $("#zapAmountBlock");
     if (amountBlock) amountBlock.hidden = asset === "ln" && zapState.lnStatus !== "ready";
-    const nwcBlock = $("#zapNwcBlock");
-    if (nwcBlock) nwcBlock.hidden = asset !== "ln" || zapState.lnStatus !== "ready";
     const label = $("#zapCustomLabel");
     if (label) label.textContent = "Custom amount";
     const unit = $("#zapCustomUnit");
@@ -19281,7 +19358,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
-    rememberZapNwcFromField();
     ov.hidden = true;
     zapState.pending = false;
     hideZapFallback();
@@ -19343,10 +19419,9 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.noteEdited = { ln: false, hive: false, hbd: false };
     hideZapFallback();
     setZapStatus("", false);
-    const nwcInput = $("#zapNwc");
-    if (nwcInput) nwcInput.value = "";
     zapNwcSaved = Boolean(window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc());
-    refreshZapNwcSaved(zapLookGen);
+    const nwcLook = zapLookGen;
+    refreshZapNwcSaved(() => nwcLook === zapLookGen && zapDialogOpen());
     const ov = $("#zapOverlay");
     if (!ov) return;
     ov.hidden = false;
@@ -34818,7 +34893,7 @@ let CS77_FILTER_LOW_REP = 20;
       zapNwc.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          submitZap();
+          saveLightningAddress();
         }
       });
     }
@@ -34828,6 +34903,13 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapSubmit) zapSubmit.addEventListener("click", submitZap);
     const zapCancel = $("#zapCancel");
     if (zapCancel) zapCancel.addEventListener("click", closeZapOverlay);
+    const zapSettings = $("#zapSettings");
+    if (zapSettings) {
+      zapSettings.addEventListener("click", () => {
+        if (zapState.pending) return;
+        openLightningDialog({ focus: "nwc" });
+      });
+    }
     const zapCopyInvoice = $("#zapCopyInvoice");
     if (zapCopyInvoice) {
       zapCopyInvoice.addEventListener("click", async () => {
