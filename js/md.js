@@ -66,13 +66,10 @@
     }
   }
 
-  // Avatar redirects are cached for a day, so account changes can show a stale image.
-  // A 10-minute bucket creates a new cache key while keeping the image itself cached.
   function avatarUrl(username, size) {
     const name = String(username || "").replace(/^@/, "");
     const dim = size === "small" ? "small" : size === "large" ? "large" : "medium";
-    const bucket = Math.floor(Date.now() / 600000);
-    return `https://images.hive.blog/u/${encodeURIComponent(name)}/avatar/${dim}?v=${bucket}`;
+    return `https://images.hive.blog/u/${encodeURIComponent(name)}/avatar/${dim}`;
   }
 
   const WORLDMAPPIN_INNER =
