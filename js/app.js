@@ -517,7 +517,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function restoreRememberedSession() {
-    const postingUser = (window.HiveAuth && HiveAuth.user()) || "";
+    const postingUser = (window.cs77Auth && cs77Auth.user()) || "";
     let sessionUser = normalizeLoginUser(sessionStorage.getItem(SESSION_KEY));
     if (!validLoginUser(sessionUser)) sessionUser = "";
     if (!sessionUser) {
@@ -532,7 +532,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hasSigner(username) {
     const user = username || observer();
-    if (window.HiveAuth && HiveAuth.hasKey(user)) return true;
+    if (window.cs77Auth && cs77Auth.hasKey(user)) return true;
     return Boolean(window.hive_keychain);
   }
 
@@ -6224,7 +6224,7 @@ let CS77_FILTER_LOW_REP = 20;
     const ownerKey = $("#ownerSignKey");
     if (ownerKey) ownerKey.value = "";
     closeLogoMenu();
-    if (window.HiveAuth) HiveAuth.clear();
+    if (window.cs77Auth) cs77Auth.clear();
     sessionStorage.removeItem(SESSION_KEY);
     clearKeychainUser();
     walletMemoPlain.clear();
@@ -6824,7 +6824,7 @@ let CS77_FILTER_LOW_REP = 20;
       "Posting",
       (res) => {
         if (res && res.success) {
-          const done = window.HiveAuth ? HiveAuth.clear() : Promise.resolve();
+          const done = window.cs77Auth ? cs77Auth.clear() : Promise.resolve();
           Promise.resolve(done)
             .catch(() => {})
             .then(() => {
@@ -6864,9 +6864,9 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if (
-        !window.HiveAuth ||
-        typeof HiveAuth.secretKind !== "function" ||
-        typeof HiveAuth.login !== "function"
+        !window.cs77Auth ||
+        typeof cs77Auth.secretKind !== "function" ||
+        typeof cs77Auth.login !== "function"
       ) {
         secret = "";
         status.textContent = "Could not use that key in this browser.";
@@ -6881,16 +6881,16 @@ let CS77_FILTER_LOW_REP = 20;
           secret = "";
           if (keyInput) keyInput.value = "";
           resetLoginMasterPrompt();
-          if (typeof HiveAuth.loginMaster !== "function") {
+          if (typeof cs77Auth.loginMaster !== "function") {
             throw new Error("Could not derive the posting key.");
           }
-          const loginJob = HiveAuth.loginMaster(username, password);
+          const loginJob = cs77Auth.loginMaster(username, password);
           password = "";
           await loginJob;
           finishLogin(username, "posting");
           return;
         }
-        const kind = await HiveAuth.secretKind(secret);
+        const kind = await cs77Auth.secretKind(secret);
         if (overlay.hidden) return;
         if (kind === "invalid") {
           if (keyInput) keyInput.value = "";
@@ -6903,7 +6903,7 @@ let CS77_FILTER_LOW_REP = 20;
           secret = "";
           if (keyInput) keyInput.value = "";
           status.textContent = "Checking posting key…";
-          const loginJob = HiveAuth.login(username, wif);
+          const loginJob = cs77Auth.login(username, wif);
           wif = "";
           await loginJob;
           finishLogin(username, "posting");
@@ -13578,10 +13578,10 @@ let CS77_FILTER_LOW_REP = 20;
         );
         return;
       }
-      if (!window.HiveAuth || typeof HiveAuth.keysFromLogin !== "function" || typeof HiveAuth.broadcastWif !== "function") {
+      if (!window.cs77Auth || typeof cs77Auth.keysFromLogin !== "function" || typeof cs77Auth.broadcastWif !== "function") {
         throw new Error("Could not prepare the subspace keys.");
       }
-      keys = await HiveAuth.keysFromLogin(name, password);
+      keys = await cs77Auth.keysFromLogin(name, password);
       if (created !== name) {
         const choice = await subspaceCreationChoice(user);
         const operation = subspaceCreateOperation(user, name, keys, choice);
@@ -13607,7 +13607,7 @@ let CS77_FILTER_LOW_REP = 20;
       setSubspaceCreateStatus("Waiting for the new account…", false);
       await waitForSubspaceAccount(name);
       setSubspaceCreateStatus("Setting up the subspace…", false);
-      await HiveAuth.broadcastWif(
+      await cs77Auth.broadcastWif(
         keys.posting,
         subspaceSetupOperations(name, user, title, about, typeId)
       );
@@ -14850,8 +14850,8 @@ let CS77_FILTER_LOW_REP = 20;
     const combined = new Uint8Array(prefix.length + bytes.length);
     combined.set(prefix, 0);
     combined.set(bytes, prefix.length);
-    if (window.HiveAuth && HiveAuth.hasKey(username)) {
-      return HiveAuth.signBytes(combined, username);
+    if (window.cs77Auth && cs77Auth.hasKey(username)) {
+      return cs77Auth.signBytes(combined, username);
     }
     return new Promise((resolve, reject) => {
       if (!window.hive_keychain) {
@@ -18955,15 +18955,15 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function writeZapNwc(url, gen) {
     if (gen !== zapNwcGen) return;
-    if (!window.HiveAuth || typeof HiveAuth.saveNwc !== "function" || typeof HiveAuth.clearNwc !== "function") {
+    if (!window.cs77Auth || typeof cs77Auth.saveNwc !== "function" || typeof cs77Auth.clearNwc !== "function") {
       throw new Error("This browser cannot store the wallet connection.");
     }
     if (!url) {
       zapNwcSaved = false;
-      await HiveAuth.clearNwc();
+      await cs77Auth.clearNwc();
       return;
     }
-    await HiveAuth.saveNwc(url);
+    await cs77Auth.saveNwc(url);
     if (gen !== zapNwcGen) return;
     zapNwcSaved = true;
   }
@@ -18995,10 +18995,10 @@ let CS77_FILTER_LOW_REP = 20;
       .then(() => {
         if (lookGen !== zapLookGen || !zapDialogOpen()) return null;
         const writeGen = zapNwcGen;
-        if (!window.HiveAuth || typeof HiveAuth.peekNwc !== "function") {
+        if (!window.cs77Auth || typeof cs77Auth.peekNwc !== "function") {
           return { saved: false, writeGen: writeGen };
         }
-        return HiveAuth.peekNwc().then((saved) => ({ saved: Boolean(saved), writeGen: writeGen }));
+        return cs77Auth.peekNwc().then((saved) => ({ saved: Boolean(saved), writeGen: writeGen }));
       })
       .then((result) => {
         if (!result || lookGen !== zapLookGen || !zapDialogOpen()) return;
@@ -19345,7 +19345,7 @@ let CS77_FILTER_LOW_REP = 20;
     setZapStatus("", false);
     const nwcInput = $("#zapNwc");
     if (nwcInput) nwcInput.value = "";
-    zapNwcSaved = Boolean(window.HiveAuth && typeof HiveAuth.hasNwc === "function" && HiveAuth.hasNwc());
+    zapNwcSaved = Boolean(window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc());
     refreshZapNwcSaved(zapLookGen);
     const ov = $("#zapOverlay");
     if (!ov) return;
@@ -19620,12 +19620,12 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (useStored) {
       await zapNwcWrite.catch(() => {});
       if (!zapStill(gen)) return;
-      const stored = window.HiveAuth && typeof HiveAuth.readNwc === "function" ? await HiveAuth.readNwc() : "";
+      const stored = window.cs77Auth && typeof cs77Auth.readNwc === "function" ? await cs77Auth.readNwc() : "";
       nwcUrl = normalizeNwcUrl(stored);
       if (!nwcUrl) {
         zapNwcSaved = false;
-        if (window.HiveAuth && typeof HiveAuth.clearNwc === "function") {
-          try { await HiveAuth.clearNwc(); } catch (err) { /* already unreadable */ }
+        if (window.cs77Auth && typeof cs77Auth.clearNwc === "function") {
+          try { await cs77Auth.clearNwc(); } catch (err) { /* already unreadable */ }
         }
         paintZapNwc();
         throw new Error("The saved wallet connection could not be read. Paste it again.");
@@ -21464,7 +21464,7 @@ let CS77_FILTER_LOW_REP = 20;
     const kc = window.hive_keychain;
     if (!kc || typeof kc.requestBroadcast !== "function") return "";
     if (readKeychainUser() === user) return user;
-    if (window.HiveAuth && HiveAuth.hasKey(user)) return "";
+    if (window.cs77Auth && cs77Auth.hasKey(user)) return "";
     return user;
   }
 
@@ -24604,11 +24604,11 @@ let CS77_FILTER_LOW_REP = 20;
         );
         return;
       }
-      if (!window.HiveAuth || typeof HiveAuth.keysFromLogin !== "function") {
+      if (!window.cs77Auth || typeof cs77Auth.keysFromLogin !== "function") {
         throw new Error("Could not prepare the account keys.");
       }
       if (created !== name) {
-        keys = await HiveAuth.keysFromLogin(name, password);
+        keys = await cs77Auth.keysFromLogin(name, password);
         if (!live()) return;
         const choice = await subspaceCreationChoice(user);
         if (!live() || observer() !== user) return;
@@ -27980,7 +27980,7 @@ let CS77_FILTER_LOW_REP = 20;
   // Signing a different account keeps the usual desktop Keychain default.
   function ownerSignStartMethod() {
     const account = normalizeLoginUser($("#ownerSignUser") && $("#ownerSignUser").value);
-    if (account && observer() === account && window.HiveAuth && HiveAuth.hasKey(account)) {
+    if (account && observer() === account && window.cs77Auth && cs77Auth.hasKey(account)) {
       return "password";
     }
     return defaultAuthMethod();
@@ -28034,7 +28034,7 @@ let CS77_FILTER_LOW_REP = 20;
     const name = normalizeLoginUser(account);
     if (!name) return "";
     if (keychainLoginActive() === name) return "keychain";
-    if (authority === "Posting" && window.HiveAuth && HiveAuth.hasKey(name)) return "posting";
+    if (authority === "Posting" && window.cs77Auth && cs77Auth.hasKey(name)) return "posting";
     return "";
   }
 
@@ -28124,10 +28124,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (opts.authority) {
       const kind = signSessionKind(account, authority);
       if (kind === "posting") {
-        if (!window.HiveAuth || typeof HiveAuth.broadcast !== "function") {
+        if (!window.cs77Auth || typeof cs77Auth.broadcast !== "function") {
           return Promise.reject(new Error(opts.failMessage || "Could not sign."));
         }
-        return HiveAuth.broadcast(account, operations);
+        return cs77Auth.broadcast(account, operations);
       }
       if (kind === "keychain") {
         if (typeof opts.onKeychain === "function") opts.onKeychain();
@@ -28141,11 +28141,11 @@ let CS77_FILTER_LOW_REP = 20;
   async function decryptOwnerSignMemo(session, method, secret) {
     if (method === "password") {
       setOwnerSignStatus("Decrypting…", false);
-      if (!window.HiveAuth || typeof HiveAuth.decodeMemo !== "function") {
+      if (!window.cs77Auth || typeof cs77Auth.decodeMemo !== "function") {
         secret = "";
         throw new Error("Could not decrypt with that key.");
       }
-      const job = HiveAuth.decodeMemo(session.name, secret, session.memo);
+      const job = cs77Auth.decodeMemo(session.name, secret, session.memo);
       secret = "";
       return job;
     }
@@ -28160,11 +28160,11 @@ let CS77_FILTER_LOW_REP = 20;
   async function encodeOwnerSignMemo(session, method, secret) {
     if (method === "password") {
       setOwnerSignStatus("Encrypting…", false);
-      if (!window.HiveAuth || typeof HiveAuth.encodeMemo !== "function") {
+      if (!window.cs77Auth || typeof cs77Auth.encodeMemo !== "function") {
         secret = "";
         throw new Error("Could not encrypt this memo.");
       }
-      const job = HiveAuth.encodeMemo(session.name, secret, session.publicKey, session.memo);
+      const job = cs77Auth.encodeMemo(session.name, secret, session.publicKey, session.memo);
       secret = "";
       return job;
     }
@@ -28225,10 +28225,10 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (method === "password") {
         setOwnerSignStatus("Signing…", false);
-        if (!window.HiveAuth || typeof HiveAuth.broadcastRoleSecret !== "function") {
+        if (!window.cs77Auth || typeof cs77Auth.broadcastRoleSecret !== "function") {
           throw new Error("Could not sign with that key.");
         }
-        const signJob = HiveAuth.broadcastRoleSecret(
+        const signJob = cs77Auth.broadcastRoleSecret(
           session.name,
           secret,
           session.authority,
@@ -30975,7 +30975,7 @@ let CS77_FILTER_LOW_REP = 20;
       setSettingsKeysStatus("Enter the master password.", true);
       return;
     }
-    if (!window.HiveAuth || typeof HiveAuth.wifFromLogin !== "function") {
+    if (!window.cs77Auth || typeof cs77Auth.wifFromLogin !== "function") {
       password = "";
       setSettingsKeysStatus("Could not derive the keys in this browser.", true);
       return;
@@ -30983,7 +30983,7 @@ let CS77_FILTER_LOW_REP = 20;
     setSettingsKeysStatus("");
     try {
       for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
-        jobs.push(HiveAuth.wifFromLogin(user, password, SETTINGS_KEY_FIELDS[i][0]));
+        jobs.push(cs77Auth.wifFromLogin(user, password, SETTINGS_KEY_FIELDS[i][0]));
       }
       password = "";
       for (let i = 0; i < jobs.length; i++) {
@@ -35543,8 +35543,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
 
-    if (window.HiveAuth && typeof HiveAuth.ready === "function") {
-      HiveAuth.ready().then(start, start);
+    if (window.cs77Auth && typeof cs77Auth.ready === "function") {
+      cs77Auth.ready().then(start, start);
     } else {
       start();
     }

@@ -816,7 +816,7 @@
     return out;
   }
 
-  global.HiveAuth = {
+  global.cs77Auth = {
     ready,
     login,
     clear,

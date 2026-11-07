@@ -41,7 +41,7 @@
         reject(new Error("Invalid blockchain operation."));
         return;
       }
-      const auth = global.HiveAuth;
+      const auth = global.cs77Auth;
       const usePostingKey = role === "Posting" && auth && auth.hasKey(username);
       if (usePostingKey) {
         auth
