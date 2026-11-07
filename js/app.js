@@ -18885,6 +18885,7 @@ let CS77_FILTER_LOW_REP = 20;
     return err;
   }
 
+  // SDK 9 keeps every relay and accepts only lowercase hex. Drop relays it cannot parse.
   function normalizeNwcUrl(raw) {
     const text = String(raw == null ? "" : raw).trim();
     if (!text) return "";
@@ -18892,19 +18893,32 @@ let CS77_FILTER_LOW_REP = 20;
     const body = text.slice(text.indexOf("://") + 3);
     const q = body.indexOf("?");
     if (q < 1) return null;
-    const pubkey = body.slice(0, q);
-    if (!/^[0-9a-f]{64}$/i.test(pubkey)) return null;
+    const pubkey = body.slice(0, q).trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) return null;
     let params;
     try {
       params = new URLSearchParams(body.slice(q + 1));
     } catch (err) {
       return null;
     }
-    const secret = params.get("secret") || "";
-    if (!/^[0-9a-f]{64}$/i.test(secret)) return null;
-    const relays = params.getAll("relay").filter((relay) => /^wss:\/\//i.test(relay) || /^ws:\/\//i.test(relay));
+    const secret = String(params.get("secret") || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(secret)) return null;
+    const relays = params.getAll("relay").filter((relay) => {
+      if (!/^wss:\/\//i.test(relay) && !/^ws:\/\//i.test(relay)) return false;
+      try {
+        const url = new URL(relay);
+        return (url.protocol === "wss:" || url.protocol === "ws:") && Boolean(url.hostname);
+      } catch (err) {
+        return false;
+      }
+    });
     if (!relays.length) return null;
-    return text;
+    const query = new URLSearchParams();
+    for (let i = 0; i < relays.length; i++) query.append("relay", relays[i]);
+    query.set("secret", secret);
+    const lud16 = String(params.get("lud16") || "").trim();
+    if (lud16) query.set("lud16", lud16);
+    return "nostr+walletconnect://" + pubkey + "?" + query.toString();
   }
 
   function zapNwcField() {
@@ -19498,7 +19512,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function payWithNwc(url, pr) {
     let mod;
     try {
-      mod = await import("https://esm.sh/@getalby/sdk@5.1.0");
+      mod = await import("https://esm.sh/@getalby/sdk@9.0.0/lnclient");
     } catch (err) {
       throw new Error("Could not load the wallet connection. Clear it to open a lightning invoice instead.");
     }
