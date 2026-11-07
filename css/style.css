@@ -5833,6 +5833,10 @@ a.wallet-tx-time:hover {
   margin-bottom: 0;
 }
 
+#zapOverlay #zapNote {
+  color: var(--gray);
+}
+
 #sendOverlay .send-amount-unit,
 #convertOverlay .send-amount-unit,
 #zapOverlay .send-amount-unit {
