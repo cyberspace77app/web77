@@ -5920,6 +5920,39 @@ a.wallet-tx-time:hover {
   margin: 0 0 0.85rem;
 }
 
+.zap-nwc-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+
+#zapNwcClear {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+#zapNwcClear:hover,
+#zapNwcClear:focus-visible {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+#zapNwcClear:disabled {
+  opacity: 0.55;
+  cursor: default;
+  text-shadow: none;
+}
+
 #zapOpenWallet {
   text-decoration: none;
 }

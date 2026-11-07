@@ -141,10 +141,14 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsBusy = false;
   let lightningBusy = false;
   let lightningDialogValue = "";
-  // Zap dialog. Lightning tries Nostr Wallet Connect when one is filled in, then a browser wallet, then a lightning: link.
+  // Zap dialog. Lightning tries a saved or pasted Nostr Wallet Connect secret,
+  // then a browser wallet, then a lightning: link.
   let zapSendGen = 0;
   let zapLookGen = 0;
   let zapHttp = null;
+  let zapNwcSaved = false;
+  let zapNwcWrite = Promise.resolve();
+  let zapNwcGen = 0;
   const zapState = {
     author: "",
     permlink: "",
@@ -18799,7 +18803,6 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  const ZAP_NWC_KEY = "cs77_nwc";
   const ZAP_PRESETS = {
     ln: [
       { amount: 21, emoji: "\u26A1" },
@@ -18909,32 +18912,87 @@ let CS77_FILTER_LOW_REP = 20;
     return input ? String(input.value || "").trim() : "";
   }
 
-  function storeZapNwc(url) {
-    try {
-      if (!url) localStorage.removeItem(ZAP_NWC_KEY);
-      else localStorage.setItem(ZAP_NWC_KEY, url);
-    } catch (err) { /* private mode */ }
-  }
-
-  function storeZapNwcFromField() {
-    const text = zapNwcField();
-    if (!text) {
-      storeZapNwc("");
-      return "";
-    }
-    const url = normalizeNwcUrl(text);
-    if (url) storeZapNwc(url);
-    return url;
-  }
-
-  function loadZapNwcField() {
+  function paintZapNwc() {
     const input = $("#zapNwc");
-    if (!input) return;
-    let saved = "";
-    try { saved = localStorage.getItem(ZAP_NWC_KEY) || ""; } catch (err) { saved = ""; }
-    const url = normalizeNwcUrl(saved);
-    input.value = url || "";
-    if (saved && !url) storeZapNwc("");
+    const hint = $("#zapNwcHintText");
+    const clearBtn = $("#zapNwcClear");
+    const showingSaved = zapNwcSaved && !zapNwcField();
+    if (input) {
+      input.placeholder = showingSaved ? "Saved in this browser" : "nostr+walletconnect://";
+      input.disabled = zapState.pending;
+    }
+    if (hint) {
+      hint.textContent = showingSaved
+        ? "Encrypted in this browser. Paste a new link to replace it."
+        : "Optional. Encrypted in this browser.";
+    }
+    if (clearBtn) {
+      clearBtn.hidden = !zapNwcSaved;
+      clearBtn.disabled = zapState.pending;
+    }
+  }
+
+  function storeZapNwc(url) {
+    const gen = ++zapNwcGen;
+    const job = zapNwcWrite.catch(() => {}).then(() => writeZapNwc(url, gen));
+    zapNwcWrite = job;
+    return job;
+  }
+
+  async function writeZapNwc(url, gen) {
+    if (gen !== zapNwcGen) return;
+    if (!window.HiveAuth || typeof HiveAuth.saveNwc !== "function" || typeof HiveAuth.clearNwc !== "function") {
+      throw new Error("This browser cannot store the wallet connection.");
+    }
+    if (!url) {
+      zapNwcSaved = false;
+      await HiveAuth.clearNwc();
+      return;
+    }
+    await HiveAuth.saveNwc(url);
+    if (gen !== zapNwcGen) return;
+    zapNwcSaved = true;
+  }
+
+  // An empty field keeps the saved connection. A valid paste replaces it.
+  // The secret is not written back into the field.
+  function rememberZapNwcFromField() {
+    const text = zapNwcField();
+    const input = $("#zapNwc");
+    if (input) input.value = "";
+    if (!text) return;
+    const url = normalizeNwcUrl(text);
+    if (!url) return;
+    storeZapNwc(url).catch(() => {});
+  }
+
+  function clearZapNwc() {
+    const input = $("#zapNwc");
+    if (input) input.value = "";
+    zapNwcSaved = false;
+    paintZapNwc();
+    focusDesktop(input);
+    storeZapNwc("").catch(() => {});
+  }
+
+  function refreshZapNwcSaved(lookGen) {
+    zapNwcWrite
+      .catch(() => {})
+      .then(() => {
+        if (lookGen !== zapLookGen || !zapDialogOpen()) return null;
+        const writeGen = zapNwcGen;
+        if (!window.HiveAuth || typeof HiveAuth.peekNwc !== "function") {
+          return { saved: false, writeGen: writeGen };
+        }
+        return HiveAuth.peekNwc().then((saved) => ({ saved: Boolean(saved), writeGen: writeGen }));
+      })
+      .then((result) => {
+        if (!result || lookGen !== zapLookGen || !zapDialogOpen()) return;
+        if (result.writeGen !== zapNwcGen) return;
+        zapNwcSaved = result.saved;
+        paintZapNwc();
+      })
+      .catch(() => {});
   }
 
   function hideZapFallback() {
@@ -19167,8 +19225,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (note.value !== next) note.value = next;
       note.disabled = zapState.pending;
     }
-    const nwc = $("#zapNwc");
-    if (nwc) nwc.disabled = zapState.pending;
+    paintZapNwc();
     syncZapPayAction();
     paintZapChoices();
     paintZapLead();
@@ -19210,7 +19267,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
-    storeZapNwcFromField();
+    rememberZapNwcFromField();
     ov.hidden = true;
     zapState.pending = false;
     hideZapFallback();
@@ -19272,7 +19329,10 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.noteEdited = { ln: false, hive: false, hbd: false };
     hideZapFallback();
     setZapStatus("", false);
-    loadZapNwcField();
+    const nwcInput = $("#zapNwc");
+    if (nwcInput) nwcInput.value = "";
+    zapNwcSaved = Boolean(window.HiveAuth && typeof HiveAuth.hasNwc === "function" && HiveAuth.hasNwc());
+    refreshZapNwcSaved(zapLookGen);
     const ov = $("#zapOverlay");
     if (!ov) return;
     ov.hidden = false;
@@ -19479,9 +19539,10 @@ let CS77_FILTER_LOW_REP = 20;
   async function sendZapLightning(sats, gen) {
     const address = zapState.lnAddress;
     const typed = zapNwcField();
+    const useStored = !typed && zapNwcSaved;
     const provider = window.webln;
-    // A filled-in connection is the payer. enable() stays inside this click, and only when WebLN may run.
-    const hasExt = !typed && Boolean(
+    // A pasted or saved connection is the payer. enable() stays inside this click, and only when WebLN may run.
+    const hasExt = !typed && !useStored && Boolean(
       provider && typeof provider.enable === "function" && typeof provider.sendPayment === "function"
     );
     let enablePromise = null;
@@ -19532,12 +19593,31 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!zapStill(gen) || !pr) return;
 
+    let nwcUrl = "";
     if (typed) {
-      const nwcUrl = normalizeNwcUrl(typed);
+      nwcUrl = normalizeNwcUrl(typed);
       if (!nwcUrl) {
         throw new Error("Paste a nostr+walletconnect link, or clear it to open a lightning invoice.");
       }
-      storeZapNwc(nwcUrl);
+      await storeZapNwc(nwcUrl);
+      const nwcInput = $("#zapNwc");
+      if (nwcInput) nwcInput.value = "";
+      paintZapNwc();
+    } else if (useStored) {
+      await zapNwcWrite.catch(() => {});
+      if (!zapStill(gen)) return;
+      const stored = window.HiveAuth && typeof HiveAuth.readNwc === "function" ? await HiveAuth.readNwc() : "";
+      nwcUrl = normalizeNwcUrl(stored);
+      if (!nwcUrl) {
+        zapNwcSaved = false;
+        if (window.HiveAuth && typeof HiveAuth.clearNwc === "function") {
+          try { await HiveAuth.clearNwc(); } catch (err) { /* already unreadable */ }
+        }
+        paintZapNwc();
+        throw new Error("The saved wallet connection could not be read. Paste it again.");
+      }
+    }
+    if (typed || useStored) {
       if (!zapStill(gen)) return;
       setZapStatus("Waiting for the connected wallet\u2026", false);
       try {
@@ -34718,6 +34798,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const zapNwc = $("#zapNwc");
     if (zapNwc) {
+      zapNwc.addEventListener("input", () => {
+        paintZapNwc();
+      });
       zapNwc.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -34725,6 +34808,8 @@ let CS77_FILTER_LOW_REP = 20;
         }
       });
     }
+    const zapNwcClear = $("#zapNwcClear");
+    if (zapNwcClear) zapNwcClear.addEventListener("click", clearZapNwc);
     const zapSubmit = $("#zapSubmit");
     if (zapSubmit) zapSubmit.addEventListener("click", submitZap);
     const zapCancel = $("#zapCancel");

@@ -1,7 +1,10 @@
 /**
- * Posting-key login. A master password is derived into one role key and
- * then dropped. Login stores only the posting private key, wrapped with a
+ * Posting-key login and the Nostr Wallet Connect secret.
+ * A master password is derived into one role key and then dropped.
+ * Login stores only the posting private key, wrapped with a
  * non-extractable AES-GCM CryptoKey in IndexedDB.
+ * The wallet connection is a separate record in that database.
+ * Logout removes the posting key and leaves the wallet connection.
  */
 (function (global) {
   "use strict";
@@ -10,6 +13,7 @@
   const DB_VERSION = 1;
   const STORE = "keys";
   const RECORD_ID = "posting";
+  const NWC_RECORD_ID = "nwc";
   // Set before the IndexedDB delete so a reload mid-logout still drops the key.
   const AUTH_LOGOUT_KEY = "cs77_auth_logout";
   const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2/dist/index.mjs";
@@ -20,6 +24,7 @@
   let hiveTxPromise = null;
   let readyPromise = null;
   let clearPromise = null;
+  let nwcPresent = false;
 
   function wipe(bytes) {
     if (bytes && bytes.fill) bytes.fill(0);
@@ -91,8 +96,8 @@
     });
   }
 
-  function idbGet() {
-    return idbRequest("readonly", (store) => store.get(RECORD_ID)).then(
+  function idbGet(id) {
+    return idbRequest("readonly", (store) => store.get(id)).then(
       (record) => record || null
     );
   }
@@ -101,8 +106,8 @@
     return idbRequest("readwrite", (store) => store.put(record));
   }
 
-  function idbDelete() {
-    return idbRequest("readwrite", (store) => store.delete(RECORD_ID));
+  function idbDelete(id) {
+    return idbRequest("readwrite", (store) => store.delete(id));
   }
 
   function markAuthLogout() {
@@ -421,39 +426,58 @@
     return storePostingBytes(name, derived.bytes);
   }
 
+  function recordWrapped(record) {
+    return Boolean(record && record.wrappingKey && record.ciphertext);
+  }
+
+  // Presence only. The connection string stays encrypted until a payment reads it.
+  async function noteNwc() {
+    try {
+      const record = await idbGet(NWC_RECORD_ID);
+      nwcPresent = recordWrapped(record);
+    } catch {
+      nwcPresent = false;
+    }
+    return nwcPresent;
+  }
+
   async function ready() {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
-      if (authLogoutMarked()) {
-        lockMemory();
-        try {
-          await idbDelete();
-          unmarkAuthLogout();
-        } catch {
-          /* marker stays so the next load tries the delete again */
-        }
-        return;
-      }
-      let record;
       try {
-        record = await idbGet();
-      } catch {
-        return;
-      }
-      if (!record || !record.wrappingKey || !record.ciphertext || !record.username) {
-        return;
-      }
-      try {
-        const bytes = await unwrapBytes(record);
-        if (!bytes || bytes.length !== 32) {
-          wipe(bytes);
-          await idbDelete().catch(() => {});
+        if (authLogoutMarked()) {
+          lockMemory();
+          try {
+            await idbDelete(RECORD_ID);
+            unmarkAuthLogout();
+          } catch {
+            /* marker stays so the next load tries the delete again */
+          }
           return;
         }
-        unlockMemory(record.username, bytes);
-      } catch {
-        lockMemory();
-        await idbDelete().catch(() => {});
+        let record;
+        try {
+          record = await idbGet(RECORD_ID);
+        } catch {
+          return;
+        }
+        if (!record || !record.wrappingKey || !record.ciphertext || !record.username) {
+          return;
+        }
+        try {
+          const bytes = await unwrapBytes(record);
+          if (!bytes || bytes.length !== 32) {
+            wipe(bytes);
+            await idbDelete(RECORD_ID).catch(() => {});
+            return;
+          }
+          unlockMemory(record.username, bytes);
+        } catch {
+          lockMemory();
+          await idbDelete(RECORD_ID).catch(() => {});
+        }
+      } finally {
+        await noteNwc();
       }
     })();
     return readyPromise;
@@ -462,13 +486,84 @@
   function clear() {
     lockMemory();
     markAuthLogout();
-    const job = idbDelete()
+    const job = idbDelete(RECORD_ID)
       .then(() => {
         if (!sessionUser) unmarkAuthLogout();
       })
       .catch(() => {});
     clearPromise = job;
     return job;
+  }
+
+  // The connection string can spend from the linked wallet. Same wrap as
+  // the posting key: a non-extractable AES-GCM key kept in this database.
+  // Same-origin script can still decrypt it. There is no separate password.
+  async function saveNwc(url) {
+    const text = String(url || "");
+    if (!text) {
+      await clearNwc();
+      return;
+    }
+    const bytes = new TextEncoder().encode(text);
+    let wrapped;
+    try {
+      wrapped = await wrapBytes(bytes);
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : "";
+      if (msg.indexOf("HTTPS") !== -1) {
+        throw new Error("This page needs HTTPS or localhost to store the wallet connection.");
+      }
+      throw new Error("Could not store the wallet connection in this browser.");
+    } finally {
+      wipe(bytes);
+    }
+    try {
+      await idbPut({
+        id: NWC_RECORD_ID,
+        wrappingKey: wrapped.wrappingKey,
+        iv: wrapped.iv,
+        ciphertext: wrapped.ciphertext,
+      });
+    } catch {
+      throw new Error("Could not store the wallet connection in this browser.");
+    }
+    nwcPresent = true;
+  }
+
+  async function readNwc() {
+    let record;
+    try {
+      record = await idbGet(NWC_RECORD_ID);
+    } catch {
+      nwcPresent = false;
+      return "";
+    }
+    if (!recordWrapped(record)) {
+      nwcPresent = false;
+      return "";
+    }
+    let bytes;
+    try {
+      bytes = await unwrapBytes(record);
+      const text = new TextDecoder().decode(bytes);
+      nwcPresent = Boolean(text);
+      return text;
+    } catch {
+      nwcPresent = false;
+      await idbDelete(NWC_RECORD_ID).catch(() => {});
+      return "";
+    } finally {
+      wipe(bytes);
+    }
+  }
+
+  async function clearNwc() {
+    nwcPresent = false;
+    await idbDelete(NWC_RECORD_ID);
+  }
+
+  function hasNwc() {
+    return nwcPresent;
   }
 
   async function signBytes(bytes, username) {
@@ -726,6 +821,11 @@
     login,
     clear,
     hasKey,
+    saveNwc,
+    readNwc,
+    clearNwc,
+    hasNwc,
+    peekNwc: noteNwc,
     user: function () {
       return sessionUser;
     },
