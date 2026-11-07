@@ -141,6 +141,7 @@ let CS77_FILTER_LOW_REP = 20;
   let settingsBusy = false;
   let lightningBusy = false;
   let lightningDialogValue = "";
+  let lightningDialogFocus = "";
   // Lightning pay uses a saved Nostr web connect secret, then a browser wallet,
   // then a lightning: link. The secret is edited in Add Bitcoin Lightning.
   let zapSendGen = 0;
@@ -170,12 +171,19 @@ let CS77_FILTER_LOW_REP = 20;
     sentSats: 0,
     offerComment: false,
     cast: false,
+    paid: false,
+    singleTap: false,
+    weblnEnable: null,
     kind: "",
     commentBusy: false,
   };
   const zapWalletCache = new Map();
   const zapTipsCache = new Map();
   const zappedContent = new Set();
+  const zappedProfiles = new Set();
+  const ZAP_SINGLE_TAP_KEY = "cs77_zap_single_tap";
+  let zapSettingsNoteCustom = false;
+  let zapPulseTimer = 0;
   const zapTipLocal = new Map();
   let zapTipsPanelNode = null;
   let zapTipsShowTimer = 0;
@@ -374,6 +382,7 @@ let CS77_FILTER_LOW_REP = 20;
   const peopleHist = { on: false, pop: false, pending: null };
   const votersHist = { on: false, pop: false, pending: null };
   const zapHist = { on: false, pop: false, pending: null };
+  const lightningHist = { on: false, pop: false, pending: null };
   const walletOpState = {
     kind: "",
     max: 0,
@@ -5001,6 +5010,39 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  // Pop the next same-page panel before logout finishes, so Back does not reopen it.
+  function popOpenPanelHistory(job) {
+    if (lightningHist.on) {
+      closeLightningDialog({ skipHistory: true });
+      lightningHist.on = false;
+      lightningHist.pending = job;
+      history.back();
+      return true;
+    }
+    if (zapHist.on && !zapSignBlocksClose()) {
+      closeZapOverlay({ skipHistory: true });
+      zapHist.on = false;
+      zapHist.pending = job;
+      history.back();
+      return true;
+    }
+    if (peopleHist.on) {
+      closePeoplePanel({ skipHistory: true });
+      peopleHist.on = false;
+      peopleHist.pending = job;
+      history.back();
+      return true;
+    }
+    if (votersHist.on) {
+      hideVoteVoters({ skipHistory: true });
+      votersHist.on = false;
+      votersHist.pending = job;
+      history.back();
+      return true;
+    }
+    return false;
+  }
+
   function resumePanelNavigation(session, close) {
     if (session.pending) {
       const job = session.pending;
@@ -5008,9 +5050,10 @@ let CS77_FILTER_LOW_REP = 20;
       close({ skipHistory: true });
       session.on = false;
       if (job.logoutRoute) {
+        if (popOpenPanelHistory({ logoutRoute: true })) return true;
         if (parseRoute().name === "publish") navigate(appHref("/"), true);
         else route();
-      } else if (job.reloadSection) beginSectionReload();
+      } else if (job.reloadSection) reloadCurrentSection();
       else navigate(job.href, job.replace);
       return true;
     }
@@ -5037,6 +5080,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   const PEOPLE_HISTORY_KEYS = ["peoplePanel", "peopleKind", "peopleId"];
   const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor", "zapPermlink", "zapKind"];
+  const LIGHTNING_HISTORY_KEYS = ["lightningPanel", "lightningFocus"];
   const VOTERS_HISTORY_KEYS = [
     "votersPanel",
     "votersKind",
@@ -5058,6 +5102,7 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryPost = null;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (leavePanelForNav(lightningHist, lightningDialogOpen(), closeLightningDialog, href, replace)) return;
     if (!zapSignBlocksClose() && leavePanelForNav(zapHist, zapDialogOpen(), closeZapOverlay, href, replace)) return;
     if (leavePanelForNav(peopleHist, peopleList.open, closePeoplePanel, href, replace)) return;
     if (leavePanelForNav(votersHist, false, hideVoteVoters, href, replace)) return;
@@ -5231,6 +5276,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeLightningDialog({ skipHistory: true });
+      stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
       closeZapOverlay({ skipHistory: true });
       stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
@@ -5265,6 +5312,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (leavePanelForReload(lightningHist, closeLightningDialog)) return;
+    if (lightningDialogOpen()) closeLightningDialog({ skipHistory: true });
     if (!zapSignBlocksClose() && leavePanelForReload(zapHist, closeZapOverlay)) return;
     if (zapDialogOpen() && !zapSignBlocksClose()) closeZapOverlay({ skipHistory: true });
     if (leavePanelForReload(peopleHist, closePeoplePanel)) return;
@@ -5486,6 +5535,33 @@ let CS77_FILTER_LOW_REP = 20;
       }
       stripEditHistoryFlag();
       if (same) return;
+    }
+    if (lightningBusy && lightningDialogOpen()) {
+      if (!(history.state && history.state.lightningPanel)) {
+        history.pushState(
+          Object.assign(historyRecord(), {
+            lightningPanel: true,
+            lightningFocus: lightningDialogFocus === "nwc" ? "nwc" : "",
+          }),
+          "",
+          location.href
+        );
+        lightningHist.on = true;
+      }
+      return;
+    }
+    if (resumePanelNavigation(lightningHist, closeLightningDialog)) return;
+    if (
+      keepPanelOnPop(
+        "lightningPanel",
+        lightningDialogOpen,
+        reopenLightningFromHistory,
+        lightningDialogOpen,
+        closeLightningDialog,
+        lightningHist
+      )
+    ) {
+      return;
     }
     if (resumePanelNavigation(zapHist, closeZapOverlay)) return;
     if (zapSignBlocksClose()) {
@@ -6548,6 +6624,12 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryOn = false;
       editHistoryPost = null;
       pendingEditNav = { logoutRoute: true };
+      history.back();
+      return;
+    }
+    if (lightningHist.on) {
+      closeLightningDialog({ skipHistory: true });
+      lightningHist.pending = { logoutRoute: true };
       history.back();
       return;
     }
@@ -18943,11 +19025,14 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(raw) && !normalizeLightningAddress(raw).error;
   }
 
-  function profileZapHtml(profile) {
+  function profileZapHtml(profile, author) {
     const ready = profileHasLightning(profile);
+    const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
+    const zapped = name && zappedProfiles.has(name) ? " is-zapped" : "";
     return (
       '<button type="button" class="profile-zap-btn' +
       (ready ? " has-lightning" : "") +
+      zapped +
       '" aria-label="Zap">' +
       zapMarkSvg() +
       "</button>"
@@ -18977,21 +19062,34 @@ let CS77_FILTER_LOW_REP = 20;
     if (save) save.disabled = locked;
     if (cancel) cancel.disabled = locked;
     if (input) input.disabled = locked;
+    ["zapSingleTap", "zapSingleTapAmount", "zapSingleTapUnit", "zapSingleTapNote"].forEach((id) => {
+      const field = document.getElementById(id);
+      if (field) field.disabled = locked;
+    });
     paintZapNwc();
   }
 
-  function closeLightningDialog() {
+  function closeLightningDialog(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
     const el = $("#lightningOverlay");
+    const wasOpen = Boolean(el && !el.hidden);
     const nwcInput = $("#zapNwc");
     if (nwcInput) nwcInput.value = "";
     if (el) el.hidden = true;
     lightningDialogValue = "";
+    lightningDialogFocus = "";
     lightningNwcLook += 1;
     setLightningStatus("", false);
     setLightningDialogLocked(false);
     document.querySelectorAll(".profile-bitcoin-btn.is-open").forEach((btn) => {
       btn.classList.remove("is-open");
     });
+    if (wasOpen || lightningHist.on) releasePanelHistory(lightningHist, skipHistory);
+  }
+
+  function reopenLightningFromHistory(state) {
+    const focus = state && state.lightningFocus === "nwc" ? "nwc" : "";
+    openLightningDialog({ fromHistory: true, focus: focus });
   }
 
   // opts.focus "nwc" lands on the wallet connection. The address is this user's,
@@ -19001,6 +19099,8 @@ let CS77_FILTER_LOW_REP = 20;
     const el = $("#lightningOverlay");
     const input = $("#lightningAddress");
     if (!el || !input) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
+    lightningDialogFocus = opts && opts.focus === "nwc" ? "nwc" : "";
     closeProfileMore();
     const user = observer();
     const look = ++lightningAddressLook;
@@ -19023,11 +19123,20 @@ let CS77_FILTER_LOW_REP = 20;
     setLightningDialogLocked(false);
     if (!lightningAddressKnown) input.disabled = true;
     el.hidden = false;
+    fillZapSingleTapForm();
     refreshLightningNwc();
     document.querySelectorAll(".profile-bitcoin-btn").forEach((btn) => {
       btn.classList.add("is-open");
     });
-    focusDesktop(opts && opts.focus === "nwc" ? nwcInput : input);
+    focusDesktop(lightningDialogFocus === "nwc" ? nwcInput : input);
+    writePanelHistory(
+      lightningHist,
+      {
+        lightningPanel: true,
+        lightningFocus: lightningDialogFocus,
+      },
+      fromHistory
+    );
   }
 
   async function loadLightningDialogAddress(user, look) {
@@ -19053,6 +19162,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function saveLightningAddress() {
     if (lightningBusy) return;
+    if (!commitZapSingleTapFromDialog()) return;
     const user = observer();
     lightningBusy = true;
     setLightningDialogLocked(true);
@@ -19190,8 +19300,12 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(el && !el.hidden);
   }
 
+  function zapUiOpen() {
+    return zapDialogOpen() || Boolean(zapState.singleTap);
+  }
+
   function zapStill(gen) {
-    return gen === zapSendGen && zapDialogOpen();
+    return gen === zapSendGen && zapUiOpen();
   }
 
   function stopZapHttp() {
@@ -19382,6 +19496,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.sent = false;
     zapState.sentSats = 0;
     zapState.offerComment = false;
+    zapState.paid = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
     syncZapPayAction();
@@ -19654,6 +19769,7 @@ let CS77_FILTER_LOW_REP = 20;
     const ov = $("#zapOverlay");
     const wasOpen = Boolean(ov && !ov.hidden);
     if (!wasOpen) {
+      if (zapState.singleTap) abortSingleTap();
       if (zapHist.on) releasePanelHistory(zapHist, skipHistory);
       return false;
     }
@@ -19700,6 +19816,338 @@ let CS77_FILTER_LOW_REP = 20;
     openLoadedProfileZap({ fromHistory: true, author: author });
   }
 
+  function defaultZapSingleTap() {
+    return { enabled: false, amount: "21", unit: "sats", note: "", noteEdited: false };
+  }
+
+  function readZapSingleTap() {
+    const base = defaultZapSingleTap();
+    try {
+      const raw = localStorage.getItem(ZAP_SINGLE_TAP_KEY);
+      if (!raw) return base;
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return base;
+      const unit = data.unit === "hive" || data.unit === "hbd" ? data.unit : "sats";
+      const amount = String(data.amount == null ? base.amount : data.amount).trim();
+      return {
+        enabled: Boolean(data.enabled),
+        amount: amount || base.amount,
+        unit: unit,
+        note: String(data.note || "").slice(0, 250),
+        noteEdited: Boolean(data.noteEdited),
+      };
+    } catch (err) {
+      return base;
+    }
+  }
+
+  function writeZapSingleTap(prefs) {
+    try {
+      localStorage.setItem(ZAP_SINGLE_TAP_KEY, JSON.stringify(prefs));
+    } catch (err) {
+      /* private mode */
+    }
+  }
+
+  function zapSingleTapOn() {
+    return readZapSingleTap().enabled;
+  }
+
+  function zapSingleTapAsset(unit) {
+    return unit === "hive" || unit === "hbd" ? unit : "ln";
+  }
+
+  function zapSettingsDefaultNote(unit, amountText) {
+    const asset = zapSingleTapAsset(unit);
+    let amount = null;
+    if (asset === "ln") amount = parseZapSats(amountText);
+    else {
+      const parsed = roundAsset(parseAmountInput(amountText), 3);
+      if (parsed >= 0.001) amount = parsed;
+    }
+    if (amount == null) {
+      const preset = (ZAP_PRESETS[asset] || [])[0];
+      amount = preset ? preset.amount : 0;
+    }
+    return zapNoteFromEmoji(zapEmojiForAmount(asset, amount));
+  }
+
+  function zapSettingsUnitValue() {
+    const unit = $("#zapSingleTapUnit");
+    const value = unit ? unit.value : "sats";
+    return value === "hive" || value === "hbd" ? value : "sats";
+  }
+
+  function zapSettingsAmountValue() {
+    const amount = $("#zapSingleTapAmount");
+    return amount ? String(amount.value || "").trim() : "";
+  }
+
+  function refreshZapSettingsNote() {
+    if (zapSettingsNoteCustom) return;
+    const note = $("#zapSingleTapNote");
+    if (!note) return;
+    const next = zapSettingsDefaultNote(zapSettingsUnitValue(), zapSettingsAmountValue());
+    if (note.value !== next) note.value = next;
+  }
+
+  function onZapSettingsNoteInput() {
+    const note = $("#zapSingleTapNote");
+    if (!note) return;
+    const text = String(note.value || "").trim();
+    if (!text) {
+      zapSettingsNoteCustom = false;
+      return;
+    }
+    zapSettingsNoteCustom = text !== zapSettingsDefaultNote(zapSettingsUnitValue(), zapSettingsAmountValue());
+  }
+
+  function zapSingleTapAmountError(amount, unit) {
+    if (unit === "hive" || unit === "hbd") {
+      const parsed = roundAsset(parseAmountInput(amount), 3);
+      if (!(parsed >= 0.001)) return "Enter an amount of at least 0.001.";
+      return "";
+    }
+    if (parseZapSats(amount) == null) return "Enter a whole number of sats.";
+    return "";
+  }
+
+  function fillZapSingleTapForm() {
+    const prefs = readZapSingleTap();
+    const toggle = $("#zapSingleTap");
+    const fields = $("#zapSingleTapFields");
+    const amount = $("#zapSingleTapAmount");
+    const unit = $("#zapSingleTapUnit");
+    const note = $("#zapSingleTapNote");
+    if (toggle) toggle.checked = prefs.enabled;
+    if (fields) fields.hidden = false;
+    if (unit) unit.value = prefs.unit;
+    if (amount) {
+      amount.value = prefs.amount;
+      amount.inputMode = prefs.unit === "sats" ? "numeric" : "decimal";
+    }
+    const savedNote = String(prefs.note || "").trim();
+    zapSettingsNoteCustom = Boolean(prefs.noteEdited && savedNote);
+    if (note) {
+      if (zapSettingsNoteCustom) note.value = savedNote;
+      else if (prefs.noteEdited) note.value = "";
+      else note.value = zapSettingsDefaultNote(prefs.unit, prefs.amount);
+    }
+  }
+
+  function commitZapSingleTapFromDialog() {
+    const toggle = $("#zapSingleTap");
+    const amountEl = $("#zapSingleTapAmount");
+    const unitEl = $("#zapSingleTapUnit");
+    const noteEl = $("#zapSingleTapNote");
+    if (!toggle || !amountEl || !unitEl || !noteEl) return true;
+    const enabled = Boolean(toggle.checked);
+    const unit = unitEl.value === "hive" || unitEl.value === "hbd" ? unitEl.value : "sats";
+    const amount = String(amountEl.value || "").trim();
+    const error = zapSingleTapAmountError(amount, unit);
+    if (error) {
+      setLightningStatus(error, true);
+      focusDesktop(amountEl);
+      return false;
+    }
+    const note = String(noteEl.value || "").trim().slice(0, 250);
+    const noteEdited = note !== zapSettingsDefaultNote(unit, amount);
+    writeZapSingleTap({
+      enabled: enabled,
+      amount: amount,
+      unit: unit,
+      note: noteEdited ? note : "",
+      noteEdited: noteEdited,
+    });
+    return true;
+  }
+
+  function applyZapDefaults() {
+    const prefs = readZapSingleTap();
+    const asset = zapSingleTapAsset(prefs.unit);
+    zapState.asset = asset;
+    if (asset === "ln") {
+      const sats = parseZapSats(prefs.amount);
+      if (sats != null) {
+        zapState.custom.ln = String(sats);
+        zapState.selected.ln = sats;
+      }
+    } else {
+      const amount = roundAsset(parseAmountInput(prefs.amount), 3);
+      if (amount >= 0.001) {
+        zapState.custom[asset] = prefs.amount;
+        zapState.selected[asset] = amount;
+      }
+    }
+    if (prefs.noteEdited) {
+      zapState.note[asset] = String(prefs.note || "").trim().slice(0, 250);
+      zapState.noteEdited[asset] = true;
+    } else {
+      zapState.noteEdited[asset] = false;
+      const parsed = zapParsedFieldAmount(asset, zapState.custom[asset]);
+      if (parsed != null) zapState.note[asset] = zapNoteFromEmoji(zapEmojiForAmount(asset, parsed));
+    }
+  }
+
+  function armZapWebLn() {
+    zapState.weblnEnable = null;
+    if (zapState.asset !== "ln" || zapNwcSaved || zapNwcField()) return;
+    const provider = window.webln;
+    if (!provider || typeof provider.enable !== "function" || typeof provider.sendPayment !== "function") return;
+    try {
+      zapState.weblnEnable = Promise.resolve(provider.enable());
+    } catch (err) {
+      zapState.weblnEnable = Promise.reject(err);
+    }
+  }
+
+  function zapTapButtons(author, permlink) {
+    if (!permlink) return Array.from(document.querySelectorAll(".profile-zap-btn"));
+    return Array.from(document.querySelectorAll(".zap-stat-btn")).filter((btn) => {
+      return btn.getAttribute("data-zap-author") === author && btn.getAttribute("data-zap-permlink") === permlink;
+    });
+  }
+
+  function clearZapMotion(buttons) {
+    window.clearTimeout(zapPulseTimer);
+    zapPulseTimer = 0;
+    (buttons || document.querySelectorAll(".zap-stat-btn, .profile-zap-btn")).forEach((btn) => {
+      btn.classList.remove("is-zapping", "is-zap-blink", "is-zap-flash");
+      btn.removeAttribute("aria-busy");
+    });
+  }
+
+  function startZapBlink() {
+    clearZapMotion();
+    const author = zapState.author;
+    const permlink = zapState.permlink;
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const paint = (lit) => {
+      zapTapButtons(author, permlink).forEach((btn) => {
+        btn.classList.add("is-zapping");
+        btn.classList.toggle("is-zap-blink", lit);
+        btn.setAttribute("aria-busy", "true");
+      });
+    };
+    paint(true);
+    if (reduced) return;
+    let gap = 480;
+    const tick = () => {
+      if (!zapState.singleTap) return;
+      const lit = !zapTapButtons(author, permlink).some((btn) => btn.classList.contains("is-zap-blink"));
+      paint(lit);
+      gap = Math.max(70, Math.round(gap * 0.84));
+      zapPulseTimer = window.setTimeout(tick, gap);
+    };
+    zapPulseTimer = window.setTimeout(tick, gap);
+  }
+
+  function flashZapSuccess(author, permlink) {
+    clearZapMotion();
+    const buttons = zapTapButtons(author, permlink);
+    let step = 0;
+    const finish = () => {
+      buttons.forEach((btn) => btn.classList.remove("is-zap-flash", "is-zapping", "is-zap-blink"));
+      if (permlink) {
+        rememberZappedContent(author, permlink);
+        paintZappedStatButtons();
+        return;
+      }
+      if (author) zappedProfiles.add(author);
+      buttons.forEach((btn) => btn.classList.add("is-zapped"));
+    };
+    const tick = () => {
+      const on = step % 2 === 0;
+      buttons.forEach((btn) => btn.classList.toggle("is-zap-flash", on));
+      step += 1;
+      if (step < 6) zapPulseTimer = window.setTimeout(tick, 90);
+      else finish();
+    };
+    tick();
+  }
+
+  function abortSingleTap() {
+    zapState.singleTap = false;
+    zapState.pending = false;
+    zapState.weblnEnable = null;
+    zapSendGen += 1;
+    zapLookGen += 1;
+    stopZapHttp();
+    clearZapMotion();
+  }
+
+  function finishSingleTap(confirmed) {
+    const author = zapState.author;
+    const permlink = zapState.permlink;
+    zapState.singleTap = false;
+    zapState.pending = false;
+    zapState.cast = false;
+    zapState.weblnEnable = null;
+    zapSendGen += 1;
+    zapLookGen += 1;
+    stopZapHttp();
+    hideZapFallback();
+    setZapStatus("", false);
+    setZapTriggerOpen(false);
+    const ov = $("#zapOverlay");
+    if (ov) ov.hidden = true;
+    if (confirmed) flashZapSuccess(author, permlink);
+    else clearZapMotion();
+  }
+
+  function revealSingleTapDialog(message, isError) {
+    const keepStatus = message == null;
+    zapState.singleTap = false;
+    zapState.pending = false;
+    zapState.weblnEnable = null;
+    clearZapMotion();
+    const ov = $("#zapOverlay");
+    if (!ov) return;
+    ov.hidden = false;
+    setZapTriggerOpen(true);
+    paintZapForm();
+    if (!keepStatus) setZapStatus(message || "", Boolean(isError) && Boolean(message));
+    writePanelHistory(
+      zapHist,
+      {
+        zapPanel: true,
+        zapAuthor: zapState.author,
+        zapPermlink: zapState.permlink,
+        zapKind: zapState.kind,
+      },
+      false
+    );
+  }
+
+  async function runSingleTapZap(lookGen) {
+    try {
+      if (zapState.asset === "ln" && zapState.lnStatus !== "ready") {
+        await loadZapLightning(zapState.author, lookGen);
+      }
+      if (lookGen !== zapLookGen || !zapState.singleTap) return;
+      await submitZap();
+    } catch (err) {
+      if (lookGen !== zapLookGen || !zapState.singleTap) return;
+      revealSingleTapDialog(zapFailText(err, "Could not send this zap."), true);
+    }
+  }
+
+  async function completeSingleTap(gen) {
+    if (!zapState.singleTap || gen !== zapSendGen) return;
+    if (zapState.offerComment) {
+      await submitZapReceipt();
+      if (!zapState.singleTap || gen !== zapSendGen) return;
+      if (zapState.offerComment) {
+        revealSingleTapDialog();
+        return;
+      }
+    }
+    if (!zapState.singleTap || gen !== zapSendGen) return;
+    const silentWallet = Boolean(zapState.invoice) && !zapState.paid;
+    if (!zapState.paid && !silentWallet) return;
+    finishSingleTap(Boolean(zapState.paid));
+  }
+
   // username is the hive account to pay. permlink may be null or empty.
   // A permlink selects that post or comment: hive uses a !tip memo, and a
   // confirmed lightning payment can offer a receipt comment.
@@ -19713,6 +20161,7 @@ let CS77_FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     if (!author || isOwnAuthor(author)) return;
+    if (zapState.singleTap) return;
     if (zapState.cast) {
       rememberZappedContent(zapState.author, zapState.permlink);
       zapState.cast = false;
@@ -19740,6 +20189,10 @@ let CS77_FILTER_LOW_REP = 20;
     };
     zapState.noteEdited = { ln: false, hive: false, hbd: false };
     zapState.cast = false;
+    zapState.paid = false;
+    zapState.singleTap =
+      Boolean(zapState.permlink) && Boolean(opts && opts.singleTap) && zapSingleTapOn() && !fromHistory;
+    zapState.weblnEnable = null;
     hideZapFallback();
     setZapStatus("", false);
     zapNwcSaved = Boolean(window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc());
@@ -19747,9 +20200,18 @@ let CS77_FILTER_LOW_REP = 20;
     refreshZapNwcSaved(() => nwcLook === zapLookGen && zapDialogOpen());
     const ov = $("#zapOverlay");
     if (!ov) return;
-    ov.hidden = false;
     hideZapTips();
     if (!fetchWallet) applyZapWallet(wallet);
+    applyZapDefaults();
+    if (zapState.singleTap) {
+      armZapWebLn();
+      ov.hidden = true;
+      paintZapForm();
+      startZapBlink();
+      runSingleTapZap(zapLookGen);
+      return;
+    }
+    ov.hidden = false;
     setZapTriggerOpen(true);
     paintZapForm();
     if (fetchWallet) loadZapLightning(author, zapLookGen);
@@ -19783,21 +20245,23 @@ let CS77_FILTER_LOW_REP = 20;
     const hinted = opts && opts.author ? String(opts.author) : "";
     const username = hinted || profileState.author || "";
     const profile = profileState.profile;
-    if (profile && profile.walletLoaded) openZapDialog(username, null, profileReceiveWallet(profile), false, opts);
-    else openZapDialog(username, null, null, true, opts);
+    const next = Object.assign({}, opts);
+    next.singleTap = false;
+    if (profile && profile.walletLoaded) openZapDialog(username, null, profileReceiveWallet(profile), false, next);
+    else openZapDialog(username, null, null, true, next);
   }
 
   async function loadZapLightning(author, gen) {
     try {
       const rec = await ensureZapWallet(author);
-      if (gen !== zapLookGen || zapState.author !== author || !zapDialogOpen()) return;
+      if (gen !== zapLookGen || zapState.author !== author || !zapUiOpen()) return;
       applyZapWallet(rec && rec.wallet);
     } catch (err) {
-      if (gen !== zapLookGen || !zapDialogOpen()) return;
+      if (gen !== zapLookGen || !zapUiOpen()) return;
       zapState.lnAddress = "";
       zapState.lnStatus = "error";
     }
-    if (gen !== zapLookGen || !zapDialogOpen()) return;
+    if (gen !== zapLookGen || !zapUiOpen()) return;
     const status = $("#zapStatus");
     const wasChecking = Boolean(status && status.textContent === "Checking the Lightning address\u2026");
     paintZapForm();
@@ -20281,7 +20745,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (!author || !permlink) return;
     hideZapTips();
     const cached = cachedZapWallet(author);
-    openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, { kind: kind });
+    openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, {
+      kind: kind,
+      singleTap: zapSingleTapOn(),
+    });
   }
 
   function parseZapSats(raw) {
@@ -20412,10 +20879,6 @@ let CS77_FILTER_LOW_REP = 20;
   function offerLightningUri(pr) {
     zapState.invoice = pr;
     zapState.sent = false;
-    const box = $("#zapWalletFallback");
-    if (box) box.hidden = false;
-    syncZapPayAction();
-    setZapStatus("Opening a lightning wallet\u2026", false);
     const href = "lightning:" + pr;
     const a = document.createElement("a");
     a.href = href;
@@ -20423,6 +20886,11 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    if (zapState.singleTap) return;
+    const box = $("#zapWalletFallback");
+    if (box) box.hidden = false;
+    syncZapPayAction();
+    setZapStatus("Opening a lightning wallet\u2026", false);
   }
 
   function zapPreimageOf(result) {
@@ -20451,6 +20919,7 @@ let CS77_FILTER_LOW_REP = 20;
       zapState.permlink && zapState.invoice && zapState.preimage && observer()
     );
     if (zapState.permlink) zapState.cast = true;
+    zapState.paid = true;
     const who = zapState.author ? "@" + zapState.author : "this user";
     setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
   }
@@ -20464,8 +20933,9 @@ let CS77_FILTER_LOW_REP = 20;
     const hasExt = !typed && !useStored && Boolean(
       provider && typeof provider.enable === "function" && typeof provider.sendPayment === "function"
     );
-    let enablePromise = null;
-    if (hasExt) {
+    let enablePromise = zapState.weblnEnable;
+    zapState.weblnEnable = null;
+    if (!enablePromise && hasExt) {
       try {
         enablePromise = Promise.resolve(provider.enable());
       } catch (err) {
@@ -20587,6 +21057,7 @@ let CS77_FILTER_LOW_REP = 20;
     const user = observer();
     const target = walletHiveName(zapState.author);
     if (!user) {
+      if (zapState.singleTap) revealSingleTapDialog();
       openLogin();
       return;
     }
@@ -20644,6 +21115,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
     if (!zapStill(gen)) return;
     if (zapState.permlink) zapState.cast = true;
+    zapState.paid = true;
     setZapStatus("Sent " + shown + " to @" + target + ".", false);
   }
 
@@ -20782,34 +21254,46 @@ let CS77_FILTER_LOW_REP = 20;
     const asset = zapAssetName(zapState.asset);
     const picked = zapChosenAmount();
     if (picked.error) {
-      setZapStatus(picked.error, true);
-      focusDesktop($("#zapCustom"));
+      if (zapState.singleTap) revealSingleTapDialog(picked.error, true);
+      else {
+        setZapStatus(picked.error, true);
+        focusDesktop($("#zapCustom"));
+      }
       return;
     }
     if (asset !== "ln" && !observer()) {
+      if (zapState.singleTap) revealSingleTapDialog();
       openLogin();
       return;
     }
     if (asset === "ln" && zapSendBlocked()) {
-      setZapStatus(zapLnStatusMessage(), true);
+      if (zapState.singleTap) revealSingleTapDialog(zapLnStatusMessage(), true);
+      else setZapStatus(zapLnStatusMessage(), true);
       return;
     }
     const gen = ++zapSendGen;
+    const singleTap = zapState.singleTap;
     hideZapFallback();
+    if (singleTap) zapState.singleTap = true;
     zapDialogBusy(true);
     setZapStatus(asset === "ln" ? "Requesting an invoice\u2026" : "Checking account\u2026", false);
     try {
       if (asset === "ln") await sendZapLightning(picked.amount, gen);
       else await submitZapHive(asset, picked.amount, gen);
+      if (zapState.singleTap) await completeSingleTap(gen);
     } catch (err) {
-      if (!zapStill(gen)) return;
+      if (!zapStill(gen) && !zapState.singleTap) return;
       const cancelled = Boolean(err && (err.ownerCancel || err.zapCancel));
-      setZapStatus(
-        cancelled
-          ? (err && err.message) || "The zap was cancelled."
-          : zapFailText(err, asset === "ln" ? "Could not send the lightning payment." : "Could not send this zap."),
-        !cancelled
-      );
+      const message = cancelled
+        ? (err && err.message) || "The zap was cancelled."
+        : zapFailText(err, asset === "ln" ? "Could not send the lightning payment." : "Could not send this zap.");
+      if (zapState.singleTap) {
+        if (cancelled) finishSingleTap(false);
+        else revealSingleTapDialog(message, true);
+        return;
+      }
+      if (!zapStill(gen)) return;
+      setZapStatus(message, !cancelled);
     } finally {
       if (zapStill(gen)) zapDialogBusy(false);
     }
@@ -21594,7 +22078,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
-      : `<div class="profile-head-actions">${followBtn}${profileZapHtml(profile)}${profileMoreHtml(author)}</div>`;
+      : `<div class="profile-head-actions">${followBtn}${profileZapHtml(profile, author)}${profileMoreHtml(author)}</div>`;
     return `
       <div class="profile-banner">
         <div class="profile-head">
@@ -32437,9 +32921,19 @@ let CS77_FILTER_LOW_REP = 20;
     return !!(history.state && history.state.zapPanel);
   }
 
-  // People, voters, the zap dialog, and the edit dialog each add one same-page history entry.
+  function logoLightningOn() {
+    return !!(history.state && history.state.lightningPanel);
+  }
+
+  // People, voters, the zap dialog, the lightning dialog, and the edit dialog each add one same-page history entry.
   function logoSamePageExtra() {
-    return (logoPeopleOn() ? 1 : 0) + (logoVotersOn() ? 1 : 0) + (logoZapOn() ? 1 : 0) + (logoEditOn() ? 1 : 0);
+    return (
+      (logoPeopleOn() ? 1 : 0) +
+      (logoVotersOn() ? 1 : 0) +
+      (logoZapOn() ? 1 : 0) +
+      (logoLightningOn() ? 1 : 0) +
+      (logoEditOn() ? 1 : 0)
+    );
   }
 
   function logoCap(steps) {
@@ -32486,9 +32980,17 @@ let CS77_FILTER_LOW_REP = 20;
           closePeople: false,
           closeVoters: false,
           closeZap: false,
+          closeLightning: false,
         };
       }
-      return { top: false, steps: logoLayerJump(), closePeople: false, closeVoters: false, closeZap: false };
+      return {
+        top: false,
+        steps: logoLayerJump(),
+        closePeople: false,
+        closeVoters: false,
+        closeZap: false,
+        closeLightning: false,
+      };
     }
     const originIndex = logoOriginIndex(layers);
     const origin = layers[originIndex];
@@ -32502,15 +33004,19 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     }
-    if (stop < 0) return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false };
+    if (stop < 0) {
+      return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false, closeLightning: false };
+    }
     const steps = logoStepsAfter(layers, stop);
     const zap = logoZapOn();
+    const lightning = logoLightningOn();
     return {
       top: onGlobal,
       steps: steps,
       closePeople: people && steps > 1,
       closeVoters: voters && steps > 1,
       closeZap: zap && steps > 1,
+      closeLightning: lightning && steps > 1,
     };
   }
 
@@ -32526,6 +33032,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (jump.closeZap && zapHist.on) {
       closeZapOverlay({ skipHistory: true });
       zapHist.on = false;
+    }
+    if (jump.closeLightning && lightningHist.on) {
+      closeLightningDialog({ skipHistory: true });
+      lightningHist.on = false;
     }
     if (jump.steps > 1) history.go(-jump.steps);
     else if (jump.steps === 1) history.back();
@@ -32544,6 +33054,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (logoZapOn() && zapHist.on) {
       closeZapOverlay({ skipHistory: true });
       zapHist.on = false;
+    }
+    if (logoLightningOn() && lightningHist.on) {
+      closeLightningDialog({ skipHistory: true });
+      lightningHist.on = false;
     }
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
@@ -33954,7 +34468,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideVoteSlider();
     hideZapTips();
     closeProfileMore();
-    closeLightningDialog();
+    closeLightningDialog({ skipHistory: true });
     closeContentMore();
     closeCommentSort();
     closeWalletMore();
@@ -33984,6 +34498,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeLightningDialog({ skipHistory: true });
+      stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
       closeZapOverlay({ skipHistory: true });
       stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
@@ -35899,6 +36415,18 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const zapNwcClear = $("#zapNwcClear");
     if (zapNwcClear) zapNwcClear.addEventListener("click", clearZapNwc);
+    const zapSingleTapAmount = $("#zapSingleTapAmount");
+    if (zapSingleTapAmount) zapSingleTapAmount.addEventListener("input", refreshZapSettingsNote);
+    const zapSingleTapNote = $("#zapSingleTapNote");
+    if (zapSingleTapNote) zapSingleTapNote.addEventListener("input", onZapSettingsNoteInput);
+    const zapSingleTapUnit = $("#zapSingleTapUnit");
+    if (zapSingleTapUnit) {
+      zapSingleTapUnit.addEventListener("change", () => {
+        const amount = $("#zapSingleTapAmount");
+        if (amount) amount.inputMode = zapSingleTapUnit.value === "sats" ? "numeric" : "decimal";
+        refreshZapSettingsNote();
+      });
+    }
     const zapSubmit = $("#zapSubmit");
     if (zapSubmit) zapSubmit.addEventListener("click", submitZap);
     const zapCancel = $("#zapCancel");

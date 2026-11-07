@@ -1619,6 +1619,31 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   outline-offset: 2px;
 }
 
+.zap-stat-btn.is-zapping,
+.profile-zap-btn.is-zapping {
+  color: var(--gray);
+  border-color: var(--border);
+}
+
+.zap-stat-btn.is-zapping .zap-mark {
+  filter: none;
+}
+
+.zap-stat-btn.is-zapping.is-zap-blink,
+.profile-zap-btn.is-zapping.is-zap-blink,
+.zap-stat-btn.is-zap-flash,
+.profile-zap-btn.is-zap-flash {
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+
+.zap-stat-btn.is-zapping.is-zap-blink .zap-mark,
+.profile-zap-btn.is-zapping.is-zap-blink .zap-mark,
+.zap-stat-btn.is-zap-flash .zap-mark,
+.profile-zap-btn.is-zap-flash .zap-mark {
+  filter: drop-shadow(0 0 7px rgba(255, 225, 74, 0.95));
+}
+
 .vote-btn.stat-pill.is-rest:not(.is-confirming),
 .vote-btn.stat-pill.is-rest:not(.is-confirming):hover,
 .downvote-btn.stat-pill.is-rest:not(.is-confirming),
@@ -4298,6 +4323,38 @@ a.tag:hover {
   filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
 }
 
+.profile-zap-btn.is-zapped {
+  color: var(--yellow);
+}
+
+.profile-zap-btn.is-zapped .zap-mark {
+  filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
+}
+
+.profile-zap-btn.is-zapping,
+.profile-zap-btn.has-lightning.is-zapping {
+  color: var(--gray);
+}
+
+.profile-zap-btn.is-zapping .zap-mark,
+.profile-zap-btn.has-lightning.is-zapping .zap-mark {
+  filter: none;
+}
+
+.profile-zap-btn.is-zapping.is-zap-blink,
+.profile-zap-btn.has-lightning.is-zapping.is-zap-blink,
+.profile-zap-btn.is-zap-flash,
+.profile-zap-btn.has-lightning.is-zap-flash {
+  color: var(--yellow);
+}
+
+.profile-zap-btn.is-zapping.is-zap-blink .zap-mark,
+.profile-zap-btn.has-lightning.is-zapping.is-zap-blink .zap-mark,
+.profile-zap-btn.is-zap-flash .zap-mark,
+.profile-zap-btn.has-lightning.is-zap-flash .zap-mark {
+  filter: drop-shadow(0 0 7px rgba(255, 225, 74, 0.95));
+}
+
 .profile-more-btn:focus-visible,
 .profile-bitcoin-btn:focus-visible,
 .profile-zap-btn:focus-visible {
@@ -6383,6 +6440,27 @@ a.wallet-tx-time:hover {
   overscroll-behavior: contain;
 }
 
+@media (max-width: 720px) {
+  /* Full viewport sheet. Border, radius, and shadow reset with the other viewport-sheet rules. */
+  #lightningOverlay {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+  }
+
+  #lightningOverlay .overlay-card.viewport-sheet {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+}
+
 #lightningOverlay h2.settings-section-line {
   display: flex;
   align-items: center;
@@ -6427,6 +6505,40 @@ a.wallet-tx-time:hover {
 
 #lightningOverlay #lightningAddressNote {
   margin: 0;
+}
+
+#lightningOverlay .zap-single-tap-toggle {
+  margin: 0.15rem 0 0.9rem;
+}
+
+#lightningOverlay #zapSingleTapFields[hidden] {
+  display: none;
+}
+
+#lightningOverlay .zap-single-tap-amount {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+
+#lightningOverlay .zap-single-tap-amount input,
+#lightningOverlay .zap-single-tap-amount select {
+  margin-bottom: 0;
+}
+
+#lightningOverlay .zap-single-tap-amount input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#lightningOverlay .zap-single-tap-amount select {
+  flex: 0 0 6.5rem;
+  width: 6.5rem;
+}
+
+#lightningOverlay #zapSingleTapNote {
+  color: var(--gray);
 }
 
 #ownerSignStatus.is-error,
@@ -6524,7 +6636,9 @@ body:has(#pollVotesOverlay:not([hidden])),
 html:has(#voteVotersPanel.viewport-sheet:not([hidden])),
 body:has(#voteVotersPanel.viewport-sheet:not([hidden])),
 html:has(#zapOverlay:not([hidden])),
-body:has(#zapOverlay:not([hidden])) {
+body:has(#zapOverlay:not([hidden])),
+html:has(#lightningOverlay:not([hidden])),
+body:has(#lightningOverlay:not([hidden])) {
   overflow: hidden;
 }
 
@@ -8628,6 +8742,7 @@ body:has(#zapOverlay:not([hidden])) {
   #peopleOverlay .people-card.viewport-sheet,
   #publishOverlay .publish-card.viewport-sheet,
   #zapOverlay .overlay-card.viewport-sheet,
+  #lightningOverlay .overlay-card.viewport-sheet,
   .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
@@ -9153,6 +9268,7 @@ min-height: 0;
 
 .settings-form .cyber-toggle input,
 #createAccountOverlay .cyber-toggle input,
+#lightningOverlay .cyber-toggle input,
 .cyber-toggle-compact input {
   position: absolute;
   opacity: 0;
