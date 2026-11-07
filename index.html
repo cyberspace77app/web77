@@ -362,7 +362,7 @@
       <div id="zapNwcBlock">
         <label class="login-label" for="zapNwc">Nostr Wallet Connect</label>
         <input id="zapNwc" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="nostr+walletconnect://">
-        <p class="login-hint" id="zapNwcHint">Optional. Stays in this browser. A saved connection is used first, then Alby or Joule, then a lightning: link.</p>
+        <p class="login-hint" id="zapNwcHint">Optional. Saved in this browser.</p>
       </div>
       <div id="zapWalletFallback" hidden>
         <p class="login-hint">The invoice is ready. Open it in an installed wallet, or copy it.</p>
@@ -372,7 +372,7 @@
       </div>
       <p id="zapStatus" role="status"></p>
       <div class="overlay-actions">
-        <button type="button" class="btn-primary" id="zapSubmit">Send</button>
+        <button type="button" class="btn-primary" id="zapSubmit">Zap</button>
         <a id="zapOpenWallet" class="btn-primary" href="" hidden>Open wallet</a>
         <button type="button" class="btn-ghost" id="zapCancel">Cancel</button>
       </div>
@@ -855,6 +855,6 @@
   <script src="/js/hive-auth.js?v=0.20.0"></script>
   <script src="/js/chain-queue.js?v=0.20.0"></script>
   <script src="/js/blacklist.js?v=0.20.0"></script>
-  <script src="/js/app.js?v=0.20.45"></script>
+  <script src="/js/app.js?v=0.20.46"></script>
 </body>
 </html>

@@ -18947,7 +18947,7 @@ let CS77_FILTER_LOW_REP = 20;
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
-  // A paid NWC or WebLN zap turns Send into Close. Otherwise a lightning: invoice replaces Send.
+  // A paid NWC or WebLN zap turns Zap into Close. Otherwise a lightning: invoice replaces Zap.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
     const link = $("#zapOpenWallet");
@@ -18956,7 +18956,7 @@ let CS77_FILTER_LOW_REP = 20;
     const showWallet = !sent && zapAssetName(zapState.asset) === "ln" && Boolean(zapState.invoice);
     if (submit) {
       submit.hidden = showWallet;
-      submit.textContent = sent ? "Close" : "Send";
+      submit.textContent = sent ? "Close" : "Zap";
       submit.disabled = sent ? false : zapState.pending;
     }
     if (cancel) {
