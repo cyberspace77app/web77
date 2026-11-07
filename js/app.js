@@ -18640,9 +18640,17 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  function profileZapHtml() {
+  function profileHasLightning(profile) {
+    const raw = lightningAddressFromWallet(profileReceiveWallet(profile));
+    return Boolean(raw) && !normalizeLightningAddress(raw).error;
+  }
+
+  function profileZapHtml(profile) {
+    const ready = profileHasLightning(profile);
     return (
-      '<button type="button" class="profile-zap-btn" aria-label="Zap">' +
+      '<button type="button" class="profile-zap-btn' +
+      (ready ? " has-lightning" : "") +
+      '" aria-label="Zap">' +
       zapMarkSvg() +
       "</button>"
     );
@@ -20455,7 +20463,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
-      : `<div class="profile-head-actions">${followBtn}${profileZapHtml()}${profileMoreHtml(author)}</div>`;
+      : `<div class="profile-head-actions">${followBtn}${profileZapHtml(profile)}${profileMoreHtml(author)}</div>`;
     return `
       <div class="profile-banner">
         <div class="profile-head">
