@@ -165,8 +165,23 @@ let CS77_FILTER_LOW_REP = 20;
     note: { ln: "", hive: "", hbd: "" },
     noteEdited: { ln: false, hive: false, hbd: false },
     invoice: "",
+    preimage: "",
     sent: false,
+    sentSats: 0,
+    offerComment: false,
+    cast: false,
+    kind: "",
+    commentBusy: false,
   };
+  const zapWalletCache = new Map();
+  const zapTipsCache = new Map();
+  const zappedContent = new Set();
+  const zapTipLocal = new Map();
+  let zapTipsPanelNode = null;
+  let zapTipsShowTimer = 0;
+  let zapTipsHideTimer = 0;
+  let zapTipsGen = 0;
+  let openZapTips = null;
   let communityEditDraft = null;
   let communityEditBaseline = null;
   let communityEditSettings = null;
@@ -1386,6 +1401,7 @@ let CS77_FILTER_LOW_REP = 20;
     payoutHideTimer = 0;
     hideVoteVoters();
     hideReblogConfirm();
+    hideZapTips();
     const panel = payoutPanelEl();
     openPayout = { el, author, permlink };
     panel.innerHTML = payoutPanelHtml(author, permlink);
@@ -1718,6 +1734,28 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const upCountHtml = `▲ <span class="vote-n vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up">${upCount}</span>`;
     return `<span class="vote-wrap" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}>${upBtn.replace("▲", upCountHtml)}${downPill}${sliders}</span>`;
+  }
+
+  function zapStatHtml(post, kind) {
+    if (!post || !post.author || !post.permlink) return "";
+    const author = String(post.author).replace(/^@/, "").trim().toLowerCase();
+    const permlink = String(post.permlink).trim();
+    if (!author || !permlink) return "";
+    const target = kind === "comment" ? "comment" : kind === "post" ? "post" : isRootPost(post) ? "post" : "comment";
+    const zapped = zappedContent.has(zapContentKey(author, permlink)) ? " is-zapped" : "";
+    return (
+      '<button type="button" class="zap-stat-btn stat-pill' +
+      zapped +
+      '" data-zap-author="' +
+      HiveMd.escapeHtml(author) +
+      '" data-zap-permlink="' +
+      HiveMd.escapeHtml(permlink) +
+      '" data-zap-kind="' +
+      target +
+      '" aria-label="Zap">' +
+      zapMarkSvg() +
+      "</button>"
+    );
   }
 
   function voteRootsFor(author, permlink) {
@@ -2143,6 +2181,9 @@ let CS77_FILTER_LOW_REP = 20;
       if (votersPanelNode && (t === votersPanelNode || (t && t.nodeType === 1 && votersPanelNode.contains(t)))) {
         return;
       }
+      if (zapTipsPanelNode && (t === zapTipsPanelNode || (t && t.nodeType === 1 && zapTipsPanelNode.contains(t)))) {
+        return;
+      }
       if (payoutPanelNode && (t === payoutPanelNode || (t && t.nodeType === 1 && payoutPanelNode.contains(t)))) {
         return;
       }
@@ -2175,6 +2216,11 @@ let CS77_FILTER_LOW_REP = 20;
       placeVoteVoters(openVoters.el, votersPanelEl());
     } else if (openVoters) {
       hideVoteVoters();
+    }
+    if (openZapTips && openZapTips.el && openZapTips.el.isConnected) {
+      placeZapTips(openZapTips.el, zapTipsPanelEl());
+    } else if (openZapTips) {
+      hideZapTips();
     }
     if (openReblog && openReblog.btn && openReblog.btn.isConnected && openReblog.panel) {
       placeReblogConfirm(openReblog.btn, openReblog.panel);
@@ -2681,6 +2727,7 @@ let CS77_FILTER_LOW_REP = 20;
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider) return;
     hidePayoutPanel();
+    hideZapTips();
     if (openReblog) hideReblogConfirm();
     const author = el.getAttribute("data-vote-author");
     const permlink = el.getAttribute("data-vote-permlink");
@@ -2866,6 +2913,7 @@ let CS77_FILTER_LOW_REP = 20;
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider || openReblog) return;
     hidePayoutPanel();
+    hideZapTips();
     const author = el.getAttribute("data-reblog-author");
     const permlink = el.getAttribute("data-reblog-permlink");
     if (!author || !permlink) return;
@@ -4988,7 +5036,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const PEOPLE_HISTORY_KEYS = ["peoplePanel", "peopleKind", "peopleId"];
-  const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor"];
+  const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor", "zapPermlink", "zapKind"];
   const VOTERS_HISTORY_KEYS = [
     "votersPanel",
     "votersKind",
@@ -5015,6 +5063,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (leavePanelForNav(votersHist, false, hideVoteVoters, href, replace)) return;
     const path = hrefToPath(href);
     hidePayoutPanel();
+    hideZapTips();
     if (parseRoute(path).name === "publish") rememberNonPublishPath();
     if (HASH_ROUTING) {
       const next = "#" + (path.startsWith("/") ? path : "/" + path);
@@ -5156,6 +5205,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeWalletMore();
     closeDaoProxyMenu();
     hidePayoutPanel();
+    hideZapTips();
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
@@ -5445,6 +5495,8 @@ let CS77_FILTER_LOW_REP = 20;
           Object.assign(historyRecord(), {
             zapPanel: true,
             zapAuthor: zapState.author || "",
+            zapPermlink: zapState.permlink || "",
+            zapKind: zapState.kind || "",
           }),
           "",
           location.href
@@ -12376,6 +12428,7 @@ let CS77_FILTER_LOW_REP = 20;
         ${media}
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
+          ${zapStatHtml(shown)}
           ${commentCountHtml(shown.children, postPath(shown))}
           ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
@@ -15258,6 +15311,7 @@ let CS77_FILTER_LOW_REP = 20;
         ${poll}
         <div class="comment-actions">
           ${voteControlHtml(node, "pills")}
+          ${zapStatHtml(node, "comment")}
           ${payoutHtml(node, true)}
           ${replyBtn}
           ${contentMoreHtml(node.author, node.permlink, "comment", node.children, false, node)}
@@ -17573,6 +17627,7 @@ let CS77_FILTER_LOW_REP = 20;
         ${pollShellHtml(root)}
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
+          ${zapStatHtml(root, "post")}
           ${commentCountHtml(commentCount, "#comments")}
           ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
@@ -19323,10 +19378,17 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideZapFallback() {
     zapState.invoice = "";
+    zapState.preimage = "";
     zapState.sent = false;
+    zapState.sentSats = 0;
+    zapState.offerComment = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
     syncZapPayAction();
+  }
+
+  function zapFormLocked() {
+    return zapState.pending || zapState.commentBusy || zapState.offerComment;
   }
 
   function zapSendBlocked() {
@@ -19340,24 +19402,28 @@ let CS77_FILTER_LOW_REP = 20;
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
-  // A paid NWC or WebLN zap turns Zap into Close. Otherwise a lightning: invoice replaces Zap.
+  // NWC or WebLN with a logged-in user, a permlink, and a preimage turns Zap into
+  // Add comment and leaves Close. Any other paid zap turns Zap into Close.
+  // A lightning: invoice replaces Zap and does not offer a comment.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
     const link = $("#zapOpenWallet");
     const cancel = $("#zapCancel");
     const sent = Boolean(zapState.sent);
+    const offer = sent && zapState.offerComment;
     const showWallet = !sent && zapAssetName(zapState.asset) === "ln" && Boolean(zapState.invoice);
     if (submit) {
       submit.hidden = showWallet;
-      submit.textContent = sent ? "Close" : "Zap";
-      submit.disabled = sent ? false : zapState.pending;
+      submit.textContent = offer ? "Add comment" : sent ? "Close" : "Zap";
+      submit.disabled = offer ? zapState.commentBusy : sent ? false : zapState.pending;
     }
     if (cancel) {
-      cancel.hidden = sent;
-      if (!sent) cancel.textContent = showWallet ? "Close" : "Cancel";
+      cancel.hidden = sent && !offer;
+      if (!cancel.hidden) cancel.textContent = sent || showWallet ? "Close" : "Cancel";
+      cancel.disabled = Boolean(zapState.commentBusy);
     }
     const settings = $("#zapSettings");
-    if (settings) settings.disabled = zapState.pending;
+    if (settings) settings.disabled = zapState.pending || zapState.commentBusy;
     if (!link) return;
     if (showWallet) {
       link.href = "lightning:" + zapState.invoice;
@@ -19500,7 +19566,7 @@ let CS77_FILTER_LOW_REP = 20;
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
       btn.textContent = zapChoiceLabel(asset, preset);
-      btn.disabled = zapState.pending;
+      btn.disabled = zapFormLocked();
       root.appendChild(btn);
     });
   }
@@ -19521,7 +19587,7 @@ let CS77_FILTER_LOW_REP = 20;
         const on = btn.getAttribute("data-zap-asset") === asset;
         btn.classList.toggle("is-active", on);
         btn.setAttribute("aria-pressed", on ? "true" : "false");
-        btn.disabled = zapState.pending;
+        btn.disabled = zapFormLocked();
       });
     }
     const missing = $("#zapLnMissing");
@@ -19542,14 +19608,14 @@ let CS77_FILTER_LOW_REP = 20;
       if (input.value !== next) input.value = next;
       input.inputMode = asset === "ln" ? "numeric" : "decimal";
       input.placeholder = "0";
-      input.disabled = zapState.pending;
+      input.disabled = zapFormLocked();
     }
     const note = $("#zapNote");
     if (note) {
       const next = zapNoteValue(asset);
       zapState.note[asset] = next;
       if (note.value !== next) note.value = next;
-      note.disabled = zapState.pending;
+      note.disabled = zapFormLocked();
     }
     paintZapNwc();
     syncZapPayAction();
@@ -19563,7 +19629,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function setZapAsset(asset) {
-    if (zapState.pending) return;
+    if (zapFormLocked()) return;
     const previous = zapAssetName(zapState.asset);
     const input = $("#zapCustom");
     if (input) zapState.custom[previous] = input.value;
@@ -19583,6 +19649,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closeZapOverlay(opts) {
     const skipHistory = !!(opts && opts.skipHistory);
+    if (zapState.commentBusy) return false;
     if (zapSignBlocksClose()) return false;
     const ov = $("#zapOverlay");
     const wasOpen = Boolean(ov && !ov.hidden);
@@ -19595,11 +19662,12 @@ let CS77_FILTER_LOW_REP = 20;
     stopZapHttp();
     ov.hidden = true;
     zapState.pending = false;
+    if (zapState.cast) rememberZappedContent(zapState.author, zapState.permlink);
+    zapState.cast = false;
     hideZapFallback();
     setZapStatus("", false);
-    document.querySelectorAll(".profile-zap-btn.is-open").forEach((btn) => {
-      btn.classList.remove("is-open");
-    });
+    setZapTriggerOpen(false);
+    paintZappedStatButtons();
     releasePanelHistory(zapHist, skipHistory);
     return true;
   }
@@ -19610,6 +19678,16 @@ let CS77_FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     if (!author || isOwnAuthor(author)) return;
+    const permlink = String((state && state.zapPermlink) || "").trim();
+    if (permlink) {
+      const kind = state && state.zapKind === "comment" ? "comment" : "post";
+      const cached = cachedZapWallet(author);
+      openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, {
+        fromHistory: true,
+        kind: kind,
+      });
+      return;
+    }
     const here = String(profileState.author || "")
       .replace(/^@/, "")
       .trim()
@@ -19623,9 +19701,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // username is the hive account to pay. permlink may be null or empty.
-  // A post permlink is stored and not used until post zaps are wired.
+  // A permlink selects that post or comment: hive uses a !tip memo, and a
+  // confirmed lightning payment can offer a receipt comment.
   // wallet is posting profile.wallet, or null when the user has no Lightning address.
   // loadWallet true reads that object from the chain. false uses wallet as given.
+  // opts.kind is "post" or "comment" and only changes the receipt sentence.
   function openZapDialog(username, permlink, wallet, loadWallet, opts) {
     const fromHistory = Boolean(opts && opts.fromHistory);
     const author = String(username || "")
@@ -19633,6 +19713,11 @@ let CS77_FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     if (!author || isOwnAuthor(author)) return;
+    if (zapState.cast) {
+      rememberZappedContent(zapState.author, zapState.permlink);
+      zapState.cast = false;
+      paintZappedStatButtons();
+    }
     closeProfileMore();
     zapLookGen += 1;
     zapSendGen += 1;
@@ -19640,6 +19725,8 @@ let CS77_FILTER_LOW_REP = 20;
     const fetchWallet = loadWallet !== false;
     zapState.author = author;
     zapState.permlink = permlink == null ? "" : String(permlink).trim();
+    zapState.kind = zapState.permlink && opts && opts.kind === "comment" ? "comment" : zapState.permlink ? "post" : "";
+    zapState.commentBusy = false;
     zapState.asset = "ln";
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
@@ -19652,6 +19739,7 @@ let CS77_FILTER_LOW_REP = 20;
       hbd: zapPresetNote(ZAP_PRESETS.hbd[0]),
     };
     zapState.noteEdited = { ln: false, hive: false, hbd: false };
+    zapState.cast = false;
     hideZapFallback();
     setZapStatus("", false);
     zapNwcSaved = Boolean(window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc());
@@ -19660,13 +19748,35 @@ let CS77_FILTER_LOW_REP = 20;
     const ov = $("#zapOverlay");
     if (!ov) return;
     ov.hidden = false;
-    document.querySelectorAll(".profile-zap-btn").forEach((btn) => {
-      btn.classList.add("is-open");
-    });
+    hideZapTips();
     if (!fetchWallet) applyZapWallet(wallet);
+    setZapTriggerOpen(true);
     paintZapForm();
     if (fetchWallet) loadZapLightning(author, zapLookGen);
-    writePanelHistory(zapHist, { zapPanel: true, zapAuthor: author }, fromHistory);
+    writePanelHistory(
+      zapHist,
+      {
+        zapPanel: true,
+        zapAuthor: author,
+        zapPermlink: zapState.permlink,
+        zapKind: zapState.kind,
+      },
+      fromHistory
+    );
+  }
+
+  function setZapTriggerOpen(on) {
+    const open = Boolean(on);
+    document.querySelectorAll(".profile-zap-btn").forEach((btn) => {
+      btn.classList.toggle("is-open", open && !zapState.permlink);
+    });
+    document.querySelectorAll(".zap-stat-btn").forEach((btn) => {
+      const match =
+        open &&
+        btn.getAttribute("data-zap-author") === zapState.author &&
+        btn.getAttribute("data-zap-permlink") === zapState.permlink;
+      btn.classList.toggle("is-open", match);
+    });
   }
 
   function openLoadedProfileZap(opts) {
@@ -19679,11 +19789,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function loadZapLightning(author, gen) {
     try {
-      const rows = await HiveApi.getAccounts([author]);
+      const rec = await ensureZapWallet(author);
       if (gen !== zapLookGen || zapState.author !== author || !zapDialogOpen()) return;
-      const account = rows && rows[0];
-      const named = account && walletHiveName(account.name) === author;
-      applyZapWallet(named ? receiveWalletFromAccount(account) : null);
+      applyZapWallet(rec && rec.wallet);
     } catch (err) {
       if (gen !== zapLookGen || !zapDialogOpen()) return;
       zapState.lnAddress = "";
@@ -19711,6 +19819,469 @@ let CS77_FILTER_LOW_REP = 20;
       zapState.lnAddress = "";
       zapState.lnStatus = "missing";
     }
+  }
+
+  const ZAP_TIPS_CACHE_MS = 60000;
+  const ZAP_TIPS_LIMIT = 40;
+
+  function zapContentKey(author, permlink) {
+    const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
+    const link = String(permlink || "").trim();
+    if (!name || !link) return "";
+    return name + "/" + link;
+  }
+
+  function rememberZappedContent(author, permlink) {
+    const key = zapContentKey(author, permlink);
+    if (key) zappedContent.add(key);
+  }
+
+  function paintZappedStatButtons() {
+    document.querySelectorAll(".zap-stat-btn").forEach((btn) => {
+      const key = zapContentKey(btn.getAttribute("data-zap-author"), btn.getAttribute("data-zap-permlink"));
+      btn.classList.toggle("is-zapped", Boolean(key) && zappedContent.has(key));
+    });
+  }
+
+  function cachedZapWallet(author) {
+    const hit = zapWalletCache.get(author);
+    if (!hit || !hit.loaded) return null;
+    return hit;
+  }
+
+  function ensureZapWallet(author) {
+    const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
+    if (!name) return Promise.resolve({ loaded: true, wallet: null, accepts: false });
+    const hit = zapWalletCache.get(name);
+    if (hit && hit.loaded) return Promise.resolve(hit);
+    if (hit && hit.pending) return hit.pending;
+    const pending = HiveApi.getAccounts([name])
+      .then((rows) => {
+        const account = rows && rows[0];
+        const named = account && walletHiveName(account.name) === name;
+        const wallet = named ? receiveWalletFromAccount(account) : null;
+        const raw = lightningAddressFromWallet(wallet);
+        const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
+        const record = {
+          loaded: true,
+          wallet: wallet,
+          accepts: Boolean(parsed.address) && !parsed.error,
+        };
+        zapWalletCache.set(name, record);
+        return record;
+      })
+      .catch((err) => {
+        const current = zapWalletCache.get(name);
+        if (current && current.pending === pending) zapWalletCache.delete(name);
+        throw err;
+      });
+    zapWalletCache.set(name, { loaded: false, pending: pending });
+    return pending;
+  }
+
+  function memoTipsContent(memo, author, permlink) {
+    const text = String(memo || "").trim().toLowerCase();
+    const a = String(author || "").toLowerCase();
+    const p = String(permlink || "").toLowerCase();
+    if (!text || !a || !p) return false;
+    const heads = ["!tip @" + a + "/" + p, "tip for @" + a + "/" + p];
+    for (let i = 0; i < heads.length; i++) {
+      if (text.indexOf(heads[i]) !== 0) continue;
+      const next = text.charAt(heads[i].length);
+      if (!next || !/[a-z0-9-]/.test(next)) return true;
+    }
+    return false;
+  }
+
+  function tipAmountText(amount) {
+    if (typeof amount === "string") return amount.trim();
+    if (!amount || typeof amount !== "object" || amount.amount == null) return "";
+    const sym = amount.nai === "@@000000013" ? "HBD" : amount.nai === "@@000000021" ? "HIVE" : "";
+    if (!sym) return "";
+    const precision = Number(amount.precision);
+    const places = Number.isFinite(precision) && precision >= 0 ? precision : 3;
+    const raw = String(amount.amount);
+    const neg = raw.charAt(0) === "-";
+    const digits = neg ? raw.slice(1) : raw;
+    if (!/^\d+$/.test(digits)) return "";
+    const padded = places > 0 ? digits.padStart(places + 1, "0") : digits;
+    const whole = places > 0 ? padded.slice(0, -places) : padded;
+    const frac = places > 0 ? padded.slice(-places) : "";
+    return (neg ? "-" : "") + whole + (frac ? "." + frac : "") + " " + sym;
+  }
+
+  function transferFromHistoryRow(row) {
+    const rec = Array.isArray(row) ? row[1] : row;
+    if (!rec || typeof rec !== "object") return null;
+    const op = rec.op;
+    let type = "";
+    let payload = null;
+    if (Array.isArray(op)) {
+      type = String(op[0] || "");
+      payload = op[1];
+    } else if (op && typeof op === "object") {
+      type = String(op.type || "").replace(/_operation$/, "");
+      payload = op.value;
+    }
+    if (type !== "transfer" || !payload || typeof payload !== "object") return null;
+    return {
+      from: String(payload.from || "").replace(/^@/, "").toLowerCase(),
+      to: String(payload.to || "").replace(/^@/, "").toLowerCase(),
+      amount: tipAmountText(payload.amount),
+      memo: String(payload.memo || ""),
+      at: String(rec.timestamp || ""),
+    };
+  }
+
+  function sortZapTips(entries) {
+    entries.sort((a, b) => {
+      if (a.at && b.at) return a.at < b.at ? 1 : a.at > b.at ? -1 : 0;
+      if (a.at) return -1;
+      if (b.at) return 1;
+      return 0;
+    });
+    return entries;
+  }
+
+  function mergeLocalZapTips(author, permlink, entries) {
+    const local = zapTipLocal.get(author + "/" + permlink) || [];
+    const all = local.concat(entries || []);
+    const seen = {};
+    const out = [];
+    for (let i = 0; i < all.length; i++) {
+      const row = all[i];
+      if (!row || !row.who) continue;
+      const id = row.who + "\n" + row.label + "\n" + row.at;
+      if (seen[id]) continue;
+      seen[id] = true;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function rememberLocalZapTip(author, permlink, entry) {
+    const key = author + "/" + permlink;
+    const list = zapTipLocal.get(key) || [];
+    list.unshift(entry);
+    zapTipLocal.set(key, list);
+    const cached = zapTipsCache.get(key);
+    if (cached && cached.complete) {
+      cached.entries = sortZapTips(mergeLocalZapTips(author, permlink, cached.entries || []));
+      cached.at = Date.now();
+    }
+  }
+
+  function zapCommentEntry(node, author, permlink) {
+    if (!node || typeof node !== "object") return null;
+    const body = String(node.body || "").trim();
+    if (!/^!zapped\b/i.test(body)) return null;
+    if (String(node.parent_author || "").replace(/^@/, "").toLowerCase() !== author) return null;
+    if (String(node.parent_permlink || "") !== permlink) return null;
+    const who = String(node.author || "").replace(/^@/, "").toLowerCase();
+    if (!who) return null;
+    const match = /([0-9][0-9,]*)\s+sats/i.exec(body);
+    const sats = match ? Number(String(match[1]).replace(/,/g, "")) : 0;
+    return {
+      who: who,
+      label: sats > 0 ? formatGroupedNumber(sats, 0) + " sats" : "Lightning",
+      at: String(node.created || ""),
+    };
+  }
+
+  async function fetchZapComments(author, permlink) {
+    const discussion = await HiveApi.getDiscussion(author, permlink, observer());
+    const nodes = discussion && typeof discussion === "object" ? Object.values(discussion) : [];
+    const entries = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const entry = zapCommentEntry(nodes[i], author, permlink);
+      if (entry) entries.push(entry);
+    }
+    return entries;
+  }
+
+  async function fetchHistoryHiveTips(author, permlink) {
+    let rows = [];
+    try {
+      const result = await HiveApi.hiveRpc("account_history_api.get_account_history", {
+        account: author,
+        start: -1,
+        limit: 1000,
+        operation_filter_low: 4,
+        operation_filter_high: 0,
+      });
+      rows = Array.isArray(result) ? result : result && Array.isArray(result.history) ? result.history : [];
+    } catch (err) {
+      rows = await HiveApi.getAccountHistory(author, -1, 1000);
+    }
+    const entries = [];
+    for (let i = 0; i < rows.length; i++) {
+      const tx = transferFromHistoryRow(rows[i]);
+      if (!tx || tx.to !== author || !tx.from || !tx.amount) continue;
+      if (!memoTipsContent(tx.memo, author, permlink)) continue;
+      entries.push({ who: tx.from, label: tx.amount, at: tx.at });
+    }
+    return entries;
+  }
+
+  function loadZapTipRecord(author, permlink) {
+    const key = author + "/" + permlink;
+    const hit = zapTipsCache.get(key);
+    if (hit && hit.complete && Date.now() - hit.at < ZAP_TIPS_CACHE_MS) {
+      return Promise.resolve({
+        entries: mergeLocalZapTips(author, permlink, hit.entries),
+        commentsFailed: false,
+        tipsFailed: false,
+      });
+    }
+    if (hit && hit.pending) return hit.pending;
+    const pending = Promise.all([
+      fetchZapComments(author, permlink)
+        .then((rows) => ({ rows: rows, failed: false }))
+        .catch(() => ({ rows: [], failed: true })),
+      fetchHistoryHiveTips(author, permlink)
+        .then((rows) => ({ rows: rows, failed: false }))
+        .catch(() => ({ rows: [], failed: true })),
+    ]).then((parts) => {
+      const comments = parts[0];
+      const tips = parts[1];
+      const entries = sortZapTips(mergeLocalZapTips(author, permlink, comments.rows.concat(tips.rows)));
+      const record = {
+        complete: !comments.failed && !tips.failed,
+        at: Date.now(),
+        entries: entries,
+        commentsFailed: comments.failed,
+        tipsFailed: tips.failed,
+      };
+      if (record.complete) zapTipsCache.set(key, record);
+      else {
+        const current = zapTipsCache.get(key);
+        if (current && current.pending === pending) zapTipsCache.delete(key);
+      }
+      return {
+        entries: entries,
+        commentsFailed: comments.failed,
+        tipsFailed: tips.failed,
+      };
+    });
+    zapTipsCache.set(key, { complete: false, at: 0, entries: [], pending: pending });
+    return pending;
+  }
+
+  function clearZapTipsPos(panel) {
+    panel.style.position = "";
+    panel.style.zIndex = "";
+    panel.style.top = "";
+    panel.style.right = "";
+    panel.style.bottom = "";
+    panel.style.left = "";
+    panel.style.maxHeight = "";
+  }
+
+  function zapTipsPanelEl() {
+    if (zapTipsPanelNode && zapTipsPanelNode.isConnected) return zapTipsPanelNode;
+    let el = document.getElementById("zapTipsPanel");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "zapTipsPanel";
+      el.className = "zap-tips-panel";
+      el.hidden = true;
+      el.setAttribute("role", "tooltip");
+      document.body.appendChild(el);
+      el.addEventListener("pointerenter", () => {
+        window.clearTimeout(zapTipsHideTimer);
+        zapTipsHideTimer = 0;
+      });
+      el.addEventListener("pointerleave", scheduleHideZapTips);
+      el.addEventListener(
+        "wheel",
+        (e) => {
+          const max = el.scrollHeight - el.clientHeight;
+          if (max <= 0) {
+            e.preventDefault();
+            return;
+          }
+          if ((e.deltaY < 0 && el.scrollTop <= 0) || (e.deltaY > 0 && el.scrollTop >= max - 0.5)) {
+            e.preventDefault();
+          }
+        },
+        { passive: false }
+      );
+    }
+    zapTipsPanelNode = el;
+    return el;
+  }
+
+  function placeZapTips(anchor, panel) {
+    if (!anchor || !panel || panel.hidden) return;
+    const rect = anchor.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      hideZapTips();
+      return;
+    }
+    const scrollTop = panel.scrollTop;
+    panel.style.position = "fixed";
+    panel.style.zIndex = "70";
+    panel.style.right = "auto";
+    panel.style.bottom = "";
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const contentH = panel.scrollHeight;
+    const placeAbove = contentH > spaceBelow && spaceAbove > spaceBelow;
+    const maxH = Math.max(80, Math.round(placeAbove ? spaceAbove : spaceBelow));
+    panel.style.maxHeight = maxH + "px";
+    panel.style.left = Math.round(rect.left) + "px";
+    if (placeAbove) {
+      panel.style.top = Math.max(8, Math.round(rect.top - Math.min(contentH, maxH) - 8)) + "px";
+    } else {
+      panel.style.top = Math.round(rect.bottom + 8) + "px";
+    }
+    const box = panel.getBoundingClientRect();
+    const maxRight = window.innerWidth - 8;
+    if (box.right > maxRight) panel.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
+    if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
+    if (panel.scrollTop !== scrollTop) panel.scrollTop = scrollTop;
+  }
+
+  function hideZapTips() {
+    window.clearTimeout(zapTipsShowTimer);
+    window.clearTimeout(zapTipsHideTimer);
+    zapTipsShowTimer = 0;
+    zapTipsHideTimer = 0;
+    zapTipsGen += 1;
+    openZapTips = null;
+    const panel = zapTipsPanelNode || document.getElementById("zapTipsPanel");
+    if (!panel) return;
+    panel.hidden = true;
+    panel.innerHTML = "";
+    clearZapTipsPos(panel);
+  }
+
+  function scheduleHideZapTips(e) {
+    if (e && e.pointerType && e.pointerType !== "mouse") return;
+    if (!hoverFine()) return;
+    window.clearTimeout(zapTipsShowTimer);
+    window.clearTimeout(zapTipsHideTimer);
+    zapTipsShowTimer = 0;
+    zapTipsHideTimer = window.setTimeout(hideZapTips, 180);
+  }
+
+  function paintZapTipsPanel() {
+    const panel = zapTipsPanelNode;
+    const open = openZapTips;
+    if (!panel || !open) return;
+    const bits = [];
+    if (open.accepts === true) {
+      bits.push(
+        '<p class="zap-tips-accept">' + HiveMd.escapeHtml("@" + open.author + " accepts \u26A1 sats.") + "</p>"
+      );
+    }
+    bits.push('<p class="zap-tips-caption">Zaps</p>');
+    const entries = open.entries;
+    let status = "";
+    if (!entries) status = "Loading zaps\u2026";
+    else if (!entries.length) status = open.commentsFailed && open.tipsFailed ? "Could not load zaps." : "No zaps yet.";
+    const shown = entries ? entries.slice(0, ZAP_TIPS_LIMIT) : [];
+    if (shown.length) {
+      const items = [];
+      for (let i = 0; i < shown.length; i++) {
+        const row = shown[i];
+        items.push(
+          '<li class="zap-tip"><span class="zap-tip-name">@' +
+            HiveMd.escapeHtml(row.who) +
+            '</span><span class="zap-tip-amount">' +
+            HiveMd.escapeHtml(row.label) +
+            "</span></li>"
+        );
+      }
+      bits.push('<ul class="zap-tips-list">' + items.join("") + "</ul>");
+    }
+    if (entries && entries.length > ZAP_TIPS_LIMIT) status = "Showing the latest " + ZAP_TIPS_LIMIT + ".";
+    else if (entries && entries.length && open.commentsFailed) status = "Zap comments could not be loaded.";
+    else if (entries && entries.length && open.tipsFailed) status = "Hive tips could not be loaded.";
+    if (status) bits.push('<p class="zap-tips-status">' + HiveMd.escapeHtml(status) + "</p>");
+    panel.innerHTML = bits.join("");
+  }
+
+  function showZapTips(btn) {
+    if (!hoverFine() || !btn || !btn.isConnected) return;
+    const author = String(btn.getAttribute("data-zap-author") || "").replace(/^@/, "").trim().toLowerCase();
+    const permlink = String(btn.getAttribute("data-zap-permlink") || "").trim();
+    if (!author || !permlink) return;
+    hideVoteVoters();
+    hidePayoutPanel();
+    hideReblogConfirm();
+    const panel = zapTipsPanelEl();
+    const gen = ++zapTipsGen;
+    const known = cachedZapWallet(author);
+    openZapTips = {
+      el: btn,
+      author: author,
+      permlink: permlink,
+      gen: gen,
+      accepts: known ? known.accepts : null,
+      entries: null,
+      commentsFailed: false,
+      tipsFailed: false,
+    };
+    paintZapTipsPanel();
+    panel.hidden = false;
+    document.body.appendChild(panel);
+    placeZapTips(btn, panel);
+    ensureZapWallet(author)
+      .then((rec) => {
+        if (!openZapTips || openZapTips.gen !== gen) return;
+        openZapTips.accepts = Boolean(rec && rec.accepts);
+        paintZapTipsPanel();
+        placeZapTips(btn, panel);
+      })
+      .catch(() => {
+        if (!openZapTips || openZapTips.gen !== gen) return;
+        if (openZapTips.accepts == null) openZapTips.accepts = false;
+        paintZapTipsPanel();
+      });
+    loadZapTipRecord(author, permlink)
+      .then((rec) => {
+        if (!openZapTips || openZapTips.gen !== gen) return;
+        openZapTips.entries = rec.entries || [];
+        openZapTips.commentsFailed = Boolean(rec.commentsFailed);
+        openZapTips.tipsFailed = Boolean(rec.tipsFailed);
+        paintZapTipsPanel();
+        placeZapTips(btn, panel);
+      })
+      .catch(() => {
+        if (!openZapTips || openZapTips.gen !== gen) return;
+        openZapTips.entries = [];
+        openZapTips.commentsFailed = true;
+        openZapTips.tipsFailed = true;
+        paintZapTipsPanel();
+        placeZapTips(btn, panel);
+      });
+  }
+
+  function onZapTipEnter(btn) {
+    if (!hoverFine() || !btn) return;
+    window.clearTimeout(zapTipsHideTimer);
+    window.clearTimeout(zapTipsShowTimer);
+    zapTipsHideTimer = 0;
+    if (openZapTips && openZapTips.el === btn && zapTipsPanelEl() && !zapTipsPanelEl().hidden) {
+      showZapTips(btn);
+      return;
+    }
+    zapTipsShowTimer = window.setTimeout(() => {
+      zapTipsShowTimer = 0;
+      showZapTips(btn);
+    }, 80);
+  }
+
+  function openContentZap(btn) {
+    if (!btn) return;
+    const author = String(btn.getAttribute("data-zap-author") || "").replace(/^@/, "").trim().toLowerCase();
+    const permlink = String(btn.getAttribute("data-zap-permlink") || "").trim();
+    const kind = btn.getAttribute("data-zap-kind") === "comment" ? "comment" : "post";
+    if (!author || !permlink) return;
+    hideZapTips();
+    const cached = cachedZapWallet(author);
+    openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, { kind: kind });
   }
 
   function parseZapSats(raw) {
@@ -19854,8 +20425,32 @@ let CS77_FILTER_LOW_REP = 20;
     a.remove();
   }
 
-  function markZapLightningSent(sats) {
+  function zapPreimageOf(result) {
+    if (result == null) return "";
+    let raw = "";
+    if (typeof result === "string") raw = result;
+    else if (typeof result === "object") {
+      raw =
+        result.preimage ||
+        result.payment_preimage ||
+        result.paymentPreimage ||
+        (result.payment && (result.payment.preimage || result.payment.payment_preimage)) ||
+        "";
+    }
+    let text = String(raw || "").trim();
+    if (/^0x/i.test(text)) text = text.slice(2);
+    return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : "";
+  }
+
+  function markZapLightningSent(sats, invoice, preimage) {
     zapState.sent = true;
+    zapState.sentSats = sats;
+    zapState.invoice = invoice || zapState.invoice || "";
+    zapState.preimage = preimage || "";
+    zapState.offerComment = Boolean(
+      zapState.permlink && zapState.invoice && zapState.preimage && observer()
+    );
+    if (zapState.permlink) zapState.cast = true;
     const who = zapState.author ? "@" + zapState.author : "this user";
     setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
   }
@@ -19944,15 +20539,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (typed || useStored) {
       if (!zapStill(gen)) return;
       setZapStatus("Waiting for the connected wallet\u2026", false);
+      let paid = null;
       try {
-        await payWithNwc(nwcUrl, pr);
+        paid = await payWithNwc(nwcUrl, pr);
       } catch (err) {
         if (!zapStill(gen)) return;
         if (walletCancelled(err)) throw zapCancelled();
         throw err;
       }
       if (!zapStill(gen)) return;
-      markZapLightningSent(sats);
+      markZapLightningSent(sats, pr, zapPreimageOf(paid));
       return;
     }
 
@@ -19969,15 +20565,16 @@ let CS77_FILTER_LOW_REP = 20;
       if (enabled) {
         if (!zapStill(gen)) return;
         setZapStatus("Waiting for the browser wallet\u2026", false);
+        let paid = null;
         try {
-          await provider.sendPayment(pr);
+          paid = await provider.sendPayment(pr);
         } catch (err) {
           if (!zapStill(gen)) return;
           if (walletCancelled(err)) throw zapCancelled();
           throw err;
         }
         if (!zapStill(gen)) return;
-        markZapLightningSent(sats);
+        markZapLightningSent(sats, pr, zapPreimageOf(paid));
         return;
       }
     }
@@ -20022,7 +20619,7 @@ let CS77_FILTER_LOW_REP = 20;
           from: user,
           to: target,
           amount: formatChainAmount(amount, chainSymbol, 3),
-          memo: zapNoteText(),
+          memo: zapTransferMemo(),
         },
       ],
     ];
@@ -20046,11 +20643,138 @@ let CS77_FILTER_LOW_REP = 20;
       },
     });
     if (!zapStill(gen)) return;
+    if (zapState.permlink) zapState.cast = true;
     setZapStatus("Sent " + shown + " to @" + target + ".", false);
   }
 
+  function zapTransferMemo() {
+    const author = walletHiveName(zapState.author);
+    const permlink = String(zapState.permlink || "").trim().toLowerCase();
+    const sender = normalizeLoginUser(observer());
+    if (!author || !/^[a-z0-9-]{1,255}$/.test(permlink) || !sender) return zapNoteText();
+    let message = zapNoteText()
+      .replace(/[/\r\n]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (message.length > 120) message = message.slice(0, 120).trim();
+    if (!message) message = "Tip sent through cyberspace77.com";
+    return "!tip @" + author + "/" + permlink + " @" + sender + " app:cyberspace77 message:" + message;
+  }
+
+  function zapReceiptBody() {
+    const user = normalizeLoginUser(observer());
+    const kind = zapState.kind === "comment" ? "comment" : "post";
+    const sats = formatGroupedNumber(zapState.sentSats, 0);
+    const invoice = String(zapState.invoice || "").replace(/`/g, "").trim();
+    const preimage = String(zapState.preimage || "").replace(/`/g, "").trim();
+    return (
+      "!zapped \u26A1 @" +
+      user +
+      " zapped this " +
+      kind +
+      " with " +
+      sats +
+      " sats via [cyberspace77.com](https://cyberspace77.com/)\n\nLN invoice: `" +
+      invoice +
+      "`\n\nLN preimage: `" +
+      preimage +
+      "`"
+    );
+  }
+
+  function showZapReceiptComment(node) {
+    const section = document.getElementById("comments");
+    if (!section || !node) return;
+    const rootAuthor = section.getAttribute("data-root-author") || "";
+    const rootPermlink = section.getAttribute("data-root-permlink") || "";
+    const onRoot = node.parent_author === rootAuthor && node.parent_permlink === rootPermlink;
+    if (!onRoot && !findCommentEl(node.parent_author, node.parent_permlink)) return;
+    rememberPostedComment(node);
+    appendPostedComment(node.parent_author, node.parent_permlink, renderComment(node));
+    if (onRoot) bumpCommentCount(1);
+  }
+
+  async function submitZapReceipt() {
+    if (zapState.commentBusy || !zapState.offerComment) return;
+    const user = normalizeLoginUser(observer());
+    if (!user || !zapState.author || !zapState.permlink) {
+      zapState.offerComment = false;
+      syncZapPayAction();
+      return;
+    }
+    if (!hasSigner(user)) {
+      setZapStatus(signerNeededMessage(), true);
+      return;
+    }
+    const body = zapReceiptBody();
+    const permlink = commentPermlink(zapState.author, zapState.permlink);
+    const jsonMetadata = {
+      app: APP_ID + "/" + APP_VERSION,
+      format: "markdown",
+      tags: ["cyberspace77"],
+    };
+    zapState.commentBusy = true;
+    syncZapPayAction();
+    setZapStatus("Publishing\u2026", false);
+    try {
+      const { promise } = ChainQueue.comment({
+        author: user,
+        parentAuthor: zapState.author,
+        parentPermlink: zapState.permlink,
+        permlink: permlink,
+        title: "",
+        body: body,
+        jsonMetadata: jsonMetadata,
+      });
+      await promise;
+      if (!accountReputation(user)) {
+        try {
+          await loadAccountResources();
+        } catch (err) {
+          /* The receipt is already on chain. */
+        }
+      }
+      try {
+        await HiveMd.whenMarkdownReady();
+      } catch (err) {
+        /* renderComment escapes the body when markdown is unavailable. */
+      }
+      const node = {
+        author: user,
+        permlink: permlink,
+        body: body,
+        created: new Date().toISOString(),
+        author_reputation: accountReputation(user),
+        payout: 0,
+        json_metadata: JSON.stringify(jsonMetadata),
+        parent_author: zapState.author,
+        parent_permlink: zapState.permlink,
+        children: 0,
+        _replies: [],
+      };
+      showZapReceiptComment(node);
+      rememberLocalZapTip(zapState.author, zapState.permlink, {
+        who: user,
+        label: formatGroupedNumber(zapState.sentSats, 0) + " sats",
+        at: node.created,
+      });
+      zapState.offerComment = false;
+      setZapStatus("Zap comment added.", false);
+    } catch (err) {
+      setZapStatus((err && err.message) || "Could not add the zap comment.", true);
+    } finally {
+      zapState.commentBusy = false;
+      if (zapDialogOpen()) syncZapPayAction();
+    }
+  }
+
   async function submitZap() {
+    if (zapState.commentBusy) return;
     if (zapState.sent) {
+      if (zapState.offerComment) {
+        await submitZapReceipt();
+        return;
+      }
       closeZapOverlay();
       return;
     }
@@ -33228,6 +33952,7 @@ let CS77_FILTER_LOW_REP = 20;
     communityNavSwitch = false;
     closeLogoMenu();
     hideVoteSlider();
+    hideZapTips();
     closeProfileMore();
     closeLightningDialog();
     closeContentMore();
@@ -34450,6 +35175,13 @@ let CS77_FILTER_LOW_REP = 20;
           onDownvoteClick(downBtn);
           return;
         }
+        const statZap = e.target.closest(".zap-stat-btn");
+        if (statZap && inInteractiveSurface(statZap)) {
+          e.preventDefault();
+          e.stopPropagation();
+          openContentZap(statZap);
+          return;
+        }
         const countBtn = e.target.closest(".vote-count-btn");
         if (countBtn && inInteractiveSurface(countBtn)) {
           e.preventDefault();
@@ -34481,6 +35213,10 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if (e.key !== "Escape") return;
+      if (openZapTips) {
+        hideZapTips();
+        return;
+      }
       if (openPayout) {
         hidePayoutPanel();
         return;
@@ -34919,6 +35655,13 @@ let CS77_FILTER_LOW_REP = 20;
         if (!fromArrow || !arrow.contains(fromArrow)) releaseVoteColor(arrow);
       }
       if (!hoverFine()) return;
+      const zapHit = e.target.closest && e.target.closest(".zap-stat-btn");
+      if (zapHit && inInteractiveSurface(zapHit)) {
+        const fromZap = e.relatedTarget;
+        if (fromZap && zapHit.contains(fromZap)) return;
+        onZapTipEnter(zapHit);
+        return;
+      }
       const payoutHit = e.target.closest && e.target.closest(".payout");
       if (payoutHit && inInteractiveSurface(payoutHit)) {
         const fromPayout = e.relatedTarget;
@@ -34946,6 +35689,14 @@ let CS77_FILTER_LOW_REP = 20;
         if (!toArrow || !arrow.contains(toArrow)) arrow.setAttribute("data-vote-left", "1");
       }
       const panel = votersPanelNode;
+      const zapHit = e.target.closest && e.target.closest(".zap-stat-btn");
+      if (zapHit) {
+        const toZap = e.relatedTarget;
+        if (toZap && zapHit.contains(toZap)) return;
+        if (toZap && zapTipsPanelNode && zapTipsPanelNode.contains(toZap)) return;
+        scheduleHideZapTips(e);
+        return;
+      }
       const payoutHit = e.target.closest && e.target.closest(".payout");
       if (payoutHit) {
         const toPayout = e.relatedTarget;
@@ -35077,7 +35828,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapChoices) {
       zapChoices.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-zap-amount]");
-        if (!btn || zapState.pending) return;
+        if (!btn || zapFormLocked()) return;
         const amount = Number(btn.getAttribute("data-zap-amount"));
         if (!(amount > 0)) return;
         const asset = zapAssetName(zapState.asset);
@@ -35096,6 +35847,7 @@ let CS77_FILTER_LOW_REP = 20;
     const zapCustom = $("#zapCustom");
     if (zapCustom) {
       zapCustom.addEventListener("input", () => {
+        if (zapFormLocked()) return;
         const asset = zapAssetName(zapState.asset);
         zapState.custom[asset] = zapCustom.value;
         const parsed = zapParsedFieldAmount(asset, zapCustom.value);
@@ -35119,6 +35871,7 @@ let CS77_FILTER_LOW_REP = 20;
     const zapNote = $("#zapNote");
     if (zapNote) {
       zapNote.addEventListener("input", () => {
+        if (zapFormLocked()) return;
         const asset = zapAssetName(zapState.asset);
         zapState.noteEdited[asset] = true;
         zapState.note[asset] = zapNote.value;
