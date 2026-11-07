@@ -147,6 +147,7 @@ let CS77_FILTER_LOW_REP = 20;
   let zapHttp = null;
   const zapState = {
     author: "",
+    permlink: "",
     asset: "ln",
     lnAddress: "",
     lnStatus: "missing",
@@ -19231,12 +19232,13 @@ let CS77_FILTER_LOW_REP = 20;
     openLoadedProfileZap({ fromHistory: true, author: author });
   }
 
+  // username is the hive account to pay. permlink may be null or empty.
+  // A post permlink is stored and not used until post zaps are wired.
   // wallet is posting profile.wallet, or null when the user has no Lightning address.
   // loadWallet true reads that object from the chain. false uses wallet as given.
-  function openZapDialog(wallet, loadWallet, opts) {
+  function openZapDialog(username, permlink, wallet, loadWallet, opts) {
     const fromHistory = Boolean(opts && opts.fromHistory);
-    const hinted = opts && opts.author ? String(opts.author) : "";
-    const author = String(fromHistory ? hinted || profileState.author : profileState.author || "")
+    const author = String(username || "")
       .replace(/^@/, "")
       .trim()
       .toLowerCase();
@@ -19247,6 +19249,7 @@ let CS77_FILTER_LOW_REP = 20;
     stopZapHttp();
     const fetchWallet = loadWallet !== false;
     zapState.author = author;
+    zapState.permlink = permlink == null ? "" : String(permlink).trim();
     zapState.asset = "ln";
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
@@ -19275,9 +19278,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function openLoadedProfileZap(opts) {
+    const hinted = opts && opts.author ? String(opts.author) : "";
+    const username = hinted || profileState.author || "";
     const profile = profileState.profile;
-    if (profile && profile.walletLoaded) openZapDialog(profileReceiveWallet(profile), false, opts);
-    else openZapDialog(null, true, opts);
+    if (profile && profile.walletLoaded) openZapDialog(username, null, profileReceiveWallet(profile), false, opts);
+    else openZapDialog(username, null, null, true, opts);
   }
 
   async function loadZapLightning(author, gen) {
