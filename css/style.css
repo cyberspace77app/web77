@@ -4368,16 +4368,6 @@ a.tag:hover {
   }
 }
 
-.content-more-delete {
-  color: var(--red-bright);
-}
-
-.content-more-delete:hover,
-.content-more-delete:focus-visible {
-  color: var(--red-bright);
-  text-shadow: var(--glow-red);
-}
-
 #contentDeleteStatus {
   margin-top: 0;
 }
