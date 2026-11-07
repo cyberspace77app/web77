@@ -1415,6 +1415,10 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   text-shadow: var(--glow-red);
 }
 
+.vote-count-btn[data-vote-dir="down"]:focus-visible {
+  outline-color: var(--red-bright);
+}
+
 .vote-count-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
@@ -1559,8 +1563,12 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 }
 
 .downvote-btn.stat-pill.is-voted,
-.downvote-btn.stat-pill.is-voted:hover {
+.downvote-btn.stat-pill.is-voted:hover,
+.vote-count-btn.stat-pill[data-vote-dir="down"].is-voted,
+.vote-count-btn.stat-pill[data-vote-dir="down"].is-voted:hover {
   border-color: var(--red-bright);
+  color: var(--red-bright);
+  text-shadow: var(--glow-red);
 }
 
 .vote-btn.is-rest:not(.is-confirming),
@@ -1574,8 +1582,12 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 .vote-btn.stat-pill.is-rest:not(.is-confirming),
 .vote-btn.stat-pill.is-rest:not(.is-confirming):hover,
 .downvote-btn.stat-pill.is-rest:not(.is-confirming),
-.downvote-btn.stat-pill.is-rest:not(.is-confirming):hover {
+.downvote-btn.stat-pill.is-rest:not(.is-confirming):hover,
+.vote-count-btn.stat-pill[data-vote-dir="down"].is-rest,
+.vote-count-btn.stat-pill[data-vote-dir="down"].is-rest:hover {
   border-color: var(--border);
+  color: inherit;
+  text-shadow: none;
 }
 
 .vote-count {

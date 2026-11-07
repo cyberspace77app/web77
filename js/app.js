@@ -1510,6 +1510,12 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="content-more-item content-more-cross" role="menuitem">Cross post</button>`;
   }
 
+  function downvoteMenuItemHtml(node) {
+    const downvoted = Boolean(node && node.author && voteView(node).sign === -1);
+    const label = downvoted ? "Remove downvote" : "Downvote";
+    return `<button type="button" class="content-more-item content-more-downvote" role="menuitem">${label}</button>`;
+  }
+
   function contentMoreHtml(author, permlink, kind, children, offerCrossPost, node) {
     const name = String(author || "").replace(/^@/, "");
     const link = String(permlink || "");
@@ -1527,6 +1533,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (profileOffer) items.push(pinMenuItemHtml(profileOffer));
     }
     if (offerCrossPost) items.push(crossPostItemHtml());
+    items.push(downvoteMenuItemHtml(node));
     items.push(
       `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
       `<button type="button" class="content-more-item content-more-embed" role="menuitem">Embed</button>`,
@@ -1595,8 +1602,83 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
-  function plainVoteHtml(author, permlink, upCount, downCount) {
-    return `<span class="vote-counts" data-vote-author="${author}" data-vote-permlink="${permlink}"><span class="vote-count vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up">▲ <span class="vote-n">${upCount}</span></span><span class="vote-count downvote-count vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down">▼ <span class="downvote-n">${downCount}</span></span></span>`;
+  // Hive dust line. Downvote pills stay hidden until the downvotes are worth more than this.
+  const DOWNVOTE_SHOW_HBD = 0.02;
+  // Used only when this post's payout is 0, so its own rshares cannot be priced.
+  // About 0.02 HBD at recent reward-fund rates. A priced post replaces it.
+  const DOWNVOTE_RSHARE_FLOOR = 320000000000;
+  let hbdPerRshare = 0;
+  // Posts whose downvote pill was opened from the more menu and should stay for hover.
+  const downvotePinned = new Set();
+  // Posts whose pill is showing only while the downvote slider is open.
+  const downvotePreview = new Set();
+
+  function downvoteRsharesAbs(post) {
+    const votes = post && post.active_votes;
+    if (!Array.isArray(votes)) return 0;
+    let neg = 0;
+    for (let i = 0; i < votes.length; i++) {
+      const rs = Number(votes[i] && votes[i].rshares);
+      if (Number.isFinite(rs) && rs < 0) neg -= rs;
+    }
+    return neg;
+  }
+
+  function learnHbdPerRshare() {
+    if (hbdPerRshare > 0) return hbdPerRshare;
+    const consider = (post) => {
+      if (!post || hbdPerRshare > 0) return;
+      const net = Number(post.net_rshares);
+      const payout = payoutAmount(post);
+      if (net > 0 && payout > 0) hbdPerRshare = payout / net;
+    };
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      consider(cardDisplayPost(items[i]));
+      if (hbdPerRshare > 0) return hbdPerRshare;
+    }
+    consider(currentPost);
+    return hbdPerRshare;
+  }
+
+  // Priced from rshares already on the post: payout * |down rshares| / net rshares.
+  function downvoteValueNotable(post) {
+    const neg = downvoteRsharesAbs(post);
+    if (neg <= 0) return false;
+    const payout = payoutAmount(post);
+    let net = Number(post && post.net_rshares);
+    if ((!Number.isFinite(net) || net <= 0) && payout > 0) {
+      const summed = totalVoteRshares(post.active_votes);
+      if (summed > 0) net = summed;
+    }
+    if (Number.isFinite(net) && net > 0 && payout > 0) {
+      hbdPerRshare = payout / net;
+      return (payout * neg) / net > DOWNVOTE_SHOW_HBD;
+    }
+    if (!(hbdPerRshare > 0)) learnHbdPerRshare();
+    if (hbdPerRshare > 0) return neg * hbdPerRshare > DOWNVOTE_SHOW_HBD;
+    return neg >= DOWNVOTE_RSHARE_FLOOR;
+  }
+
+  function downvotePillWanted(post, downCount) {
+    const key = post && post.author && post.permlink ? postKey(post.author, post.permlink) : "";
+    if (key && downvotePreview.has(key)) return true;
+    if (key && downvotePinned.has(key) && downCount > 0) return true;
+    return downvoteValueNotable(post);
+  }
+
+  function downvoteCountLabel(n) {
+    return "▼ " + n;
+  }
+
+  function readDownvoteCount(el) {
+    const match = String(el && el.textContent || "").match(/\d+/);
+    return match ? Number(match[0]) : 0;
+  }
+
+  function plainVoteHtml(author, permlink, upCount, downCount, showDown, sign) {
+    const downHidden = showDown ? "" : " hidden";
+    return `<span class="vote-counts" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-sign="${sign || 0}"><span class="vote-count vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up">▲ <span class="vote-n">${upCount}</span></span><span class="vote-count downvote-count vote-hit downvote-n" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down"${downHidden}>${downvoteCountLabel(downCount)}</span></span>`;
   }
 
   function voteSliderHtml(kind, author, permlink, pct, downPct) {
@@ -1611,8 +1693,9 @@ let CS77_FILTER_LOW_REP = 20;
     const downCount = viewState.downCount;
     const author = HiveMd.escapeHtml(post.author);
     const permlink = HiveMd.escapeHtml(post.permlink);
+    const showDown = downvotePillWanted(post, downCount);
     if (variant === "plain" || (!user && variant !== "pills")) {
-      return plainVoteHtml(author, permlink, upCount, downCount);
+      return plainVoteHtml(author, permlink, upCount, downCount, showDown, viewState.sign);
     }
     const kind = voteKindFromPost(post);
     const pct = upvoteStartPercent(kind);
@@ -1622,20 +1705,19 @@ let CS77_FILTER_LOW_REP = 20;
     const upClasses = ["vote-btn", pill, viewState.sign === 1 ? "is-voted" : "", user && viewState.pending ? "is-pending" : ""]
       .filter(Boolean)
       .join(" ");
-    const downClasses = ["downvote-btn", pill, viewState.sign === -1 ? "is-voted" : "", user && viewState.pending ? "is-pending" : ""]
-      .filter(Boolean)
-      .join(" ");
     const upLabel = viewState.sign === 1 ? "Remove upvote" : "Upvote";
-    const downLabel = viewState.sign === -1 ? "Remove downvote" : "Downvote";
     const sliders = user ? voteSliderHtml(kind, author, permlink, pct, downPct) : "";
     const upBtn = `<button type="button" class="${upClasses}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-key="${author}/${permlink}" data-vote-kind="${kind}" data-vote-dir="up" aria-pressed="${viewState.sign === 1 ? "true" : "false"}" aria-label="${upLabel}" ${pending}>▲</button>`;
-    const downBtn = `<button type="button" class="${downClasses}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-key="${author}/${permlink}" data-vote-kind="${kind}" data-vote-dir="down" aria-pressed="${viewState.sign === -1 ? "true" : "false"}" aria-label="${downLabel}" ${pending}>▼</button>`;
+    const downHidden = showDown ? "" : " hidden";
+    const downVoted = viewState.sign === -1 ? " is-voted" : "";
+    const downPill = `<button type="button" class="vote-count-btn stat-pill vote-hit${downVoted}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down" aria-label="Downvotes"${downHidden}><span class="downvote-n">${downvoteCountLabel(downCount)}</span></button>`;
+    const signAttr = ` data-vote-sign="${viewState.sign || 0}"`;
+    const pendingAttr = user && viewState.pending ? ` data-vote-pending="1"` : "";
     if (variant === "pills") {
-      return `<span class="vote-wrap vote-pills" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"><span class="vote-pair">${upBtn}<button type="button" class="vote-count-btn stat-pill vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up" aria-label="Upvotes"><span class="vote-n">${upCount}</span></button></span><span class="vote-pair">${downBtn}<button type="button" class="vote-count-btn stat-pill vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down" aria-label="Downvotes"><span class="downvote-n">${downCount}</span></button></span>${sliders}</span>`;
+      return `<span class="vote-wrap vote-pills" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}><span class="vote-pair">${upBtn}<button type="button" class="vote-count-btn stat-pill vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up" aria-label="Upvotes"><span class="vote-n">${upCount}</span></button></span>${downPill}${sliders}</span>`;
     }
     const upCountHtml = `▲ <span class="vote-n vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up">${upCount}</span>`;
-    const downCountHtml = `▼ <span class="downvote-n vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down">${downCount}</span>`;
-    return `<span class="vote-wrap" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}">${upBtn.replace("▲", upCountHtml)}${downBtn.replace("▼", downCountHtml)}${sliders}</span>`;
+    return `<span class="vote-wrap" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}>${upBtn.replace("▲", upCountHtml)}${downPill}${sliders}</span>`;
   }
 
   function voteRootsFor(author, permlink) {
@@ -1686,22 +1768,148 @@ let CS77_FILTER_LOW_REP = 20;
     else if (wasVoted) restVoteColor(btn);
   }
 
+  function shownDownCount(author, permlink) {
+    const roots = voteRootsFor(author, permlink);
+    for (let i = 0; i < roots.length; i++) {
+      const el = roots[i].querySelector(".downvote-n");
+      if (el) return readDownvoteCount(el);
+    }
+    const post = displayedContent(author, permlink) || findContentNode(author, permlink);
+    if (post) return voteView(post).downCount;
+    return 0;
+  }
+
+  function syncDownvotePillVote(pill, downvoted) {
+    if (!pill) return;
+    const wasVoted = pill.classList.contains("is-voted");
+    pill.classList.toggle("is-voted", downvoted);
+    if (downvoted) releaseVoteColor(pill);
+    else if (wasVoted) restVoteColor(pill);
+  }
+
+  function syncDownvotePills(author, permlink, downCount) {
+    const key = postKey(author, permlink);
+    const count = downCount == null ? shownDownCount(author, permlink) : downCount;
+    if (count <= 0) downvotePinned.delete(key);
+    const post = displayedContent(author, permlink) || findContentNode(author, permlink);
+    const show =
+      downvotePreview.has(key) ||
+      (downvotePinned.has(key) && count > 0) ||
+      downvoteValueNotable(post);
+    voteRootsFor(author, permlink).forEach((root) => {
+      const pill = root.querySelector('.vote-count-btn[data-vote-dir="down"]');
+      if (pill) pill.hidden = !show;
+      const plain = root.querySelector(".downvote-count");
+      if (plain) plain.hidden = !show;
+    });
+  }
+
+  function syncDownvoteMenu(author, permlink, downvoted, pending) {
+    const label = downvoted ? "Remove downvote" : "Downvote";
+    document.querySelectorAll(".content-more").forEach((more) => {
+      if (
+        !samePostId(
+          {
+            author: more.getAttribute("data-author"),
+            permlink: more.getAttribute("data-permlink"),
+          },
+          author,
+          permlink
+        )
+      ) {
+        return;
+      }
+      const menus = [];
+      const inline = more.querySelector(".content-more-menu");
+      if (inline) menus.push(inline);
+      if (more.classList.contains("is-open")) {
+        const portaled = document.querySelector("body > .content-more-menu");
+        if (portaled && menus.indexOf(portaled) < 0) menus.push(portaled);
+      }
+      menus.forEach((menu) => {
+        const item = menu.querySelector(".content-more-downvote");
+        if (!item) return;
+        item.textContent = label;
+        item.disabled = Boolean(pending);
+      });
+    });
+  }
+
+  function finishDownvotePreview(author, permlink) {
+    const key = postKey(author, permlink);
+    if (!downvotePreview.has(key)) return;
+    const count = shownDownCount(author, permlink);
+    downvotePreview.delete(key);
+    if (count > 0) downvotePinned.add(key);
+    syncDownvotePills(author, permlink, count);
+  }
+
+  function downvoteWrapFor(author, permlink) {
+    const wraps = voteWrapsFor(author, permlink);
+    const prefer = [".post-stats-bar", ".card-stats", ".comment-actions"];
+    for (let i = 0; i < prefer.length; i++) {
+      for (let j = 0; j < wraps.length; j++) {
+        if (wraps[j].closest(prefer[i])) return wraps[j];
+      }
+    }
+    return wraps[0] || null;
+  }
+
+  function openDownvoteFromMore(moreRoot) {
+    const author = moreRoot && moreRoot.getAttribute("data-author");
+    const permlink = moreRoot && moreRoot.getAttribute("data-permlink");
+    if (!author || !permlink) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
+    const post = displayedContent(author, permlink) || findContentNode(author, permlink) || {
+      author: author,
+      permlink: permlink,
+    };
+    const state = voteView(post);
+    if (state.pending) return;
+    if (state.sign === -1) {
+      hideVoteSlider();
+      queueVote(author, permlink, 0);
+      return;
+    }
+    const wrap = downvoteWrapFor(author, permlink);
+    const pill = wrap && wrap.querySelector('.vote-count-btn[data-vote-dir="down"]');
+    if (!wrap || !pill || !wrap.querySelector(".downvote-slider-panel")) return;
+    downvotePreview.add(postKey(author, permlink));
+    syncDownvotePills(author, permlink, state.downCount);
+    showDownvoteSlider(pill);
+  }
+
   function syncVoteButtons(author, permlink, state) {
     const pending = Boolean(state.pending);
     const upvoted = state.sign === 1;
     const downvoted = state.sign === -1;
     voteRootsFor(author, permlink).forEach((root) => {
+      root.setAttribute("data-vote-sign", String(state.sign || 0));
+      if (pending) root.setAttribute("data-vote-pending", "1");
+      else root.removeAttribute("data-vote-pending");
       const upBtn = root.querySelector(".vote-btn");
       const downBtn = root.querySelector(".downvote-btn");
+      const downPill = root.querySelector('.vote-count-btn[data-vote-dir="down"]');
       syncVoteArrow(upBtn, upvoted, pending, "Remove upvote", "Upvote");
       syncVoteArrow(downBtn, downvoted, pending, "Remove downvote", "Downvote");
+      syncDownvotePillVote(downPill, downvoted);
       root.querySelectorAll(".vote-n").forEach((el) => {
         el.textContent = String(state.upCount);
       });
       root.querySelectorAll(".downvote-n").forEach((el) => {
-        el.textContent = String(state.downCount);
+        el.textContent = downvoteCountLabel(state.downCount);
       });
     });
+    syncDownvotePills(author, permlink, state.downCount);
+    syncDownvoteMenu(author, permlink, downvoted, pending);
     const replies = liveReplyCount(author, permlink);
     if (replies == null) {
       const voted = displayedContent(author, permlink) || { author: author, permlink: permlink };
@@ -2014,6 +2222,13 @@ let CS77_FILTER_LOW_REP = 20;
   function hideVoteSlider() {
     hideVoteVoters();
     clearUpvoteConfirmStyle();
+    let closingDown = null;
+    if (openSlider && openSlider.mode === "down" && openSlider.wrap) {
+      closingDown = {
+        author: openSlider.wrap.getAttribute("data-vote-author"),
+        permlink: openSlider.wrap.getAttribute("data-vote-permlink"),
+      };
+    }
     if (openSlider) {
       const { wrap, panel } = openSlider;
       const active = document.activeElement;
@@ -2030,6 +2245,9 @@ let CS77_FILTER_LOW_REP = 20;
       wrap.classList.remove("is-open");
     });
     hideReblogConfirm();
+    if (closingDown && closingDown.author && closingDown.permlink) {
+      finishDownvotePreview(closingDown.author, closingDown.permlink);
+    }
   }
 
   function hideVoteUi() {
@@ -3198,18 +3416,25 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (down == null) {
         const downN = root.querySelector(".downvote-n");
-        if (downN) down = Number(downN.textContent) || 0;
+        if (downN) down = readDownvoteCount(downN);
       }
       if (sign == null) {
-        const upBtn = root.querySelector(".vote-btn");
-        const downBtn = root.querySelector(".downvote-btn");
-        if (upBtn || downBtn) {
-          sign =
-            upBtn && upBtn.classList.contains("is-voted")
-              ? 1
-              : downBtn && downBtn.classList.contains("is-voted")
-                ? -1
-                : 0;
+        const attr = root.getAttribute("data-vote-sign");
+        if (attr != null && attr !== "") {
+          sign = Number(attr) || 0;
+        } else {
+          const upBtn = root.querySelector(".vote-btn");
+          const downBtn = root.querySelector(".downvote-btn");
+          const downPill = root.querySelector('.vote-count-btn[data-vote-dir="down"]');
+          if (upBtn || downBtn || downPill) {
+            sign =
+              upBtn && upBtn.classList.contains("is-voted")
+                ? 1
+                : (downBtn && downBtn.classList.contains("is-voted")) ||
+                    (downPill && downPill.classList.contains("is-voted"))
+                  ? -1
+                  : 0;
+          }
         }
       }
     }
@@ -3645,13 +3870,23 @@ let CS77_FILTER_LOW_REP = 20;
       (openSlider && openSlider.wrap) ||
       confirmBtn.closest(".vote-wrap") ||
       voteWrapsFor(author, permlink)[0];
-    const downBtn = wrap && wrap.querySelector(".downvote-btn");
-    const readyBtn = downBtn || confirmBtn;
-    if (!(await ensureVoteReady(readyBtn))) return;
+    if (wrap && wrap.getAttribute("data-vote-pending") === "1") return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
     const percent = storeDownvoteWeight(
-      currentDownvotePercent(downBtn || confirmBtn),
+      currentDownvotePercent(confirmBtn),
       voteKindFromEl(confirmBtn)
     );
+    const key = postKey(author, permlink);
+    downvotePinned.add(key);
+    downvotePreview.delete(key);
     hideVoteSlider();
     queueVote(author, permlink, -percent);
   }
@@ -17782,7 +18017,7 @@ let CS77_FILTER_LOW_REP = 20;
       el.textContent = String(viewState.upCount);
     });
     article.querySelectorAll(".downvote-n").forEach((el) => {
-      el.textContent = String(viewState.downCount);
+      el.textContent = downvoteCountLabel(viewState.downCount);
     });
     article.querySelectorAll(".payout").forEach((el) => {
       applyPayoutEl(el, root);
@@ -20165,7 +20400,10 @@ let CS77_FILTER_LOW_REP = 20;
   function insertPinMenuItem(menu, html) {
     const existing = menu.querySelector(".content-more-pin");
     if (existing) existing.remove();
-    const before = menu.querySelector(".content-more-cross") || menu.querySelector(".content-more-copy");
+    const before =
+      menu.querySelector(".content-more-cross") ||
+      menu.querySelector(".content-more-downvote") ||
+      menu.querySelector(".content-more-copy");
     if (before) before.insertAdjacentHTML("beforebegin", html);
     else menu.insertAdjacentHTML("beforeend", html);
   }
@@ -31997,12 +32235,15 @@ let CS77_FILTER_LOW_REP = 20;
         }
         if (rec.downCount != null) {
           voteRoot.querySelectorAll(".downvote-n").forEach((el) => {
-            el.textContent = String(rec.downCount);
+            el.textContent = downvoteCountLabel(rec.downCount);
           });
         }
         if (rec.voteSign == null) return;
+        voteRoot.setAttribute("data-vote-sign", String(rec.voteSign || 0));
+        voteRoot.removeAttribute("data-vote-pending");
         const up = voteRoot.querySelector(".vote-btn");
         const down = voteRoot.querySelector(".downvote-btn");
+        const downPill = voteRoot.querySelector('.vote-count-btn[data-vote-dir="down"]');
         if (up) {
           up.classList.toggle("is-voted", rec.voteSign === 1);
           up.classList.remove("is-pending");
@@ -32017,7 +32258,12 @@ let CS77_FILTER_LOW_REP = 20;
           down.setAttribute("aria-pressed", rec.voteSign === -1 ? "true" : "false");
           down.setAttribute("aria-label", rec.voteSign === -1 ? "Remove downvote" : "Downvote");
         }
+        syncDownvotePillVote(downPill, rec.voteSign === -1);
       });
+      if (rec.author && rec.permlink) {
+        syncDownvotePills(rec.author, rec.permlink, rec.downCount);
+        if (rec.voteSign != null) syncDownvoteMenu(rec.author, rec.permlink, rec.voteSign === -1, false);
+      }
     }
     if (rec.payout != null && Number.isFinite(Number(rec.payout))) {
       scope.querySelectorAll(".payout").forEach((el) => {
@@ -34287,7 +34533,8 @@ let CS77_FILTER_LOW_REP = 20;
         const embedItem = profileMoreEl.closest(".content-more-embed");
         const deleteItem = profileMoreEl.closest(".content-more-delete");
         const crossItem = profileMoreEl.closest(".content-more-cross");
-        if (editItem || copyItem || embedItem || deleteItem || crossItem) {
+        const downItem = profileMoreEl.closest(".content-more-downvote");
+        if (editItem || copyItem || embedItem || deleteItem || crossItem || downItem) {
           e.preventDefault();
           const root = document.querySelector(".content-more.is-open");
           const deleteAuthor = root && root.getAttribute("data-author");
@@ -34295,6 +34542,7 @@ let CS77_FILTER_LOW_REP = 20;
           const deleteKind = root && root.getAttribute("data-content-kind");
           closeContentMore();
           if (root && deleteItem) openContentDelete(deleteAuthor, deletePermlink, deleteKind);
+          else if (root && downItem) openDownvoteFromMore(root);
           else if (root && editItem) editContentFromMore(root);
           else if (root && crossItem) openCrossPost(deleteAuthor, deletePermlink);
           else if (root && embedItem) openEmbedDialog(deleteAuthor, deletePermlink, deleteKind);
@@ -34665,7 +34913,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
 
     document.addEventListener("pointerover", (e) => {
-      const arrow = e.target.closest && e.target.closest(".vote-btn, .downvote-btn");
+      const arrow = e.target.closest && e.target.closest('.vote-btn, .downvote-btn, .vote-count-btn[data-vote-dir="down"]');
       if (arrow && arrow.getAttribute("data-vote-left") === "1") {
         const fromArrow = e.relatedTarget;
         if (!fromArrow || !arrow.contains(fromArrow)) releaseVoteColor(arrow);
@@ -34692,7 +34940,7 @@ let CS77_FILTER_LOW_REP = 20;
       onVoteHitEnter(hit);
     });
     document.addEventListener("pointerout", (e) => {
-      const arrow = e.target.closest && e.target.closest(".vote-btn, .downvote-btn");
+      const arrow = e.target.closest && e.target.closest('.vote-btn, .downvote-btn, .vote-count-btn[data-vote-dir="down"]');
       if (arrow && arrow.classList.contains("is-rest") && arrow.getAttribute("data-vote-rest-armed") === "1") {
         const toArrow = e.relatedTarget;
         if (!toArrow || !arrow.contains(toArrow)) arrow.setAttribute("data-vote-left", "1");
