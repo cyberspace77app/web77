@@ -18635,7 +18635,7 @@ let CS77_FILTER_LOW_REP = 20;
   function zapMarkSvg() {
     return (
       '<svg class="zap-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">' +
-      '<path fill="currentColor" d="M18.7 2.2 9.8 14.3h5.4L11.2 29.8 23.6 12.7h-6L18.7 2.2z"/>' +
+      '<path fill="currentColor" d="M18.6 2 9 16.4h5.6L12.4 29.6 23.4 15.2h-5.6L18.6 2z"/>' +
       "</svg>"
     );
   }
