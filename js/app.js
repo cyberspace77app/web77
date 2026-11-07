@@ -2403,10 +2403,11 @@ let CS77_FILTER_LOW_REP = 20;
     panel.style.maxHeight = "";
   }
 
-  // Upvotes and downvotes fill the phone. The reblog list stays the anchored
-  // tooltip, including when List opens it, and does not add a history entry.
+  // Upvote and downvote lists stay the anchored tooltip on a phone, the same
+  // as desktop, and do not push a history entry. The full-viewport sheet is
+  // off for now. The reblog list already used this path.
   function votersSheetWanted() {
-    return isMobileViewport() && !(openVoters && openVoters.kind === "reblog");
+    return false;
   }
 
   function rememberVotersHistory(fromHistory) {
