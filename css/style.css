@@ -4375,6 +4375,11 @@ a.tag:hover {
   filter: drop-shadow(0 0 7px rgba(255, 225, 74, 0.95));
 }
 
+.profile-zap-btn.is-zap-strobe:not(.is-zap-flash),
+.profile-zap-btn.has-lightning.is-zap-strobe:not(.is-zap-flash) {
+  visibility: hidden;
+}
+
 .profile-more-btn:focus-visible,
 .profile-bitcoin-btn:focus-visible,
 .profile-zap-btn:focus-visible {
