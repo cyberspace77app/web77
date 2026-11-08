@@ -4298,7 +4298,6 @@ a.tag:hover {
   display: block;
   width: 1.65rem;
   height: 1.65rem;
-  filter: drop-shadow(0 0 2px rgba(215, 215, 215, 0.55));
 }
 
 .profile-zap-btn:hover,
@@ -4310,11 +4309,8 @@ a.tag:hover {
   color: var(--yellow);
 }
 
-.profile-zap-btn.is-open .zap-mark {
-  filter: drop-shadow(0 0 5px rgba(215, 215, 215, 0.85));
-}
-
-.profile-zap-btn:hover .zap-mark {
+.profile-zap-btn:hover .zap-mark,
+.profile-zap-btn.has-lightning:hover .zap-mark {
   filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
 }
 
@@ -4322,21 +4318,8 @@ a.tag:hover {
   color: var(--yellow);
 }
 
-.profile-zap-btn.has-lightning .zap-mark {
-  filter: drop-shadow(0 0 2px rgba(255, 225, 74, 0.8));
-}
-
-.profile-zap-btn.has-lightning:hover .zap-mark,
-.profile-zap-btn.has-lightning.is-open .zap-mark {
-  filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
-}
-
 .profile-zap-btn.is-zapped {
   color: var(--yellow);
-}
-
-.profile-zap-btn.is-zapped .zap-mark {
-  filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
 }
 
 .profile-zap-btn.is-zapping,
