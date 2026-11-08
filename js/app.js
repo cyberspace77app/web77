@@ -20285,6 +20285,11 @@ let CS77_FILTER_LOW_REP = 20;
   const ZAP_TIPS_CACHE_MS = 60000;
   const ZAP_HISTORY_LIMIT = 300;
   const ZAP_TIPS_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
+  // A downvote from the zapped author or either of these accounts hides the zap
+  // once that vote alone is worth more than the usual 0.02 HBD dust line.
+  const ZAP_MOD_ACCOUNTS = { cyberspace77: true, vikisecrets: true };
+  // Other downvotes hide a zap only when they are also at least one fifth of the upvote rshares.
+  const ZAP_DOWNVOTE_UPVOTE_RATIO = 5;
 
   function zapContentKey(author, permlink) {
     const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
@@ -20433,6 +20438,71 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  function zapMentionName(body) {
+    const head = String(body || "").replace(/^!zapped\b/i, "").slice(0, 96);
+    const match = /@([a-z][a-z0-9.-]{1,15})(?![a-z0-9.-])/i.exec(head);
+    if (!match) return "";
+    const name = match[1].toLowerCase().replace(/[.-]+$/, "");
+    return hiveAccountNameOk(name) ? name : "";
+  }
+
+  function zapCommentVoteTotals(node, contentAuthor) {
+    const votes = node && node.active_votes;
+    if (!Array.isArray(votes)) return null;
+    const trusted = Object.assign({}, ZAP_MOD_ACCOUNTS);
+    const author = String(contentAuthor || "").replace(/^@/, "").toLowerCase();
+    if (author) trusted[author] = true;
+    let up = 0;
+    let down = 0;
+    let trustedDown = 0;
+    for (let i = 0; i < votes.length; i++) {
+      const vote = votes[i];
+      const rs = Number(vote && vote.rshares);
+      if (!Number.isFinite(rs) || rs === 0) continue;
+      if (rs > 0) {
+        up += rs;
+        continue;
+      }
+      const abs = -rs;
+      down += abs;
+      const voter = String((vote && vote.voter) || "").replace(/^@/, "").toLowerCase();
+      if (trusted[voter]) trustedDown += abs;
+    }
+    return { up: up, down: down, trustedDown: trustedDown };
+  }
+
+  // Prices rshares already on the comment. Same 0.02 HBD line as the downvote pill.
+  function zapRsharesNotable(node, absRshares) {
+    if (!(absRshares > 0)) return false;
+    const payout = payoutAmount(node);
+    let net = Number(node && node.net_rshares);
+    if ((!Number.isFinite(net) || net <= 0) && payout > 0) {
+      const summed = totalVoteRshares(node.active_votes);
+      if (summed > 0) net = summed;
+    }
+    if (Number.isFinite(net) && net > 0 && payout > 0) {
+      return (payout * absRshares) / net > DOWNVOTE_SHOW_HBD;
+    }
+    if (!(hbdPerRshare > 0)) learnHbdPerRshare();
+    if (hbdPerRshare > 0) return absRshares * hbdPerRshare > DOWNVOTE_SHOW_HBD;
+    return absRshares >= DOWNVOTE_RSHARE_FLOOR;
+  }
+
+  function zapDownvotesOutweigh(down, up) {
+    if (!(down > 0)) return false;
+    if (!(up > 0)) return true;
+    return down * ZAP_DOWNVOTE_UPVOTE_RATIO >= up;
+  }
+
+  // The payer is the comment author, and that same name is the @mention in the
+  // body. Downvotes come from active_votes on that comment: no extra API call.
+  function zapCommentDownvoted(node, contentAuthor) {
+    const totals = zapCommentVoteTotals(node, contentAuthor);
+    if (!totals) return false;
+    if (zapRsharesNotable(node, totals.trustedDown)) return true;
+    return zapRsharesNotable(node, totals.down) && zapDownvotesOutweigh(totals.down, totals.up);
+  }
+
   function zapCommentEntry(node, author, permlink) {
     if (!node || typeof node !== "object") return null;
     const body = String(node.body || "").trim();
@@ -20440,7 +20510,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (String(node.parent_author || "").replace(/^@/, "").toLowerCase() !== author) return null;
     if (String(node.parent_permlink || "") !== permlink) return null;
     const who = String(node.author || "").replace(/^@/, "").toLowerCase();
-    if (!who) return null;
+    if (!who || zapMentionName(body) !== who) return null;
+    if (isBlacklistedPost(node)) return null;
+    if (zapCommentDownvoted(node, author)) return null;
     const match = /([0-9][0-9,]*)\s+sats/i.exec(body);
     const sats = match ? Number(String(match[1]).replace(/,/g, "")) : 0;
     return {
@@ -20496,6 +20568,7 @@ let CS77_FILTER_LOW_REP = 20;
       else if (!Number.isFinite(oldestMs) || ms < oldestMs) oldestMs = ms;
       if (!tx || tx.to !== author || !tx.from || !tx.amount) continue;
       if (!memoTipsContent(tx.memo, author, permlink)) continue;
+      if (isBlacklistedUser(tx.from)) continue;
       entries.push({ who: tx.from, label: tx.amount, at: tx.at });
     }
     return {
