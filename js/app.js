@@ -176,8 +176,8 @@ let CS77_FILTER_LOW_REP = 20;
     lnAddress: "",
     lnStatus: "missing",
     pending: false,
-    selected: { ln: 21, hive: 1, hbd: 0.21 },
-    custom: { ln: "21", hive: "1", hbd: "0.21" },
+    selected: { ln: 21, hive: 1, hbd: 0.1 },
+    custom: { ln: "21", hive: "1", hbd: "0.10" },
     note: { ln: "", hive: "", hbd: "" },
     noteEdited: { ln: false, hive: false, hbd: false },
     invoice: "",
@@ -19393,19 +19393,16 @@ let CS77_FILTER_LOW_REP = 20;
     ln: [
       { amount: 21, emoji: "\u26A1" },
       { amount: 100, emoji: "\uD83D\uDC4D" },
-      { amount: 1000, emoji: "\uD83D\uDD25" },
-      { amount: 10000, emoji: "\uD83E\uDD29" },
+      { amount: 1000, emoji: "\uD83E\uDD29" },
     ],
     hive: [
       { amount: 1, emoji: "\u26A1" },
-      { amount: 21, emoji: "\uD83D\uDC4D" },
-      { amount: 100, emoji: "\uD83D\uDD25" },
-      { amount: 1000, emoji: "\uD83E\uDD29" },
+      { amount: 10, emoji: "\uD83D\uDC4D" },
+      { amount: 100, emoji: "\uD83E\uDD29" },
     ],
     hbd: [
-      { amount: 0.21, emoji: "\u26A1" },
+      { amount: 0.1, emoji: "\u26A1" },
       { amount: 1, emoji: "\uD83D\uDC4D" },
-      { amount: 5, emoji: "\uD83D\uDD25" },
       { amount: 10, emoji: "\uD83E\uDD29" },
     ],
   };
@@ -19673,6 +19670,7 @@ let CS77_FILTER_LOW_REP = 20;
   function zapPresetAmountText(asset, amount) {
     if (asset === "ln") return String(amount);
     const n = roundAsset(Number(amount), 3);
+    if (asset === "hbd" && Math.abs(n - 0.1) < 0.0001) return "0.10";
     if (Math.abs(n - Math.round(n)) < 0.0001) return String(Math.round(n));
     return n.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
   }
@@ -19703,6 +19701,7 @@ let CS77_FILTER_LOW_REP = 20;
   function zapLeadAmount(asset, amount) {
     if (asset === "ln") return formatGroupedNumber(amount, 0) + " sats";
     const rounded = roundAsset(amount, 3);
+    if (asset === "hbd" && Math.abs(rounded - 0.1) < 0.0001) return "0.10 hbd";
     const whole = Math.abs(rounded - Math.round(rounded)) < 0.0001;
     let text = formatGroupedNumber(rounded, whole ? 0 : 3);
     if (!whole) text = text.replace(/0+$/, "").replace(/\.$/, "");
@@ -19713,7 +19712,8 @@ let CS77_FILTER_LOW_REP = 20;
     return preset.emoji + " " + zapLeadAmount(asset, preset.amount);
   }
 
-  const ZAP_EMOJIS = ["\u26A1", "\uD83D\uDC4D", "\uD83D\uDD25", "\uD83E\uDD29"];
+  // Fire is no longer a choice. It stays so an older note still swaps its leading mark.
+  const ZAP_EMOJIS = ["\u26A1", "\uD83D\uDC4D", "\uD83E\uDD29", "\uD83D\uDD25"];
 
   // Below the next preset keeps the earlier emoji. Above the last keeps that emoji.
   function zapEmojiForAmount(asset, amount) {
@@ -20279,8 +20279,8 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
     zapState.pending = false;
-    zapState.selected = { ln: 21, hive: 1, hbd: 0.21 };
-    zapState.custom = { ln: "21", hive: "1", hbd: "0.21" };
+    zapState.selected = { ln: 21, hive: 1, hbd: 0.1 };
+    zapState.custom = { ln: "21", hive: "1", hbd: "0.10" };
     zapState.note = {
       ln: zapPresetNote(ZAP_PRESETS.ln[0]),
       hive: zapPresetNote(ZAP_PRESETS.hive[0]),
