@@ -182,7 +182,6 @@ let CS77_FILTER_LOW_REP = 20;
   const zappedContent = new Set();
   const zappedProfiles = new Set();
   const ZAP_SINGLE_TAP_KEY = "cs77_zap_single_tap";
-  let zapSettingsNoteCustom = false;
   let zapPulseTimer = 0;
   const zapTipLocal = new Map();
   let zapTipsPanelNode = null;
@@ -19858,51 +19857,6 @@ let CS77_FILTER_LOW_REP = 20;
     return unit === "hive" || unit === "hbd" ? unit : "ln";
   }
 
-  function zapSettingsDefaultNote(unit, amountText) {
-    const asset = zapSingleTapAsset(unit);
-    let amount = null;
-    if (asset === "ln") amount = parseZapSats(amountText);
-    else {
-      const parsed = roundAsset(parseAmountInput(amountText), 3);
-      if (parsed >= 0.001) amount = parsed;
-    }
-    if (amount == null) {
-      const preset = (ZAP_PRESETS[asset] || [])[0];
-      amount = preset ? preset.amount : 0;
-    }
-    return zapNoteFromEmoji(zapEmojiForAmount(asset, amount));
-  }
-
-  function zapSettingsUnitValue() {
-    const unit = $("#zapSingleTapUnit");
-    const value = unit ? unit.value : "sats";
-    return value === "hive" || value === "hbd" ? value : "sats";
-  }
-
-  function zapSettingsAmountValue() {
-    const amount = $("#zapSingleTapAmount");
-    return amount ? String(amount.value || "").trim() : "";
-  }
-
-  function refreshZapSettingsNote() {
-    if (zapSettingsNoteCustom) return;
-    const note = $("#zapSingleTapNote");
-    if (!note) return;
-    const next = zapSettingsDefaultNote(zapSettingsUnitValue(), zapSettingsAmountValue());
-    if (note.value !== next) note.value = next;
-  }
-
-  function onZapSettingsNoteInput() {
-    const note = $("#zapSingleTapNote");
-    if (!note) return;
-    const text = String(note.value || "").trim();
-    if (!text) {
-      zapSettingsNoteCustom = false;
-      return;
-    }
-    zapSettingsNoteCustom = text !== zapSettingsDefaultNote(zapSettingsUnitValue(), zapSettingsAmountValue());
-  }
-
   function zapSingleTapAmountError(amount, unit) {
     if (unit === "hive" || unit === "hbd") {
       const parsed = roundAsset(parseAmountInput(amount), 3);
@@ -19927,13 +19881,7 @@ let CS77_FILTER_LOW_REP = 20;
       amount.value = prefs.amount;
       amount.inputMode = prefs.unit === "sats" ? "numeric" : "decimal";
     }
-    const savedNote = String(prefs.note || "").trim();
-    zapSettingsNoteCustom = Boolean(prefs.noteEdited && savedNote);
-    if (note) {
-      if (zapSettingsNoteCustom) note.value = savedNote;
-      else if (prefs.noteEdited) note.value = "";
-      else note.value = zapSettingsDefaultNote(prefs.unit, prefs.amount);
-    }
+    if (note) note.value = String(prefs.note || "").trim();
   }
 
   function commitZapSingleTapFromDialog() {
@@ -19952,13 +19900,12 @@ let CS77_FILTER_LOW_REP = 20;
       return false;
     }
     const note = String(noteEl.value || "").trim().slice(0, 250);
-    const noteEdited = note !== zapSettingsDefaultNote(unit, amount);
     writeZapSingleTap({
       enabled: enabled,
       amount: amount,
       unit: unit,
-      note: noteEdited ? note : "",
-      noteEdited: noteEdited,
+      note: note,
+      noteEdited: Boolean(note),
     });
     return true;
   }
@@ -19980,8 +19927,9 @@ let CS77_FILTER_LOW_REP = 20;
         zapState.selected[asset] = amount;
       }
     }
-    if (prefs.noteEdited) {
-      zapState.note[asset] = String(prefs.note || "").trim().slice(0, 250);
+    const savedNote = String(prefs.note || "").trim().slice(0, 250);
+    if (savedNote) {
+      zapState.note[asset] = savedNote;
       zapState.noteEdited[asset] = true;
     } else {
       zapState.noteEdited[asset] = false;
@@ -36416,16 +36364,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const zapNwcClear = $("#zapNwcClear");
     if (zapNwcClear) zapNwcClear.addEventListener("click", clearZapNwc);
-    const zapSingleTapAmount = $("#zapSingleTapAmount");
-    if (zapSingleTapAmount) zapSingleTapAmount.addEventListener("input", refreshZapSettingsNote);
-    const zapSingleTapNote = $("#zapSingleTapNote");
-    if (zapSingleTapNote) zapSingleTapNote.addEventListener("input", onZapSettingsNoteInput);
     const zapSingleTapUnit = $("#zapSingleTapUnit");
     if (zapSingleTapUnit) {
       zapSingleTapUnit.addEventListener("change", () => {
         const amount = $("#zapSingleTapAmount");
         if (amount) amount.inputMode = zapSingleTapUnit.value === "sats" ? "numeric" : "decimal";
-        refreshZapSettingsNote();
       });
     }
     const zapSubmit = $("#zapSubmit");

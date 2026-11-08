@@ -6541,6 +6541,10 @@ a.wallet-tx-time:hover {
   color: var(--gray);
 }
 
+#lightningOverlay #zapSingleTapNote::placeholder {
+  color: var(--gray-dim);
+}
+
 #ownerSignStatus.is-error,
 #communityRoleStatus.is-error,
 #communityTitleStatus.is-error,
