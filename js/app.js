@@ -170,11 +170,10 @@ let CS77_FILTER_LOW_REP = 20;
     note: { ln: "", hive: "", hbd: "" },
     noteEdited: { ln: false, hive: false, hbd: false },
     invoice: "",
-    preimage: "",
+    paymentHash: "",
     sent: false,
     sentSats: 0,
     offerComment: false,
-    receiptPlain: false,
     cast: false,
     paid: false,
     singleTap: false,
@@ -19503,11 +19502,10 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideZapFallback() {
     zapState.invoice = "";
-    zapState.preimage = "";
+    zapState.paymentHash = "";
     zapState.sent = false;
     zapState.sentSats = 0;
     zapState.offerComment = false;
-    zapState.receiptPlain = false;
     zapState.paid = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
@@ -19530,10 +19528,10 @@ let CS77_FILTER_LOW_REP = 20;
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
-  // NWC or WebLN with a logged-in user, a permlink, and a preimage turns Zap into
-  // Add comment and leaves Close. A lightning: return the user confirms does the
-  // same without a preimage. A paid lightning zap with no comment turns Zap into
-  // Close. Hive and hbd close the dialog when the transfer is in.
+  // A logged-in zap with a permlink and the invoice payment hash turns Zap into
+  // Add comment and leaves Close. That covers NWC, WebLN, and a confirmed
+  // lightning: return. A paid lightning zap with no hash turns Zap into Close.
+  // Hive and hbd close the dialog when the transfer is in.
   // A lightning: invoice replaces Zap until that confirmation.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
@@ -21014,7 +21012,7 @@ let CS77_FILTER_LOW_REP = 20;
     ov.hidden = true;
     if (zapState.sent || !zapState.invoice) return;
     const hidden = !zapDialogOpen();
-    markZapLightningSent(zapState.sentSats, zapState.invoice, "", true);
+    markZapLightningSent(zapState.sentSats, zapState.invoice);
     if (hidden) {
       if (zapState.offerComment) revealSingleTapDialog();
       else {
@@ -21032,7 +21030,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.invoice = pr;
     zapState.sent = false;
     zapState.sentSats = sats;
-    zapState.receiptPlain = false;
     armZapWalletReturn(sats);
     const href = "lightning:" + pr;
     const a = document.createElement("a");
@@ -21051,33 +21048,124 @@ let CS77_FILTER_LOW_REP = 20;
     setZapStatus("Opening a lightning wallet\u2026", false);
   }
 
-  function zapPreimageOf(result) {
-    if (result == null) return "";
-    let raw = "";
-    if (typeof result === "string") raw = result;
-    else if (typeof result === "object") {
-      raw =
-        result.preimage ||
-        result.payment_preimage ||
-        result.paymentPreimage ||
-        (result.payment && (result.payment.preimage || result.payment.payment_preimage)) ||
-        "";
+  function zapBytesToHex(bytes) {
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      const n = bytes[i];
+      out += (n < 16 ? "0" : "") + n.toString(16);
     }
-    let text = String(raw || "").trim();
-    if (/^0x/i.test(text)) text = text.slice(2);
-    return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : "";
+    return out;
   }
 
-  function markZapLightningSent(sats, invoice, preimage, plain) {
+  // BOLT11 bech32 (BIP-173). Checksum polymod is 1. No 90-character limit.
+  const BOLT11_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  const BOLT11_GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+  function bolt11Polymod(values) {
+    let chk = 1;
+    for (let i = 0; i < values.length; i++) {
+      const top = chk >>> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ values[i];
+      for (let j = 0; j < 5; j++) {
+        if ((top >>> j) & 1) chk ^= BOLT11_GEN[j];
+      }
+      chk >>>= 0;
+    }
+    return chk >>> 0;
+  }
+
+  function bolt11ChecksumOk(hrp, data) {
+    const expanded = [];
+    for (let i = 0; i < hrp.length; i++) expanded.push(hrp.charCodeAt(i) >> 5);
+    expanded.push(0);
+    for (let i = 0; i < hrp.length; i++) expanded.push(hrp.charCodeAt(i) & 31);
+    for (let i = 0; i < data.length; i++) expanded.push(data[i]);
+    return bolt11Polymod(expanded) === 1;
+  }
+
+  // 5-bit groups to bytes. Leftover non-zero pad bits fail.
+  function bolt11ToBytes(words) {
+    let acc = 0;
+    let bits = 0;
+    const out = [];
+    for (let i = 0; i < words.length; i++) {
+      const value = words[i];
+      if (value < 0 || value > 31) return null;
+      acc = (acc << 5) | value;
+      bits += 5;
+      while (bits >= 8) {
+        bits -= 8;
+        out.push((acc >> bits) & 0xff);
+      }
+    }
+    if (bits >= 5) return null;
+    if (bits && ((acc << (8 - bits)) & 0xff)) return null;
+    return out;
+  }
+
+  // The 32-byte payment hash from the BOLT11 `p` field, or "" when the invoice
+  // cannot be read. The hash is in the invoice before anyone pays it.
+  function bolt11PaymentHash(invoice) {
+    const raw = String(invoice || "").trim();
+    if (raw.length < 10) return "";
+    let lower = false;
+    let upper = false;
+    for (let i = 0; i < raw.length; i++) {
+      const code = raw.charCodeAt(i);
+      if (code >= 97 && code <= 122) lower = true;
+      else if (code >= 65 && code <= 90) upper = true;
+    }
+    if (lower && upper) return "";
+    const text = raw.toLowerCase();
+    const sep = text.lastIndexOf("1");
+    if (sep < 4 || sep + 7 > text.length) return "";
+    const hrp = text.slice(0, sep);
+    const prefix = hrp.match(/^ln(?:bcrt|tbs|bc|tb)/);
+    if (!prefix) return "";
+    const amount = hrp.slice(prefix[0].length);
+    if (amount && !/^[1-9]\d*[munp]?$/.test(amount)) return "";
+    if (/p$/.test(amount) && amount.charAt(amount.length - 2) !== "0") return "";
+    const dataChars = text.slice(sep + 1);
+    const data = [];
+    for (let i = 0; i < dataChars.length; i++) {
+      const value = BOLT11_CHARSET.indexOf(dataChars.charAt(i));
+      if (value < 0) return "";
+      data.push(value);
+    }
+    if (!bolt11ChecksumOk(hrp, data)) return "";
+    const words = data.slice(0, data.length - 6);
+    // 7 timestamp words, then tags, then a 104-word signature.
+    if (words.length < 7 + 104) return "";
+    let pos = 7;
+    const end = words.length - 104;
+    let hash = "";
+    let paymentFields = 0;
+    while (pos < end) {
+      if (pos + 3 > end) return "";
+      const type = words[pos];
+      const len = (words[pos + 1] << 5) | words[pos + 2];
+      pos += 3;
+      if (pos + len > end) return "";
+      const field = words.slice(pos, pos + len);
+      pos += len;
+      if (type !== 1) continue;
+      paymentFields += 1;
+      if (len !== 52) return "";
+      const bytes = bolt11ToBytes(field);
+      if (!bytes || bytes.length !== 32) return "";
+      hash = zapBytesToHex(bytes);
+    }
+    if (pos !== end || paymentFields !== 1) return "";
+    return hash;
+  }
+
+  function markZapLightningSent(sats, invoice) {
     zapState.sent = true;
     zapState.sentSats = sats;
     zapState.invoice = invoice || zapState.invoice || "";
-    zapState.preimage = preimage || "";
-    zapState.receiptPlain = Boolean(plain);
-    const canComment = Boolean(zapState.permlink && observer());
-    zapState.offerComment = zapState.receiptPlain
-      ? canComment
-      : Boolean(canComment && zapState.invoice && zapState.preimage);
+    const decoded = bolt11PaymentHash(zapState.invoice);
+    if (decoded) zapState.paymentHash = decoded;
+    zapState.offerComment = Boolean(zapState.permlink && observer() && zapState.paymentHash);
     if (zapState.permlink) zapState.cast = true;
     zapState.paid = true;
     const box = $("#zapWalletFallback");
@@ -21144,6 +21232,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (zapHttp === controller) zapHttp = null;
     }
     if (!zapStill(gen) || !pr) return;
+    // The payment hash is the BOLT11 `p` field. It is known before anyone pays.
+    zapState.paymentHash = bolt11PaymentHash(pr);
 
     let nwcUrl = "";
     if (typed) {
@@ -21172,16 +21262,15 @@ let CS77_FILTER_LOW_REP = 20;
     if (typed || useStored) {
       if (!zapStill(gen)) return;
       setZapStatus("Waiting for the connected wallet\u2026", false);
-      let paid = null;
       try {
-        paid = await payWithNwc(nwcUrl, pr);
+        await payWithNwc(nwcUrl, pr);
       } catch (err) {
         if (!zapStill(gen)) return;
         if (walletCancelled(err)) throw zapCancelled();
         throw err;
       }
       if (!zapStill(gen)) return;
-      markZapLightningSent(sats, pr, zapPreimageOf(paid));
+      markZapLightningSent(sats, pr);
       return;
     }
 
@@ -21198,16 +21287,15 @@ let CS77_FILTER_LOW_REP = 20;
       if (enabled) {
         if (!zapStill(gen)) return;
         setZapStatus("Waiting for the browser wallet\u2026", false);
-        let paid = null;
         try {
-          paid = await provider.sendPayment(pr);
+          await provider.sendPayment(pr);
         } catch (err) {
           if (!zapStill(gen)) return;
           if (walletCancelled(err)) throw zapCancelled();
           throw err;
         }
         if (!zapStill(gen)) return;
-        markZapLightningSent(sats, pr, zapPreimageOf(paid));
+        markZapLightningSent(sats, pr);
         return;
       }
     }
@@ -21315,10 +21403,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   function zapReceiptBody() {
     const line = zapReceiptLine();
-    if (zapState.receiptPlain) return line;
-    const invoice = String(zapState.invoice || "").replace(/`/g, "").trim();
-    const preimage = String(zapState.preimage || "").replace(/`/g, "").trim();
-    return line + "\n\nLN invoice: `" + invoice + "`\n\nLN preimage: `" + preimage + "`";
+    const hash = String(zapState.paymentHash || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) return line;
+    return line + " [LN payment_hash](data:text/plain," + hash + ")";
   }
 
   function showZapReceiptComment(node) {

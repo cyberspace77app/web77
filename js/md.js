@@ -3532,8 +3532,9 @@
     return Number(v) <= max;
   }
 
-  // http(s) for images and media. Links may also be mailto, a fragment, or a
-  // same-document path. javascript:, data:, and protocol-relative URLs are not.
+  // http(s) for images and media. Links may also be mailto, a fragment, a
+  // same-document path, or data:text/plain with a 64-hex payment hash.
+  // javascript:, other data: URLs, and protocol-relative URLs are not.
   function isSafePostUrl(value, kind) {
     const v = String(value == null ? "" : value).trim();
     if (!v || /[\u0000-\u001F\u007F]/.test(v)) return false;
@@ -3549,6 +3550,7 @@
     if (/^mailto:/i.test(v)) return kind === "href";
     if (v.charAt(0) === "#") return true;
     if (v.slice(0, 2) === "//" || v.slice(0, 2) === "/\\" || v.charAt(0) === "\\") return false;
+    if (/^data:text\/plain,[0-9a-f]{64}$/i.test(v)) return kind === "href";
     if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return false;
     return true;
   }
@@ -3696,6 +3698,15 @@
         return;
       }
       if (!keepPostAttribute(tag, attr, data.attrValue, data)) data.keepAttr = false;
+      else if (
+        tag === "a" &&
+        attr === "href" &&
+        /^data:text\/plain,[0-9a-f]{64}$/i.test(String(data.attrValue || "").trim())
+      ) {
+        // DOMPurify still rejects data: after keepAttr. forceKeepAttr is the
+        // only way to leave this plain-text payment hash on the anchor.
+        data.forceKeepAttr = true;
+      }
     });
     global.DOMPurify.addHook("afterSanitizeAttributes", function (node) {
       if (!node || !node.getAttribute) return;
