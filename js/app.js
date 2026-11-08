@@ -19985,7 +19985,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (!(parsed >= 0.001)) return "Enter an amount of at least 0.001.";
       return "";
     }
-    if (parseZapSats(amount) == null) return "Enter a whole number of sats.";
+    const read = readZapSats(amount);
+    if (read.error) return read.error;
     return "";
   }
 
@@ -20984,12 +20985,31 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function parseZapSats(raw) {
+  // 21 million bitcoin. The count itself fits in a safe integer. Millisatoshis do not.
+  const ZAP_MAX_SATS = 2100000000000000;
+
+  function formatWholeSats(n) {
+    const text = (typeof n === "bigint" ? n : BigInt(n)).toString();
+    return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  function readZapSats(raw) {
     const text = String(raw || "").trim().replace(/[, ]/g, "");
-    if (!/^\d+$/.test(text)) return null;
-    const n = Number(text);
-    if (!Number.isFinite(n) || n < 1 || n > 1000000000) return null;
-    return n;
+    if (!/^\d+$/.test(text)) return { error: "Enter a whole number of sats." };
+    let n;
+    try {
+      n = BigInt(text);
+    } catch (err) {
+      return { error: "Enter a whole number of sats." };
+    }
+    if (n < 1n) return { error: "Enter a whole number of sats." };
+    if (n > BigInt(ZAP_MAX_SATS)) return { error: "Enter at most " + formatWholeSats(ZAP_MAX_SATS) + " sats." };
+    return { sats: Number(n) };
+  }
+
+  function parseZapSats(raw) {
+    const read = readZapSats(raw);
+    return read.sats == null ? null : read.sats;
   }
 
   function zapChosenAmount() {
@@ -20997,9 +21017,9 @@ let CS77_FILTER_LOW_REP = 20;
     const raw = (($("#zapCustom") && $("#zapCustom").value) || "").trim();
     if (raw) {
       if (asset === "ln") {
-        const sats = parseZapSats(raw);
-        if (sats == null) return { error: "Enter a whole number of sats." };
-        return { amount: sats };
+        const read = readZapSats(raw);
+        if (read.error) return { error: read.error };
+        return { amount: read.sats };
       }
       const amount = roundAsset(parseAmountInput(raw), 3);
       if (amount < 0.001) return { error: "Enter an amount of at least 0.001." };
@@ -21046,8 +21066,9 @@ let CS77_FILTER_LOW_REP = 20;
       throw new Error("Could not reach that Lightning address.");
     }
     if (!res.ok) throw new Error("Could not reach that Lightning address.");
+    const body = await res.text();
     let data = null;
-    try { data = await res.json(); } catch (err) { data = null; }
+    try { data = JSON.parse(body); } catch (err) { data = null; }
     if (!data || data.status === "ERROR") {
       throw new Error((data && data.reason) || "That Lightning address refused the request.");
     }
@@ -21059,12 +21080,25 @@ let CS77_FILTER_LOW_REP = 20;
     if (!callback || (callback.protocol !== "https:" && callback.protocol !== "http:")) {
       throw new Error("That Lightning address cannot receive a payment.");
     }
+    data.minMsat = lnurlMsat(body, "minSendable", data.minSendable);
+    data.maxMsat = lnurlMsat(body, "maxSendable", data.maxSendable);
     return data;
+  }
+
+  // JSON numbers above 2^53 are already rounded. The raw digits stay exact.
+  function lnurlMsat(body, key, fallback) {
+    const match = new RegExp('"' + key + '"\\s*:\\s*"?(\\d+)').exec(String(body || ""));
+    if (match) {
+      try { return BigInt(match[1]); } catch (err) { /* use the parsed value */ }
+    }
+    const n = Number(fallback);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return BigInt(Math.trunc(n));
   }
 
   async function fetchLightningInvoice(pay, sats, comment, signal) {
     const callback = new URL(pay.callback);
-    callback.searchParams.set("amount", String(Math.round(sats * 1000)));
+    callback.searchParams.set("amount", (BigInt(sats) * 1000n).toString());
     const allowed = Number(pay.commentAllowed);
     const note = String(comment || "").trim();
     if (note && allowed > 0) callback.searchParams.set("comment", note.slice(0, allowed));
@@ -21411,17 +21445,18 @@ let CS77_FILTER_LOW_REP = 20;
     try {
       const pay = await fetchLightningPayRequest(address, controller.signal);
       if (!zapStill(gen)) return;
-      const minSats = Math.ceil(Number(pay.minSendable) / 1000);
-      const maxSats = Math.floor(Number(pay.maxSendable) / 1000);
-      if (!Number.isFinite(minSats) || !Number.isFinite(maxSats) || maxSats < minSats) {
+      const amountMsat = BigInt(sats) * 1000n;
+      const minMsat = pay.minMsat;
+      const maxMsat = pay.maxMsat;
+      if (minMsat == null || maxMsat == null || maxMsat < minMsat) {
         throw new Error("That Lightning address cannot receive a payment.");
       }
-      if (sats < minSats || sats > maxSats) {
+      if (amountMsat < minMsat || amountMsat > maxMsat) {
         throw new Error(
           "That address accepts " +
-            formatGroupedNumber(minSats, 0) +
+            formatWholeSats((minMsat + 999n) / 1000n) +
             " to " +
-            formatGroupedNumber(maxSats, 0) +
+            formatWholeSats(maxMsat / 1000n) +
             " sats."
         );
       }
