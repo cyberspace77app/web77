@@ -197,6 +197,12 @@ let CS77_FILTER_LOW_REP = 20;
   const zappedProfiles = new Set();
   const ZAP_SINGLE_TAP_KEY = "cs77_zap_single_tap";
   let zapPulseTimer = 0;
+  // Waiting blink. It stays slow until the invoice exists, or a hive/hbd zap is
+  // ready to sign, then eases toward the faster gap and holds there.
+  const ZAP_BLINK_SLOW_MS = 520;
+  const ZAP_BLINK_FAST_MS = 360;
+  let zapBlinkGap = ZAP_BLINK_SLOW_MS;
+  let zapBlinkTarget = ZAP_BLINK_SLOW_MS;
   const zapTipLocal = new Map();
   let zapTipsPanelNode = null;
   let zapTipsShowTimer = 0;
@@ -20005,41 +20011,60 @@ let CS77_FILTER_LOW_REP = 20;
   function clearZapMotion(buttons) {
     window.clearTimeout(zapPulseTimer);
     zapPulseTimer = 0;
+    zapBlinkGap = ZAP_BLINK_SLOW_MS;
+    zapBlinkTarget = ZAP_BLINK_SLOW_MS;
     (buttons || document.querySelectorAll(".zap-stat-btn, .profile-zap-btn")).forEach((btn) => {
       btn.classList.remove("is-zapping", "is-zap-blink", "is-zap-flash");
       btn.removeAttribute("aria-busy");
     });
   }
 
-  function startZapBlink() {
-    clearZapMotion();
-    const author = zapState.author;
-    const permlink = zapState.permlink;
-    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const paint = (lit) => {
-      zapTapButtons(author, permlink).forEach((btn) => {
-        btn.classList.add("is-zapping");
-        btn.classList.toggle("is-zap-blink", lit);
-        btn.setAttribute("aria-busy", "true");
-      });
-    };
-    paint(true);
-    if (reduced) return;
-    let gap = 480;
+  function zapMotionReduced() {
+    return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  function paintZapBlink(lit) {
+    zapTapButtons(zapState.author, zapState.permlink).forEach((btn) => {
+      btn.classList.add("is-zapping");
+      btn.classList.toggle("is-zap-blink", lit);
+      btn.setAttribute("aria-busy", "true");
+    });
+  }
+
+  function scheduleZapBlink() {
+    window.clearTimeout(zapPulseTimer);
+    zapPulseTimer = 0;
+    if (!zapState.singleTap || zapMotionReduced()) return;
     const tick = () => {
       if (!zapState.singleTap) return;
-      const lit = !zapTapButtons(author, permlink).some((btn) => btn.classList.contains("is-zap-blink"));
-      paint(lit);
-      gap = Math.max(70, Math.round(gap * 0.84));
-      zapPulseTimer = window.setTimeout(tick, gap);
+      const lit = !zapTapButtons(zapState.author, zapState.permlink).some((btn) => btn.classList.contains("is-zap-blink"));
+      paintZapBlink(lit);
+      if (zapBlinkGap > zapBlinkTarget) {
+        const next = Math.round(zapBlinkGap * 0.94);
+        zapBlinkGap = next - zapBlinkTarget < 12 ? zapBlinkTarget : next;
+      }
+      zapPulseTimer = window.setTimeout(tick, zapBlinkGap);
     };
-    zapPulseTimer = window.setTimeout(tick, gap);
+    zapPulseTimer = window.setTimeout(tick, zapBlinkGap);
+  }
+
+  function startZapBlink() {
+    clearZapMotion();
+    paintZapBlink(true);
+    zapBlinkGap = ZAP_BLINK_SLOW_MS;
+    zapBlinkTarget = ZAP_BLINK_SLOW_MS;
+    scheduleZapBlink();
+  }
+
+  // Invoice is ready, or a hive/hbd transfer is ready to sign. Speed up a little.
+  function easeZapBlink() {
+    if (!zapState.singleTap) return;
+    zapBlinkTarget = ZAP_BLINK_FAST_MS;
   }
 
   function flashZapSuccess(author, permlink) {
     clearZapMotion();
     const buttons = zapTapButtons(author, permlink);
-    let step = 0;
     const finish = () => {
       buttons.forEach((btn) => btn.classList.remove("is-zap-flash", "is-zapping", "is-zap-blink"));
       if (permlink) {
@@ -20050,11 +20075,16 @@ let CS77_FILTER_LOW_REP = 20;
       if (author) zappedProfiles.add(author);
       buttons.forEach((btn) => btn.classList.add("is-zapped"));
     };
+    if (zapMotionReduced()) {
+      finish();
+      return;
+    }
+    let step = 0;
     const tick = () => {
       const on = step % 2 === 0;
       buttons.forEach((btn) => btn.classList.toggle("is-zap-flash", on));
       step += 1;
-      if (step < 6) zapPulseTimer = window.setTimeout(tick, 90);
+      if (step < 4) zapPulseTimer = window.setTimeout(tick, 180);
       else finish();
     };
     tick();
@@ -21179,7 +21209,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapSwallowNext = false;
     zapSwallowUntil = 0;
     holdZapPayPage(true);
-    if (zapState.singleTap) clearZapMotion();
     focusDesktop($("#zapPayYes"));
   }
 
@@ -21312,6 +21341,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (zapHttp === controller) zapHttp = null;
     }
     if (!zapStill(gen) || !pr) return;
+    easeZapBlink();
 
     let nwcUrl = "";
     if (typed) {
@@ -21424,6 +21454,7 @@ let CS77_FILTER_LOW_REP = 20;
       ],
     ];
     setZapStatus("", false);
+    easeZapBlink();
     await signWithDialog(user, operations, {
       source: "zap",
       authority: "Active",
