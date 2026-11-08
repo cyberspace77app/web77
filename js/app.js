@@ -20269,13 +20269,26 @@ let CS77_FILTER_LOW_REP = 20;
   // wallet is posting profile.wallet, or null when the user has no Lightning address.
   // loadWallet true reads that object from the chain. false uses wallet as given.
   // opts.kind is "post" or "comment" and only changes the receipt sentence.
+  function ownZapRefusal(kind) {
+    return kind === "comment" ? "You cannot zap your own comment." : "You cannot zap your own post.";
+  }
+
   function openZapDialog(username, permlink, wallet, loadWallet, opts) {
     const fromHistory = Boolean(opts && opts.fromHistory);
     const author = String(username || "")
       .replace(/^@/, "")
       .trim()
       .toLowerCase();
-    if (!author || isOwnAuthor(author)) return;
+    const link = permlink == null ? "" : String(permlink).trim();
+    if (!author) return;
+    // The profile bolt is not shown on your own account. Posts and comments
+    // still show it, and a click should say why it will not pay.
+    if (isOwnAuthor(author)) {
+      if (link && !fromHistory) {
+        showError(ownZapRefusal(opts && opts.kind === "comment" ? "comment" : "post"));
+      }
+      return;
+    }
     if (zapState.singleTap) return;
     if (zapState.cast) {
       rememberZappedContent(zapState.author, zapState.permlink);
@@ -20288,7 +20301,7 @@ let CS77_FILTER_LOW_REP = 20;
     stopZapHttp();
     const fetchWallet = loadWallet !== false;
     zapState.author = author;
-    zapState.permlink = permlink == null ? "" : String(permlink).trim();
+    zapState.permlink = link;
     zapState.kind = zapState.permlink && opts && opts.kind === "comment" ? "comment" : zapState.permlink ? "post" : "";
     zapState.commentBusy = false;
     zapState.asset = "ln";
