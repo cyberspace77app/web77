@@ -1760,6 +1760,8 @@ let CS77_FILTER_LOW_REP = 20;
       HiveMd.escapeHtml(permlink) +
       '" data-zap-kind="' +
       target +
+      '" data-zap-created="' +
+      HiveMd.escapeHtml(String(post.created || "")) +
       '" aria-label="Zap">' +
       zapMarkSvg() +
       "</button>"
@@ -20236,6 +20238,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   const ZAP_TIPS_CACHE_MS = 60000;
   const ZAP_TIPS_LIMIT = 40;
+  const ZAP_HISTORY_LIMIT = 300;
+  const ZAP_TIPS_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
 
   function zapContentKey(author, permlink) {
     const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
@@ -20412,28 +20416,65 @@ let CS77_FILTER_LOW_REP = 20;
     return entries;
   }
 
-  async function fetchHistoryHiveTips(author, permlink) {
-    let rows = [];
-    try {
-      const result = await HiveApi.hiveRpc("account_history_api.get_account_history", {
-        account: author,
-        start: -1,
-        limit: 1000,
-        operation_filter_low: 4,
-        operation_filter_high: 0,
-      });
-      rows = Array.isArray(result) ? result : result && Array.isArray(result.history) ? result.history : [];
-    } catch (err) {
-      rows = await HiveApi.getAccountHistory(author, -1, 1000);
+  function zapHistoryRows(result) {
+    if (Array.isArray(result)) return result;
+    const hist = result && result.history;
+    if (Array.isArray(hist)) return hist;
+    if (hist && typeof hist === "object") {
+      return Object.keys(hist).map((key) => [Number(key), hist[key]]);
     }
+    return null;
+  }
+
+  function zapHistoryStamp(row) {
+    const rec = Array.isArray(row) ? row[1] : row;
+    return rec && rec.timestamp ? String(rec.timestamp) : "";
+  }
+
+  async function fetchHistoryHiveTips(author, permlink) {
+    const result = await HiveApi.hiveRpc("account_history_api.get_account_history", {
+      account: author,
+      start: -1,
+      limit: ZAP_HISTORY_LIMIT,
+      operation_filter_low: 4,
+      operation_filter_high: 0,
+    });
+    const rows = zapHistoryRows(result);
     const entries = [];
-    for (let i = 0; i < rows.length; i++) {
-      const tx = transferFromHistoryRow(rows[i]);
+    let oldestMs = NaN;
+    let missingTime = false;
+    const list = rows || [];
+    for (let i = 0; i < list.length; i++) {
+      const tx = transferFromHistoryRow(list[i]);
+      const ms = parseCreatedTs((tx && tx.at) || zapHistoryStamp(list[i]));
+      if (!Number.isFinite(ms)) missingTime = true;
+      else if (!Number.isFinite(oldestMs) || ms < oldestMs) oldestMs = ms;
       if (!tx || tx.to !== author || !tx.from || !tx.amount) continue;
       if (!memoTipsContent(tx.memo, author, permlink)) continue;
       entries.push({ who: tx.from, label: tx.amount, at: tx.at });
     }
-    return entries;
+    return {
+      entries: entries,
+      scannedAll: Array.isArray(rows) && rows.length < ZAP_HISTORY_LIMIT,
+      oldestMs: missingTime ? NaN : oldestMs,
+    };
+  }
+
+  // A short page is the account's whole transfer list. Otherwise the oldest
+  // transfer has to reach the post, or the post has to be under a week old.
+  function zapTipsCoverPost(created, scannedAll, oldestMs) {
+    if (scannedAll) return true;
+    const createdMs = parseCreatedTs(created);
+    if (!Number.isFinite(createdMs)) return false;
+    if (Number.isFinite(oldestMs)) return oldestMs <= createdMs;
+    return Date.now() - createdMs < ZAP_TIPS_YOUNG_MS;
+  }
+
+  function zapTipsEmptyStatus(open) {
+    if (open.commentsFailed && open.tipsFailed) return "Could not load zaps.";
+    if (open.tipsFailed || open.commentsFailed) return "No recent zaps.";
+    if (zapTipsCoverPost(open.created, open.scannedAll, open.historyOldestMs)) return "No zaps yet.";
+    return "No recent zaps.";
   }
 
   function loadZapTipRecord(author, permlink) {
@@ -20444,6 +20485,8 @@ let CS77_FILTER_LOW_REP = 20;
         entries: mergeLocalZapTips(author, permlink, hit.entries),
         commentsFailed: false,
         tipsFailed: false,
+        scannedAll: Boolean(hit.scannedAll),
+        oldestMs: hit.oldestMs,
       });
     }
     if (hit && hit.pending) return hit.pending;
@@ -20452,8 +20495,13 @@ let CS77_FILTER_LOW_REP = 20;
         .then((rows) => ({ rows: rows, failed: false }))
         .catch(() => ({ rows: [], failed: true })),
       fetchHistoryHiveTips(author, permlink)
-        .then((rows) => ({ rows: rows, failed: false }))
-        .catch(() => ({ rows: [], failed: true })),
+        .then((tips) => ({
+          rows: tips.entries || [],
+          failed: false,
+          scannedAll: Boolean(tips.scannedAll),
+          oldestMs: tips.oldestMs,
+        }))
+        .catch(() => ({ rows: [], failed: true, scannedAll: false, oldestMs: NaN })),
     ]).then((parts) => {
       const comments = parts[0];
       const tips = parts[1];
@@ -20464,6 +20512,8 @@ let CS77_FILTER_LOW_REP = 20;
         entries: entries,
         commentsFailed: comments.failed,
         tipsFailed: tips.failed,
+        scannedAll: Boolean(tips.scannedAll),
+        oldestMs: tips.oldestMs,
       };
       if (record.complete) zapTipsCache.set(key, record);
       else {
@@ -20474,6 +20524,8 @@ let CS77_FILTER_LOW_REP = 20;
         entries: entries,
         commentsFailed: comments.failed,
         tipsFailed: tips.failed,
+        scannedAll: record.scannedAll,
+        oldestMs: record.oldestMs,
       };
     });
     zapTipsCache.set(key, { complete: false, at: 0, entries: [], pending: pending });
@@ -20592,7 +20644,7 @@ let CS77_FILTER_LOW_REP = 20;
     const entries = open.entries;
     let status = "";
     if (!entries) status = "Loading zaps\u2026";
-    else if (!entries.length) status = open.commentsFailed && open.tipsFailed ? "Could not load zaps." : "No zaps yet.";
+    else if (!entries.length) status = zapTipsEmptyStatus(open);
     const shown = entries ? entries.slice(0, ZAP_TIPS_LIMIT) : [];
     if (shown.length) {
       const items = [];
@@ -20635,6 +20687,9 @@ let CS77_FILTER_LOW_REP = 20;
       entries: null,
       commentsFailed: false,
       tipsFailed: false,
+      created: btn.getAttribute("data-zap-created") || "",
+      scannedAll: false,
+      historyOldestMs: NaN,
     };
     paintZapTipsPanel();
     panel.hidden = false;
@@ -20658,6 +20713,8 @@ let CS77_FILTER_LOW_REP = 20;
         openZapTips.entries = rec.entries || [];
         openZapTips.commentsFailed = Boolean(rec.commentsFailed);
         openZapTips.tipsFailed = Boolean(rec.tipsFailed);
+        openZapTips.scannedAll = Boolean(rec.scannedAll);
+        openZapTips.historyOldestMs = rec.oldestMs;
         paintZapTipsPanel();
         placeZapTips(btn, panel);
       })
