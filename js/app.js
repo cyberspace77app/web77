@@ -19520,7 +19520,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // NWC or WebLN with a logged-in user, a permlink, and a preimage turns Zap into
-  // Add comment and leaves Close. Any other paid zap turns Zap into Close.
+  // Add comment and leaves Close. A paid lightning zap with no comment turns Zap
+  // into Close. Hive and hbd close the dialog when the transfer is in.
   // A lightning: invoice replaces Zap and does not offer a comment.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
@@ -21122,6 +21123,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (!zapStill(gen)) return;
     if (zapState.permlink) zapState.cast = true;
     zapState.paid = true;
+    // No receipt step for hive or hbd. A single-tap send never opened this dialog.
+    if (zapDialogOpen() && closeZapOverlay()) return;
     setZapStatus("Sent " + shown + " to @" + target + ".", false);
   }
 
