@@ -201,6 +201,9 @@ let CS77_FILTER_LOW_REP = 20;
   // ready to sign, then eases toward the faster gap and holds there.
   const ZAP_BLINK_SLOW_MS = 520;
   const ZAP_BLINK_FAST_MS = 360;
+  // Success strobe. Hard yellow flashes, then the bolt settles.
+  const ZAP_STROBE_MS = 70;
+  const ZAP_STROBE_STEPS = 4;
   let zapBlinkGap = ZAP_BLINK_SLOW_MS;
   let zapBlinkTarget = ZAP_BLINK_SLOW_MS;
   const zapTipLocal = new Map();
@@ -19900,12 +19903,17 @@ let CS77_FILTER_LOW_REP = 20;
     stopZapHttp();
     ov.hidden = true;
     zapState.pending = false;
-    if (zapState.cast) rememberZappedContent(zapState.author, zapState.permlink);
+    const sentAuthor = zapState.author;
+    const sentPermlink = zapState.permlink;
+    const sent = Boolean(zapState.cast || zapState.paid);
     zapState.cast = false;
+    zapState.paid = false;
     hideZapFallback();
     setZapStatus("", false);
     setZapTriggerOpen(false);
-    paintZappedStatButtons();
+    // The bolt is covered while the dialog is up, so the strobe starts as it closes.
+    if (sent) flashZapSuccess(sentAuthor, sentPermlink, false);
+    else paintZappedStatButtons();
     releasePanelHistory(zapHist, skipHistory);
     return true;
   }
@@ -20086,7 +20094,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapBlinkGap = ZAP_BLINK_SLOW_MS;
     zapBlinkTarget = ZAP_BLINK_SLOW_MS;
     (buttons || document.querySelectorAll(".zap-stat-btn, .profile-zap-btn")).forEach((btn) => {
-      btn.classList.remove("is-zapping", "is-zap-blink", "is-zap-flash");
+      btn.classList.remove("is-zapping", "is-zap-blink", "is-zap-flash", "is-zap-strobe");
       btn.removeAttribute("aria-busy");
     });
   }
@@ -20134,30 +20142,36 @@ let CS77_FILTER_LOW_REP = 20;
     zapBlinkTarget = ZAP_BLINK_FAST_MS;
   }
 
-  function flashZapSuccess(author, permlink) {
+  // keepProfile marks a profile bolt after a single-tap send. A dialog profile
+  // zap only strobes, then returns to its resting color.
+  function flashZapSuccess(author, permlink, keepProfile) {
     clearZapMotion();
     const buttons = zapTapButtons(author, permlink);
-    const finish = () => {
-      buttons.forEach((btn) => btn.classList.remove("is-zap-flash", "is-zapping", "is-zap-blink"));
-      if (permlink) {
-        rememberZappedContent(author, permlink);
-        paintZappedStatButtons();
-        return;
-      }
-      if (author) zappedProfiles.add(author);
+    if (permlink) {
+      rememberZappedContent(author, permlink);
+      paintZappedStatButtons();
+    } else if (keepProfile !== false && author) {
+      zappedProfiles.add(author);
       buttons.forEach((btn) => btn.classList.add("is-zapped"));
+    }
+    const endStrobe = () => {
+      zapPulseTimer = 0;
+      buttons.forEach((btn) => btn.classList.remove("is-zap-flash", "is-zapping", "is-zap-blink", "is-zap-strobe"));
     };
-    if (zapMotionReduced()) {
-      finish();
+    if (zapMotionReduced() || !buttons.length) {
+      endStrobe();
       return;
     }
     let step = 0;
     const tick = () => {
       const on = step % 2 === 0;
-      buttons.forEach((btn) => btn.classList.toggle("is-zap-flash", on));
+      buttons.forEach((btn) => {
+        btn.classList.add("is-zapping", "is-zap-strobe");
+        btn.classList.toggle("is-zap-flash", on);
+      });
       step += 1;
-      if (step < 4) zapPulseTimer = window.setTimeout(tick, 180);
-      else finish();
+      if (step < ZAP_STROBE_STEPS) zapPulseTimer = window.setTimeout(tick, ZAP_STROBE_MS);
+      else zapPulseTimer = window.setTimeout(endStrobe, ZAP_STROBE_MS);
     };
     tick();
   }

@@ -1644,6 +1644,11 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   filter: drop-shadow(0 0 7px rgba(255, 225, 74, 0.95));
 }
 
+.zap-stat-btn.is-zap-strobe,
+.profile-zap-btn.is-zap-strobe {
+  transition: none;
+}
+
 .vote-btn.stat-pill.is-rest:not(.is-confirming),
 .vote-btn.stat-pill.is-rest:not(.is-confirming):hover,
 .downvote-btn.stat-pill.is-rest:not(.is-confirming),
