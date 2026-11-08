@@ -19206,7 +19206,7 @@ let CS77_FILTER_LOW_REP = 20;
     lightningNwcLook += 1;
     setLightningStatus("", false);
     setLightningDialogLocked(false);
-    document.querySelectorAll(".profile-bitcoin-btn.is-open").forEach((btn) => {
+    document.querySelectorAll(".profile-bitcoin-btn.is-open, .settings-zap-gear.is-open").forEach((btn) => {
       btn.classList.remove("is-open");
     });
     if (wasOpen || lightningHist.on) releasePanelHistory(lightningHist, skipHistory);
@@ -19250,7 +19250,7 @@ let CS77_FILTER_LOW_REP = 20;
     el.hidden = false;
     fillZapSingleTapForm();
     refreshLightningNwc();
-    document.querySelectorAll(".profile-bitcoin-btn").forEach((btn) => {
+    document.querySelectorAll(".profile-bitcoin-btn, .settings-zap-gear").forEach((btn) => {
       btn.classList.add("is-open");
     });
     focusDesktop(lightningDialogFocus === "nwc" ? nwcInput : input);
@@ -31989,6 +31989,17 @@ let CS77_FILTER_LOW_REP = 20;
           </select>
         </div>
         <p class="settings-note">Saved in this browser.</p>
+        <div class="settings-field settings-zap-field">
+          <h2 class="settings-section-title settings-section-line" id="settingsZapHeading"><span>Zap settings</span></h2>
+          <button type="button" class="settings-zap-gear" id="settingsZapGear" aria-label="Add Bitcoin Lightning">
+            <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+              <g fill="none" stroke="currentColor" stroke-width="1.55" stroke-linejoin="round" stroke-linecap="round">
+                <path d="M21.29 8.69 22.1 2.94h3.8l.81 5.75A15.55 15.55 0 0 1 32.91 11.25L37.55 7.76l2.69 2.69-3.49 4.64A15.55 15.55 0 0 1 39.31 21.29L45.06 22.1v3.8l-5.75 .81A15.55 15.55 0 0 1 36.75 32.91L40.24 37.55l-2.69 2.69-4.64-3.49A15.55 15.55 0 0 1 26.71 39.31L25.9 45.06h-3.8l-.81-5.75A15.55 15.55 0 0 1 15.09 36.75L10.45 40.24 7.76 37.55l3.49-4.64A15.55 15.55 0 0 1 8.69 26.71L2.94 25.9v-3.8l5.75 -.81A15.55 15.55 0 0 1 11.25 15.09L7.76 10.45l2.69-2.69 4.64 3.49A15.55 15.55 0 0 1 21.29 8.69Z"/>
+              </g>
+              <path fill="currentColor" d="M25.88 13.9 18.95 24.29h4.04L21.4 33.82 29.34 23.43h-4.04z"/>
+            </svg>
+          </button>
+        </div>
       </form>
     `;
   }
@@ -32044,6 +32055,13 @@ let CS77_FILTER_LOW_REP = 20;
       commentSort.value = readCommentSort();
       commentSort.addEventListener("change", () => {
         commentSort.value = storeCommentSort(commentSort.value);
+      });
+    }
+    const zapGear = $("#settingsZapGear");
+    if (zapGear) {
+      if (lightningDialogOpen()) zapGear.classList.add("is-open");
+      zapGear.addEventListener("click", () => {
+        openLightningDialog();
       });
     }
   }

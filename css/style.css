@@ -9474,6 +9474,76 @@ min-height: 0;
   min-width: 12rem;
 }
 
+#settingsGeneralForm .settings-zap-field {
+  margin-top: 1.85rem;
+  margin-bottom: 0;
+}
+
+#settingsGeneralForm h2.settings-section-line {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0 0 0.7rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--yellow);
+  line-height: 1.45;
+}
+
+#settingsGeneralForm h2.settings-section-line span {
+  white-space: nowrap;
+}
+
+#settingsGeneralForm h2.settings-section-line::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 0;
+  border-top: 1px solid #fff;
+}
+
+.settings-zap-gear {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.75rem;
+  height: 3.75rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gray);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.settings-zap-gear svg {
+  display: block;
+  width: 3.15rem;
+  height: 3.15rem;
+}
+
+.settings-zap-gear:hover,
+.settings-zap-gear:focus-visible,
+.settings-zap-gear.is-open {
+  color: var(--yellow);
+}
+
+.settings-zap-gear:hover svg,
+.settings-zap-gear:focus-visible svg,
+.settings-zap-gear.is-open svg {
+  filter: drop-shadow(0 0 6px rgba(255, 225, 74, 0.9));
+}
+
+.settings-zap-gear:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 3px;
+}
+
 .settings-media {
   display: flex;
   flex-wrap: wrap;
