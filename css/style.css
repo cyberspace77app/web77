@@ -3509,7 +3509,6 @@ a.tag:hover {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  flex-wrap: wrap;
   margin-top: 2.25rem;
   padding: 1rem 0;
   border-top: 1px solid var(--border);
@@ -3519,6 +3518,31 @@ a.tag:hover {
   color: var(--gray);
   position: relative;
   z-index: 5;
+}
+
+/* Same wrap on every viewport. A tight desktop column uses the same line break as a phone. */
+.card-stats,
+.post-stats-bar {
+  flex-wrap: wrap;
+  row-gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-stats > .vote-wrap,
+.card-stats > .zap-stat-btn,
+.card-stats > .comment-count-link,
+.card-stats > .reblog-wrap,
+.card-stats > .payout,
+.card-stats > .content-more,
+.post-stats-bar > .vote-wrap,
+.post-stats-bar > .zap-stat-btn,
+.post-stats-bar > .comment-count-link,
+.post-stats-bar > .reblog-wrap,
+.post-stats-bar > .payout,
+.post-stats-bar > .content-more {
+  flex-shrink: 0;
 }
 
 .post-stats-bar .payout {
@@ -8196,26 +8220,6 @@ body:has(#lightningOverlay:not([hidden])) {
     font-size: 2rem;
   }
 
-  .post-card > .card-stats {
-    flex-wrap: wrap;
-    row-gap: 0.75rem;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .card-stats > .vote-wrap,
-  .card-stats > .zap-stat-btn,
-  .card-stats > .comment-count-link,
-  .card-stats > .reblog-wrap,
-  .card-stats > .payout,
-  .card-stats > .content-more,
-  .post-stats-bar > .vote-wrap,
-  .post-stats-bar > .zap-stat-btn,
-  .post-stats-bar > .comment-count-link,
-  .post-stats-bar > .reblog-wrap,
-  .post-stats-bar > .payout,
-  .post-stats-bar > .content-more,
   .article-stats > .content-more,
   .comment-actions > .content-more {
     flex-shrink: 0;
