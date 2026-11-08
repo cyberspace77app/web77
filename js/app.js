@@ -1554,6 +1554,10 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="content-more-item content-more-cross" role="menuitem">Cross post</button>`;
   }
 
+  function showZapsItemHtml() {
+    return `<button type="button" class="content-more-item content-more-zaps" role="menuitem">Show zaps</button>`;
+  }
+
   function downvoteMenuItemHtml(node) {
     const downvoted = Boolean(node && node.author && voteView(node).sign === -1);
     const label = downvoted ? "Remove downvote" : "Downvote";
@@ -1576,6 +1580,7 @@ let CS77_FILTER_LOW_REP = 20;
       const profileOffer = profilePinMenuOffer(name, link);
       if (profileOffer) items.push(pinMenuItemHtml(profileOffer));
     }
+    items.push(showZapsItemHtml());
     if (offerCrossPost) items.push(crossPostItemHtml());
     items.push(downvoteMenuItemHtml(node));
     items.push(
@@ -1921,6 +1926,72 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     return wraps[0] || null;
+  }
+
+  function zapButtonMatches(btn, author, permlink) {
+    if (!btn) return false;
+    const who = String(btn.getAttribute("data-zap-author") || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    const link = String(btn.getAttribute("data-zap-permlink") || "").trim();
+    return who === author && link === permlink;
+  }
+
+  function zapButtonIn(root, author, permlink) {
+    if (!root) return null;
+    const buttons = root.querySelectorAll(".zap-stat-btn");
+    for (let i = 0; i < buttons.length; i++) {
+      if (zapButtonMatches(buttons[i], author, permlink)) return buttons[i];
+    }
+    return null;
+  }
+
+  function boxInView(el) {
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false;
+    const height = window.innerHeight || document.documentElement.clientHeight || 0;
+    const width = window.innerWidth || document.documentElement.clientWidth || 0;
+    return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
+  }
+
+  // The article byline has no bolt. Use the footer bolt on that same post.
+  function zapButtonForMore(moreRoot) {
+    const author = String(moreRoot.getAttribute("data-author") || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    const permlink = String(moreRoot.getAttribute("data-permlink") || "").trim();
+    if (!author || !permlink) return null;
+    const row = moreRoot.closest(".card-stats, .comment-actions, .post-stats-bar, .article-stats");
+    const local = zapButtonIn(row, author, permlink);
+    if (local) return local;
+    const article = moreRoot.closest("article.article");
+    if (article) {
+      const footer = zapButtonIn(article.querySelector(".post-stats-bar"), author, permlink);
+      if (footer) return footer;
+    }
+    return zapButtonIn(moreRoot.closest(".post-card, .comment"), author, permlink);
+  }
+
+  function openZapsFromMore(moreRoot) {
+    if (!moreRoot) return;
+    const btn = zapButtonForMore(moreRoot);
+    if (!btn) return;
+    const moreBtn = moreRoot.querySelector(".content-more-btn");
+    const anchor = boxInView(btn) ? btn : moreBtn;
+    showZapTips(btn, { hold: true, anchor: anchor || btn });
+  }
+
+  // A menu-opened zap list stays up until Escape or a click outside it.
+  function dismissHeldZapTips(target) {
+    if (!openZapTips || !openZapTips.hold) return;
+    const panel = zapTipsPanelNode;
+    if (target && panel && (target === panel || panel.contains(target))) return;
+    const anchor = openZapTips.el;
+    if (target && anchor && (target === anchor || anchor.contains(target))) return;
+    hideZapTips();
   }
 
   function openDownvoteFromMore(moreRoot) {
@@ -20770,6 +20841,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function scheduleHideZapTips(e) {
+    if (openZapTips && openZapTips.hold) return;
     if (e && e.pointerType && e.pointerType !== "mouse") return;
     if (!hoverFine()) return;
     window.clearTimeout(zapTipsShowTimer);
@@ -20815,11 +20887,17 @@ let CS77_FILTER_LOW_REP = 20;
     if (panel.scrollTop !== scrollTop) panel.scrollTop = scrollTop;
   }
 
-  function showZapTips(btn) {
-    if (!hoverFine() || !btn || !btn.isConnected) return;
+  function showZapTips(btn, opts) {
+    const hold = Boolean(opts && opts.hold);
+    if ((!hold && !hoverFine()) || !btn || !btn.isConnected) return;
     const author = String(btn.getAttribute("data-zap-author") || "").replace(/^@/, "").trim().toLowerCase();
     const permlink = String(btn.getAttribute("data-zap-permlink") || "").trim();
     if (!author || !permlink) return;
+    const anchor = opts && opts.anchor && opts.anchor.isConnected ? opts.anchor : btn;
+    window.clearTimeout(zapTipsShowTimer);
+    window.clearTimeout(zapTipsHideTimer);
+    zapTipsShowTimer = 0;
+    zapTipsHideTimer = 0;
     hideVoteVoters();
     hidePayoutPanel();
     hideReblogConfirm();
@@ -20827,7 +20905,8 @@ let CS77_FILTER_LOW_REP = 20;
     const gen = ++zapTipsGen;
     const known = cachedZapWallet(author);
     openZapTips = {
-      el: btn,
+      el: anchor,
+      hold: hold,
       author: author,
       permlink: permlink,
       gen: gen,
@@ -20842,13 +20921,13 @@ let CS77_FILTER_LOW_REP = 20;
     paintZapTipsPanel();
     panel.hidden = false;
     document.body.appendChild(panel);
-    placeZapTips(btn, panel);
+    placeZapTips(anchor, panel);
     ensureZapWallet(author)
       .then((rec) => {
         if (!openZapTips || openZapTips.gen !== gen) return;
         openZapTips.accepts = Boolean(rec && rec.accepts);
         paintZapTipsPanel();
-        placeZapTips(btn, panel);
+        placeZapTips(anchor, panel);
       })
       .catch(() => {
         if (!openZapTips || openZapTips.gen !== gen) return;
@@ -20864,7 +20943,7 @@ let CS77_FILTER_LOW_REP = 20;
         openZapTips.scannedAll = Boolean(rec.scannedAll);
         openZapTips.historyOldestMs = rec.oldestMs;
         paintZapTipsPanel();
-        placeZapTips(btn, panel);
+        placeZapTips(anchor, panel);
       })
       .catch(() => {
         if (!openZapTips || openZapTips.gen !== gen) return;
@@ -20872,7 +20951,7 @@ let CS77_FILTER_LOW_REP = 20;
         openZapTips.commentsFailed = true;
         openZapTips.tipsFailed = true;
         paintZapTipsPanel();
-        placeZapTips(btn, panel);
+        placeZapTips(anchor, panel);
       });
   }
 
@@ -21983,6 +22062,7 @@ let CS77_FILTER_LOW_REP = 20;
     const existing = menu.querySelector(".content-more-pin");
     if (existing) existing.remove();
     const before =
+      menu.querySelector(".content-more-zaps") ||
       menu.querySelector(".content-more-cross") ||
       menu.querySelector(".content-more-downvote") ||
       menu.querySelector(".content-more-copy");
@@ -36003,6 +36083,7 @@ let CS77_FILTER_LOW_REP = 20;
     document.addEventListener(
       "click",
       (e) => {
+        dismissHeldZapTips(eventElement(e.target));
         const payoutHit = e.target.closest(".payout");
         if (payoutHit && inInteractiveSurface(payoutHit)) {
           e.preventDefault();
@@ -36161,7 +36242,8 @@ let CS77_FILTER_LOW_REP = 20;
         const deleteItem = profileMoreEl.closest(".content-more-delete");
         const crossItem = profileMoreEl.closest(".content-more-cross");
         const downItem = profileMoreEl.closest(".content-more-downvote");
-        if (editItem || copyItem || embedItem || deleteItem || crossItem || downItem) {
+        const zapsItem = profileMoreEl.closest(".content-more-zaps");
+        if (editItem || copyItem || embedItem || deleteItem || crossItem || downItem || zapsItem) {
           e.preventDefault();
           const root = document.querySelector(".content-more.is-open");
           const deleteAuthor = root && root.getAttribute("data-author");
@@ -36172,6 +36254,7 @@ let CS77_FILTER_LOW_REP = 20;
           else if (root && downItem) openDownvoteFromMore(root);
           else if (root && editItem) editContentFromMore(root);
           else if (root && crossItem) openCrossPost(deleteAuthor, deletePermlink);
+          else if (root && zapsItem) openZapsFromMore(root);
           else if (root && embedItem) openEmbedDialog(deleteAuthor, deletePermlink, deleteKind);
           else if (root) copyContentLink(root);
           return;
@@ -36222,6 +36305,7 @@ let CS77_FILTER_LOW_REP = 20;
         const contentMoreBtn = profileMoreEl.closest(".content-more-btn");
         if (contentMoreBtn) {
           e.preventDefault();
+          if (openZapTips && openZapTips.hold) hideZapTips();
           toggleContentMore(contentMoreBtn);
         }
         return;
