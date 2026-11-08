@@ -149,6 +149,17 @@ let CS77_FILTER_LOW_REP = 20;
   // Armed after a lightning: link. leftAt is when the page first went away.
   let zapWalletAsk = null;
   let zapWalletGiveUpTimer = 0;
+  // The return from an external wallet delivers one tap onto whatever is underneath.
+  // That tap is not an answer. The question then stays up until Yes or No.
+  let zapSwallowNext = false;
+  let zapSwallowUntil = 0;
+  let zapPayOpenedAt = 0;
+  let zapPayReturnHref = "";
+  let zapPayPopHold = false;
+  let zapPayAskTimer = 0;
+  const ZAP_PAY_ARM_MS = 450;
+  // Show the question while the wallet is still open, so coming back does not depend on focus.
+  const ZAP_PAY_ASK_MS = 3000;
   let zapLookGen = 0;
   let zapHttp = null;
   let zapNwcSaved = false;
@@ -5096,6 +5107,7 @@ let CS77_FILTER_LOW_REP = 20;
   ];
 
   function navigate(href, replace) {
+    if (zapPayConfirmOpen() || Date.now() < zapSwallowUntil) return;
     if (pollVotes.open) closePollVotes();
     if (editHistoryOn) {
       hidePublishOverlay();
@@ -5507,6 +5519,28 @@ let CS77_FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
+    if (zapPayPopHold) {
+      zapPayPopHold = false;
+      return;
+    }
+    // Back does not answer the payment question, and it does not leave the page under it.
+    if (zapPayConfirmOpen()) {
+      if (zapPayReturnHref && location.href !== zapPayReturnHref) {
+        zapPayPopHold = true;
+        history.go(1);
+        return;
+      }
+      const state = Object.assign(historyRecord(), { zapPayConfirm: true });
+      if (zapDialogOpen() || zapState.singleTap) {
+        state.zapPanel = true;
+        state.zapAuthor = zapState.author || "";
+        state.zapPermlink = zapState.permlink || "";
+        state.zapKind = zapState.kind || "";
+      }
+      history.pushState(state, "", location.href);
+      if (state.zapPanel) zapHist.on = true;
+      return;
+    }
     if (pendingEditNav) {
       const job = pendingEditNav;
       pendingEditNav = null;
@@ -19777,6 +19811,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closeZapOverlay(opts) {
     const skipHistory = !!(opts && opts.skipHistory);
+    if (zapPayConfirmOpen() || Date.now() < zapSwallowUntil) return false;
     if (zapState.commentBusy) return false;
     if (zapSignBlocksClose()) return false;
     const ov = $("#zapOverlay");
@@ -20906,14 +20941,74 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(ov && !ov.hidden);
   }
 
+  function clearZapPayAskTimer() {
+    if (!zapPayAskTimer) return;
+    clearTimeout(zapPayAskTimer);
+    zapPayAskTimer = 0;
+  }
+
   function cancelZapWalletReturn() {
     zapWalletAsk = null;
+    zapSwallowNext = false;
+    zapSwallowUntil = 0;
+    clearZapPayAskTimer();
     if (zapWalletGiveUpTimer) {
       clearTimeout(zapWalletGiveUpTimer);
       zapWalletGiveUpTimer = 0;
     }
     const ov = $("#zapPayOverlay");
     if (ov) ov.hidden = true;
+    releaseZapPayPage();
+  }
+
+  function zapPayCardHolds(target) {
+    const card = document.querySelector("#zapPayOverlay .overlay-card");
+    return Boolean(card && target && typeof target.nodeType === "number" && card.contains(target));
+  }
+
+  // The question is the only layer that takes input. The zap dialog and the feed stay inert.
+  function holdZapPayPage(on) {
+    const pay = $("#zapPayOverlay");
+    const nodes = document.body ? document.body.children : [];
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (!node || node === pay) continue;
+      if (on) {
+        if (node.hasAttribute("data-zap-pay-inert")) continue;
+        node.setAttribute("data-zap-pay-inert", node.inert ? "1" : "0");
+        node.inert = true;
+      } else if (node.hasAttribute("data-zap-pay-inert")) {
+        node.inert = node.getAttribute("data-zap-pay-inert") === "1";
+        node.removeAttribute("data-zap-pay-inert");
+      }
+    }
+  }
+
+  function releaseZapPayPage() {
+    holdZapPayPage(false);
+    zapPayOpenedAt = 0;
+    zapPayReturnHref = "";
+    zapSwallowNext = false;
+    zapSwallowUntil = 0;
+  }
+
+  // Swallow the tap that comes back with the browser, and any later tap that is not Yes or No.
+  function keepZapPayModal(e) {
+    if (zapPayConfirmOpen()) {
+      if (zapPayCardHolds(e.target) && zapPayOpenedAt && Date.now() - zapPayOpenedAt >= ZAP_PAY_ARM_MS) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (document.hidden) return;
+    if (zapSwallowNext) {
+      zapSwallowNext = false;
+      zapSwallowUntil = Date.now() + 700;
+    }
+    if (Date.now() < zapSwallowUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 
   function scheduleZapWalletGiveUp() {
@@ -20930,6 +21025,19 @@ let CS77_FILTER_LOW_REP = 20;
     }, ZAP_WALLET_GIVEUP_MS);
   }
 
+  function scheduleZapPayQuestion() {
+    clearZapPayAskTimer();
+    if (zapState.sent || !zapState.invoice || zapPayConfirmOpen()) return;
+    const invoice = zapState.invoice;
+    zapPayAskTimer = window.setTimeout(() => {
+      zapPayAskTimer = 0;
+      if (zapPayConfirmOpen() || zapState.sent || zapState.invoice !== invoice) return;
+      if (!zapDialogOpen() && !zapState.singleTap) return;
+      zapWalletAsk = null;
+      openZapPayConfirm();
+    }, ZAP_PAY_ASK_MS);
+  }
+
   function armZapWalletReturn(sats) {
     if (zapState.sent || !zapState.invoice) return;
     if (zapWalletAsk && zapWalletAsk.invoice === zapState.invoice) return;
@@ -20939,13 +21047,18 @@ let CS77_FILTER_LOW_REP = 20;
       sats: sats,
       left: away,
       leftAt: away ? Date.now() : 0,
+      armedAt: Date.now(),
     };
+    // A visible unfocused page can still be clicked. Only a hidden page has already left.
+    if (document.hidden) zapSwallowNext = true;
+    scheduleZapPayQuestion();
   }
 
   function noteZapWalletLeft() {
     if (!zapWalletAsk || zapWalletAsk.left) return;
     zapWalletAsk.left = true;
     zapWalletAsk.leftAt = Date.now();
+    zapSwallowNext = true;
     if (zapWalletGiveUpTimer) {
       clearTimeout(zapWalletGiveUpTimer);
       zapWalletGiveUpTimer = 0;
@@ -20953,24 +21066,27 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeAskZapWalletReturn() {
+    if (zapPayConfirmOpen()) return;
     const ask = zapWalletAsk;
-    if (!ask || !ask.left || zapPayConfirmOpen()) return;
+    if (!ask || zapState.sent || !zapState.invoice || zapState.invoice !== ask.invoice) return;
     if (document.hidden) return;
-    if (typeof document.hasFocus === "function" && !document.hasFocus()) return;
-    if (Date.now() - ask.leftAt < ZAP_WALLET_RETURN_MS) {
-      ask.left = false;
-      ask.leftAt = 0;
-      scheduleZapWalletGiveUp();
-      return;
-    }
-    if (!zapState.invoice || zapState.invoice !== ask.invoice || zapState.sent) {
-      cancelZapWalletReturn();
-      return;
-    }
     if (!zapDialogOpen() && !zapState.singleTap) {
       cancelZapWalletReturn();
       return;
     }
+    // A short return is not a wallet visit. The question still waits out the 3 seconds.
+    if (ask.left && Date.now() - ask.leftAt < ZAP_WALLET_RETURN_MS) {
+      ask.left = false;
+      ask.leftAt = 0;
+      zapSwallowNext = false;
+      zapSwallowUntil = 0;
+      scheduleZapWalletGiveUp();
+      return;
+    }
+    // The browser may hold the 3 second timer until the page is visible again.
+    const started = ask.armedAt || 0;
+    if (!started || Date.now() - started < ZAP_PAY_ASK_MS) return;
+    clearZapPayAskTimer();
     zapWalletAsk = null;
     openZapPayConfirm();
   }
@@ -20989,6 +21105,11 @@ let CS77_FILTER_LOW_REP = 20;
       lead.textContent = "Was the payment of " + sats + " sats" + who + " successful?";
     }
     ov.hidden = false;
+    zapPayOpenedAt = Date.now();
+    zapPayReturnHref = location.href;
+    zapSwallowNext = false;
+    zapSwallowUntil = 0;
+    holdZapPayPage(true);
     if (zapState.singleTap) clearZapMotion();
     focusDesktop($("#zapPayYes"));
   }
@@ -20997,6 +21118,7 @@ let CS77_FILTER_LOW_REP = 20;
     const ov = $("#zapPayOverlay");
     if (!ov || ov.hidden) return;
     ov.hidden = true;
+    releaseZapPayPage();
     if (zapState.singleTap && !zapDialogOpen()) {
       finishSingleTap(false);
       return;
@@ -21010,6 +21132,7 @@ let CS77_FILTER_LOW_REP = 20;
     const ov = $("#zapPayOverlay");
     if (!ov || ov.hidden) return;
     ov.hidden = true;
+    releaseZapPayPage();
     if (zapState.sent || !zapState.invoice) return;
     const hidden = !zapDialogOpen();
     markZapLightningSent(zapState.sentSats, zapState.invoice);
@@ -21030,7 +21153,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.invoice = pr;
     zapState.sent = false;
     zapState.sentSats = sats;
-    armZapWalletReturn(sats);
     const href = "lightning:" + pr;
     const a = document.createElement("a");
     a.href = href;
@@ -21038,6 +21160,8 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    // Arm after the click so the resume guard cannot swallow this lightning: link.
+    armZapWalletReturn(sats);
     if (zapState.singleTap) {
       scheduleZapWalletGiveUp();
       return;
@@ -34689,6 +34813,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function route() {
+    if (zapPayConfirmOpen()) return;
     if (editHistoryOn) {
       editHistoryOn = false;
       hidePublishOverlay();
@@ -36689,18 +36814,17 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapPayYes) zapPayYes.addEventListener("click", acceptZapWalletPaid);
     const zapPayNo = $("#zapPayNo");
     if (zapPayNo) zapPayNo.addEventListener("click", declineZapWalletPaid);
-    const zapPayOverlay = $("#zapPayOverlay");
-    if (zapPayOverlay) {
-      zapPayOverlay.addEventListener("click", (e) => {
-        if (e.target !== zapPayOverlay) return;
-        const active = document.activeElement;
-        if (active && zapPayOverlay.contains(active)) return;
-        declineZapWalletPaid();
-      });
-    }
+    document.addEventListener("pointerdown", keepZapPayModal, true);
+    document.addEventListener("mousedown", keepZapPayModal, true);
+    document.addEventListener("touchstart", keepZapPayModal, { capture: true, passive: false });
+    document.addEventListener("click", keepZapPayModal, true);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") noteZapWalletLeft();
-      else maybeAskZapWalletReturn();
+      else {
+        // The question is already up. The tap that shows the browser is not an answer.
+        if (zapPayConfirmOpen()) zapPayOpenedAt = Date.now();
+        maybeAskZapWalletReturn();
+      }
     });
     window.addEventListener("blur", noteZapWalletLeft);
     window.addEventListener("focus", maybeAskZapWalletReturn);

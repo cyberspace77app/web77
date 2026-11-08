@@ -6181,9 +6181,16 @@ a.wallet-tx-time:hover {
   z-index: 52;
 }
 
-/* Above the zap dialog and zap settings, under login. */
+/* Above the zap dialog and zap settings, under login.
+   Stays until Yes or No. A tap on the zap dialog or the page does not answer it. */
 #zapPayOverlay {
   z-index: 53;
+}
+
+html:has(#zapPayOverlay:not([hidden])) .app,
+html:has(#zapPayOverlay:not([hidden])) #zapOverlay,
+html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
+  pointer-events: none;
 }
 
 #zapOverlay {
