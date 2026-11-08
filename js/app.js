@@ -20726,6 +20726,24 @@ let CS77_FILTER_LOW_REP = 20;
     return "No recent zaps.";
   }
 
+  function zapTipsIncludeObserver(entries) {
+    const user = normalizeLoginUser(observer());
+    if (!user || !entries) return false;
+    for (let i = 0; i < entries.length; i++) {
+      if (normalizeLoginUser(entries[i] && entries[i].who) === user) return true;
+    }
+    return false;
+  }
+
+  // The open list named this account. Keep the bolt yellow after the pointer leaves.
+  function markZapStatFromTips(author, permlink, entries) {
+    if (!zapTipsIncludeObserver(entries)) return;
+    rememberZappedContent(author, permlink);
+    document.querySelectorAll(".zap-stat-btn").forEach((btn) => {
+      if (zapButtonMatches(btn, author, permlink)) btn.classList.add("is-zapped");
+    });
+  }
+
   function loadZapTipRecord(author, permlink) {
     const key = author + "/" + permlink;
     const hit = zapTipsCache.get(key);
@@ -20974,6 +20992,7 @@ let CS77_FILTER_LOW_REP = 20;
         openZapTips.historyOldestMs = rec.oldestMs;
         paintZapTipsPanel();
         placeZapTips(anchor, panel);
+        markZapStatFromTips(author, permlink, openZapTips.entries);
       })
       .catch(() => {
         if (!openZapTips || openZapTips.gen !== gen) return;
