@@ -21190,6 +21190,14 @@ let CS77_FILTER_LOW_REP = 20;
     openZapPayConfirm();
   }
 
+  // Single tap posts the receipt as soon as Yes is chosen. The question says so
+  // only when a signed-in user can comment on this post or comment.
+  function zapPayCommentNote() {
+    if (!zapState.singleTap || !zapState.permlink || !observer()) return "";
+    const kind = zapState.kind === "comment" ? "comment" : "post";
+    return "A comment will be added on the zapped " + kind + ".";
+  }
+
   function openZapPayConfirm() {
     if (zapWalletGiveUpTimer) {
       clearTimeout(zapWalletGiveUpTimer);
@@ -21202,6 +21210,12 @@ let CS77_FILTER_LOW_REP = 20;
       const sats = formatGroupedNumber(zapState.sentSats || 0, 0);
       const who = zapState.author ? " to @" + zapState.author : "";
       lead.textContent = "Was the payment of " + sats + " sats" + who + " successful?";
+    }
+    const note = $("#zapPayNote");
+    const noteText = zapPayCommentNote();
+    if (note) {
+      note.textContent = noteText;
+      note.hidden = !noteText;
     }
     ov.hidden = false;
     zapPayOpenedAt = Date.now();
@@ -21226,7 +21240,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (link && !link.hidden) focusDesktop(link);
   }
 
-  function acceptZapWalletPaid() {
+  async function acceptZapWalletPaid() {
     const ov = $("#zapPayOverlay");
     if (!ov || ov.hidden) return;
     ov.hidden = true;
@@ -21235,14 +21249,18 @@ let CS77_FILTER_LOW_REP = 20;
     const hidden = !zapDialogOpen();
     markZapLightningSent(zapState.sentSats, zapState.invoice);
     if (hidden) {
-      if (zapState.offerComment) revealSingleTapDialog();
-      else {
-        finishSingleTap(true);
+      if (zapState.offerComment) await submitZapReceipt();
+      if (!zapState.singleTap) return;
+      // The receipt is already posted. Open the dialog only when that comment
+      // did not go out, so it can be tried again without another payment.
+      if (zapState.offerComment) {
+        revealSingleTapDialog();
         return;
       }
-    } else {
-      paintZapForm();
+      finishSingleTap(true);
+      return;
     }
+    paintZapForm();
     const submit = $("#zapSubmit");
     if (submit && !submit.hidden) focusDesktop(submit);
   }
