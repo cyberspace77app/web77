@@ -142,7 +142,7 @@ let CS77_FILTER_LOW_REP = 20;
   let lightningBusy = false;
   let lightningDialogValue = "";
   let lightningDialogFocus = "";
-  // Lightning pay uses a saved Nostr web connect secret, then a browser wallet,
+  // Lightning pay uses a saved Nostr Wallet Connect secret, then a browser wallet,
   // then a lightning: link. The secret is edited in Add Bitcoin Lightning.
   let zapSendGen = 0;
   let zapLookGen = 0;
