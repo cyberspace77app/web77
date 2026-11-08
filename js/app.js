@@ -35645,6 +35645,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // j and k move through the feed. Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
+  // z opens the zap dialog for that same post, the way a click on its bolt does.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -35888,6 +35889,19 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function feedKeyZap() {
+    const items = feedKeyItems();
+    if (!items.length) return false;
+    const item = feedKeyLocked(items) || feedKeyCurrentItem(items);
+    if (!item) return false;
+    const card = item.querySelector("article.post-card");
+    const btn = card && card.querySelector(".card-stats .zap-stat-btn");
+    markFeedKeyCurrent(item);
+    if (!btn || btn.disabled) return true;
+    openContentZap(btn);
+    return true;
+  }
+
   function feedKeyVotePanelOpen() {
     return Boolean(openSlider && openSlider.panel && !openSlider.panel.hidden);
   }
@@ -35905,8 +35919,8 @@ let CS77_FILTER_LOW_REP = 20;
   function onFeedKeyDown(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
     const key = String(e.key || "").toLowerCase();
-    if (key !== "j" && key !== "k" && key !== "l" && key !== "enter") return;
-    if (e.repeat && (key === "l" || key === "enter")) return;
+    if (key !== "j" && key !== "k" && key !== "l" && key !== "z" && key !== "enter") return;
+    if (e.repeat && (key === "l" || key === "z" || key === "enter")) return;
     if (feedKeyDialogOpen()) return;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
     if (!feedKeyItems().length) return;
@@ -35915,7 +35929,8 @@ let CS77_FILTER_LOW_REP = 20;
     } else if (key === "j" || key === "k") {
       if (openSlider) hideVoteSlider();
       feedKeyMove(key === "j" ? 1 : -1);
-    } else feedKeyUpvote();
+    } else if (key === "z") feedKeyZap();
+    else feedKeyUpvote();
     e.preventDefault();
     e.stopPropagation();
   }
