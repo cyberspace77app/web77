@@ -6181,6 +6181,11 @@ a.wallet-tx-time:hover {
   z-index: 52;
 }
 
+/* Above the zap dialog and zap settings, under login. */
+#zapPayOverlay {
+  z-index: 53;
+}
+
 #zapOverlay {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -6641,6 +6646,8 @@ html:has(#voteVotersPanel.viewport-sheet:not([hidden])),
 body:has(#voteVotersPanel.viewport-sheet:not([hidden])),
 html:has(#zapOverlay:not([hidden])),
 body:has(#zapOverlay:not([hidden])),
+html:has(#zapPayOverlay:not([hidden])),
+body:has(#zapPayOverlay:not([hidden])),
 html:has(#lightningOverlay:not([hidden])),
 body:has(#lightningOverlay:not([hidden])) {
   overflow: hidden;

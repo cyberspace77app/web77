@@ -56,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.20.47">
+  <link rel="stylesheet" href="/css/style.css?v=0.20.48">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -401,6 +401,17 @@
             <path fill="currentColor" fill-rule="evenodd" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 15.6 12 3.6 3.6 0 0 1 12 15.6z"/>
           </svg>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="zapPayOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="zapPayTitle">
+      <h2 id="zapPayTitle">Payment</h2>
+      <p class="login-lead" id="zapPayLead">Was the payment successful?</p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="zapPayYes">Yes</button>
+        <button type="button" class="btn-ghost" id="zapPayNo">No</button>
       </div>
     </div>
   </div>
@@ -881,6 +892,6 @@
   <script src="/js/auth.js?v=0.20.2"></script>
   <script src="/js/chain-queue.js?v=0.20.1"></script>
   <script src="/js/blacklist.js?v=0.20.0"></script>
-  <script src="/js/app.js?v=0.20.73"></script>
+  <script src="/js/app.js?v=0.20.74"></script>
 </body>
 </html>

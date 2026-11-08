@@ -143,8 +143,12 @@ let CS77_FILTER_LOW_REP = 20;
   let lightningDialogValue = "";
   let lightningDialogFocus = "";
   // Lightning pay uses a saved Nostr Wallet Connect secret, then a browser wallet,
-  // then a lightning: link. The secret is edited in Add Bitcoin Lightning.
+  // then a lightning: link. Coming back from that link asks if the payment went through.
+  // The secret is edited in Add Bitcoin Lightning.
   let zapSendGen = 0;
+  // Armed after a lightning: link. leftAt is when the page first went away.
+  let zapWalletAsk = null;
+  let zapWalletGiveUpTimer = 0;
   let zapLookGen = 0;
   let zapHttp = null;
   let zapNwcSaved = false;
@@ -170,6 +174,7 @@ let CS77_FILTER_LOW_REP = 20;
     sent: false,
     sentSats: 0,
     offerComment: false,
+    receiptPlain: false,
     cast: false,
     paid: false,
     singleTap: false,
@@ -6937,6 +6942,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (communityTitleDialogOpen()) {
       if (!communityRoleBusy) dismissCommunityTitleDialog();
+      return;
+    }
+    if (zapPayConfirmOpen()) {
+      declineZapWalletPaid();
       return;
     }
     if (lightningDialogOpen()) {
@@ -19498,9 +19507,11 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.sent = false;
     zapState.sentSats = 0;
     zapState.offerComment = false;
+    zapState.receiptPlain = false;
     zapState.paid = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
+    cancelZapWalletReturn();
     syncZapPayAction();
   }
 
@@ -19520,9 +19531,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // NWC or WebLN with a logged-in user, a permlink, and a preimage turns Zap into
-  // Add comment and leaves Close. A paid lightning zap with no comment turns Zap
-  // into Close. Hive and hbd close the dialog when the transfer is in.
-  // A lightning: invoice replaces Zap and does not offer a comment.
+  // Add comment and leaves Close. A lightning: return the user confirms does the
+  // same without a preimage. A paid lightning zap with no comment turns Zap into
+  // Close. Hive and hbd close the dialog when the transfer is in.
+  // A lightning: invoice replaces Zap until that confirmation.
   function syncZapPayAction() {
     const submit = $("#zapSubmit");
     const link = $("#zapOpenWallet");
@@ -20025,6 +20037,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
+    cancelZapWalletReturn();
     clearZapMotion();
   }
 
@@ -20095,6 +20108,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     if (!zapState.singleTap || gen !== zapSendGen) return;
+    // The lightning: link stays in progress until the page comes back, or the give-up.
+    if (zapWalletAsk || zapPayConfirmOpen()) return;
     const silentWallet = Boolean(zapState.invoice) && !zapState.paid;
     if (!zapState.paid && !silentWallet) return;
     finishSingleTap(Boolean(zapState.paid));
@@ -20883,9 +20898,142 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function offerLightningUri(pr) {
+  // Ignore a lightning: click that refocuses immediately. A real wallet visit is longer.
+  const ZAP_WALLET_RETURN_MS = 400;
+  // Single tap has no Open wallet button. Stop blinking if the page never leaves.
+  const ZAP_WALLET_GIVEUP_MS = 4000;
+
+  function zapPayConfirmOpen() {
+    const ov = $("#zapPayOverlay");
+    return Boolean(ov && !ov.hidden);
+  }
+
+  function cancelZapWalletReturn() {
+    zapWalletAsk = null;
+    if (zapWalletGiveUpTimer) {
+      clearTimeout(zapWalletGiveUpTimer);
+      zapWalletGiveUpTimer = 0;
+    }
+    const ov = $("#zapPayOverlay");
+    if (ov) ov.hidden = true;
+  }
+
+  function scheduleZapWalletGiveUp() {
+    if (zapWalletGiveUpTimer) {
+      clearTimeout(zapWalletGiveUpTimer);
+      zapWalletGiveUpTimer = 0;
+    }
+    if (!zapState.singleTap || !zapWalletAsk || zapWalletAsk.left) return;
+    zapWalletGiveUpTimer = window.setTimeout(() => {
+      zapWalletGiveUpTimer = 0;
+      if (!zapState.singleTap || !zapWalletAsk || zapWalletAsk.left || zapPayConfirmOpen()) return;
+      cancelZapWalletReturn();
+      finishSingleTap(false);
+    }, ZAP_WALLET_GIVEUP_MS);
+  }
+
+  function armZapWalletReturn(sats) {
+    if (zapState.sent || !zapState.invoice) return;
+    if (zapWalletAsk && zapWalletAsk.invoice === zapState.invoice) return;
+    const away = document.hidden || (typeof document.hasFocus === "function" && !document.hasFocus());
+    zapWalletAsk = {
+      invoice: zapState.invoice,
+      sats: sats,
+      left: away,
+      leftAt: away ? Date.now() : 0,
+    };
+  }
+
+  function noteZapWalletLeft() {
+    if (!zapWalletAsk || zapWalletAsk.left) return;
+    zapWalletAsk.left = true;
+    zapWalletAsk.leftAt = Date.now();
+    if (zapWalletGiveUpTimer) {
+      clearTimeout(zapWalletGiveUpTimer);
+      zapWalletGiveUpTimer = 0;
+    }
+  }
+
+  function maybeAskZapWalletReturn() {
+    const ask = zapWalletAsk;
+    if (!ask || !ask.left || zapPayConfirmOpen()) return;
+    if (document.hidden) return;
+    if (typeof document.hasFocus === "function" && !document.hasFocus()) return;
+    if (Date.now() - ask.leftAt < ZAP_WALLET_RETURN_MS) {
+      ask.left = false;
+      ask.leftAt = 0;
+      scheduleZapWalletGiveUp();
+      return;
+    }
+    if (!zapState.invoice || zapState.invoice !== ask.invoice || zapState.sent) {
+      cancelZapWalletReturn();
+      return;
+    }
+    if (!zapDialogOpen() && !zapState.singleTap) {
+      cancelZapWalletReturn();
+      return;
+    }
+    zapWalletAsk = null;
+    openZapPayConfirm();
+  }
+
+  function openZapPayConfirm() {
+    if (zapWalletGiveUpTimer) {
+      clearTimeout(zapWalletGiveUpTimer);
+      zapWalletGiveUpTimer = 0;
+    }
+    const ov = $("#zapPayOverlay");
+    if (!ov || zapPayConfirmOpen()) return;
+    const lead = $("#zapPayLead");
+    if (lead) {
+      const sats = formatGroupedNumber(zapState.sentSats || 0, 0);
+      const who = zapState.author ? " to @" + zapState.author : "";
+      lead.textContent = "Was the payment of " + sats + " sats" + who + " successful?";
+    }
+    ov.hidden = false;
+    if (zapState.singleTap) clearZapMotion();
+    focusDesktop($("#zapPayYes"));
+  }
+
+  function declineZapWalletPaid() {
+    const ov = $("#zapPayOverlay");
+    if (!ov || ov.hidden) return;
+    ov.hidden = true;
+    if (zapState.singleTap && !zapDialogOpen()) {
+      finishSingleTap(false);
+      return;
+    }
+    syncZapPayAction();
+    const link = $("#zapOpenWallet");
+    if (link && !link.hidden) focusDesktop(link);
+  }
+
+  function acceptZapWalletPaid() {
+    const ov = $("#zapPayOverlay");
+    if (!ov || ov.hidden) return;
+    ov.hidden = true;
+    if (zapState.sent || !zapState.invoice) return;
+    const hidden = !zapDialogOpen();
+    markZapLightningSent(zapState.sentSats, zapState.invoice, "", true);
+    if (hidden) {
+      if (zapState.offerComment) revealSingleTapDialog();
+      else {
+        finishSingleTap(true);
+        return;
+      }
+    } else {
+      paintZapForm();
+    }
+    const submit = $("#zapSubmit");
+    if (submit && !submit.hidden) focusDesktop(submit);
+  }
+
+  function offerLightningUri(pr, sats) {
     zapState.invoice = pr;
     zapState.sent = false;
+    zapState.sentSats = sats;
+    zapState.receiptPlain = false;
+    armZapWalletReturn(sats);
     const href = "lightning:" + pr;
     const a = document.createElement("a");
     a.href = href;
@@ -20893,7 +21041,10 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    if (zapState.singleTap) return;
+    if (zapState.singleTap) {
+      scheduleZapWalletGiveUp();
+      return;
+    }
     const box = $("#zapWalletFallback");
     if (box) box.hidden = false;
     syncZapPayAction();
@@ -20917,18 +21068,23 @@ let CS77_FILTER_LOW_REP = 20;
     return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : "";
   }
 
-  function markZapLightningSent(sats, invoice, preimage) {
+  function markZapLightningSent(sats, invoice, preimage, plain) {
     zapState.sent = true;
     zapState.sentSats = sats;
     zapState.invoice = invoice || zapState.invoice || "";
     zapState.preimage = preimage || "";
-    zapState.offerComment = Boolean(
-      zapState.permlink && zapState.invoice && zapState.preimage && observer()
-    );
+    zapState.receiptPlain = Boolean(plain);
+    const canComment = Boolean(zapState.permlink && observer());
+    zapState.offerComment = zapState.receiptPlain
+      ? canComment
+      : Boolean(canComment && zapState.invoice && zapState.preimage);
     if (zapState.permlink) zapState.cast = true;
     zapState.paid = true;
+    const box = $("#zapWalletFallback");
+    if (box) box.hidden = true;
     const who = zapState.author ? "@" + zapState.author : "this user";
     setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
+    syncZapPayAction();
   }
 
   async function sendZapLightning(sats, gen) {
@@ -21057,7 +21213,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     if (!zapStill(gen)) return;
-    offerLightningUri(pr);
+    offerLightningUri(pr, sats);
   }
 
   async function submitZapHive(asset, amount, gen) {
@@ -21142,12 +21298,10 @@ let CS77_FILTER_LOW_REP = 20;
     return "!tip @" + author + "/" + permlink + " @" + sender + " app:cyberspace77 message:" + message;
   }
 
-  function zapReceiptBody() {
+  function zapReceiptLine() {
     const user = normalizeLoginUser(observer());
     const kind = zapState.kind === "comment" ? "comment" : "post";
     const sats = formatGroupedNumber(zapState.sentSats, 0);
-    const invoice = String(zapState.invoice || "").replace(/`/g, "").trim();
-    const preimage = String(zapState.preimage || "").replace(/`/g, "").trim();
     return (
       "!zapped \u26A1 @" +
       user +
@@ -21155,12 +21309,16 @@ let CS77_FILTER_LOW_REP = 20;
       kind +
       " with " +
       sats +
-      " sats via [cyberspace77.com](https://cyberspace77.com/)\n\nLN invoice: `" +
-      invoice +
-      "`\n\nLN preimage: `" +
-      preimage +
-      "`"
+      " sats via [cyberspace77.com](https://cyberspace77.com/)"
     );
+  }
+
+  function zapReceiptBody() {
+    const line = zapReceiptLine();
+    if (zapState.receiptPlain) return line;
+    const invoice = String(zapState.invoice || "").replace(/`/g, "").trim();
+    const preimage = String(zapState.preimage || "").replace(/`/g, "").trim();
+    return line + "\n\nLN invoice: `" + invoice + "`\n\nLN preimage: `" + preimage + "`";
   }
 
   function showZapReceiptComment(node) {
@@ -36433,6 +36591,33 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const zapSubmit = $("#zapSubmit");
     if (zapSubmit) zapSubmit.addEventListener("click", submitZap);
+    const zapOpenWallet = $("#zapOpenWallet");
+    if (zapOpenWallet) {
+      zapOpenWallet.addEventListener("click", () => {
+        if (!zapState.invoice || zapState.sent) return;
+        armZapWalletReturn(zapState.sentSats);
+      });
+    }
+    const zapPayYes = $("#zapPayYes");
+    if (zapPayYes) zapPayYes.addEventListener("click", acceptZapWalletPaid);
+    const zapPayNo = $("#zapPayNo");
+    if (zapPayNo) zapPayNo.addEventListener("click", declineZapWalletPaid);
+    const zapPayOverlay = $("#zapPayOverlay");
+    if (zapPayOverlay) {
+      zapPayOverlay.addEventListener("click", (e) => {
+        if (e.target !== zapPayOverlay) return;
+        const active = document.activeElement;
+        if (active && zapPayOverlay.contains(active)) return;
+        declineZapWalletPaid();
+      });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") noteZapWalletLeft();
+      else maybeAskZapWalletReturn();
+    });
+    window.addEventListener("blur", noteZapWalletLeft);
+    window.addEventListener("focus", maybeAskZapWalletReturn);
+    window.addEventListener("pageshow", maybeAskZapWalletReturn);
     const zapCancel = $("#zapCancel");
     if (zapCancel) zapCancel.addEventListener("click", closeZapOverlay);
     const zapSettings = $("#zapSettings");
