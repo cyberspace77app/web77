@@ -1812,6 +1812,14 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   scrollbar-width: thin;
 }
 
+.zap-tips-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-panel-opaque);
+  box-shadow: 0 4px 0 var(--bg-panel-opaque);
+}
+
 .zap-tips-accept {
   margin: 0;
   padding: 0.7rem 0.75rem 0.15rem;

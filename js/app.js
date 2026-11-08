@@ -20283,7 +20283,6 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const ZAP_TIPS_CACHE_MS = 60000;
-  const ZAP_TIPS_LIMIT = 40;
   const ZAP_HISTORY_LIMIT = 300;
   const ZAP_TIPS_YOUNG_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -20680,22 +20679,23 @@ let CS77_FILTER_LOW_REP = 20;
     const panel = zapTipsPanelNode;
     const open = openZapTips;
     if (!panel || !open) return;
-    const bits = [];
+    const bits = ['<div class="zap-tips-head">'];
     if (open.accepts === true) {
       bits.push(
         '<p class="zap-tips-accept">' + HiveMd.escapeHtml("@" + open.author + " accepts \u26A1 sats.") + "</p>"
       );
     }
-    bits.push('<p class="zap-tips-caption">Zaps</p>');
+    bits.push('<p class="zap-tips-caption">Zaps</p></div>');
     const entries = open.entries;
     let status = "";
     if (!entries) status = "Loading zaps\u2026";
     else if (!entries.length) status = zapTipsEmptyStatus(open);
-    const shown = entries ? entries.slice(0, ZAP_TIPS_LIMIT) : [];
-    if (shown.length) {
+    else if (open.commentsFailed) status = "Zap comments could not be loaded.";
+    else if (open.tipsFailed) status = "Hive tips could not be loaded.";
+    if (entries && entries.length) {
       const items = [];
-      for (let i = 0; i < shown.length; i++) {
-        const row = shown[i];
+      for (let i = 0; i < entries.length; i++) {
+        const row = entries[i];
         items.push(
           '<li class="zap-tip"><span class="zap-tip-name">@' +
             HiveMd.escapeHtml(row.who) +
@@ -20706,11 +20706,10 @@ let CS77_FILTER_LOW_REP = 20;
       }
       bits.push('<ul class="zap-tips-list">' + items.join("") + "</ul>");
     }
-    if (entries && entries.length > ZAP_TIPS_LIMIT) status = "Showing the latest " + ZAP_TIPS_LIMIT + ".";
-    else if (entries && entries.length && open.commentsFailed) status = "Zap comments could not be loaded.";
-    else if (entries && entries.length && open.tipsFailed) status = "Hive tips could not be loaded.";
     if (status) bits.push('<p class="zap-tips-status">' + HiveMd.escapeHtml(status) + "</p>");
+    const scrollTop = panel.scrollTop;
     panel.innerHTML = bits.join("");
+    if (panel.scrollTop !== scrollTop) panel.scrollTop = scrollTop;
   }
 
   function showZapTips(btn) {
