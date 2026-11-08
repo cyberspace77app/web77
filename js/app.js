@@ -4157,6 +4157,8 @@ let CS77_FILTER_LOW_REP = 20;
   function inInteractiveSurface(target) {
     const el = eventElement(target);
     if (!el) return false;
+    // The embed card is one link out. Its pills must not open vote, zap, or payout panels.
+    if (document.documentElement.classList.contains("is-embed")) return false;
     if (view && view.contains(el)) return true;
     const layer = document.getElementById("postLayer");
     return Boolean(layer && !layer.hidden && layer.contains(el));
@@ -34715,24 +34717,38 @@ let CS77_FILTER_LOW_REP = 20;
     return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span><span>${rep}</span>${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
   }
 
+  // Same pills as a feed card. Spans, not buttons: the card is one link to the post.
   function embedStatsHtml(post) {
-    const up = upvoteCountOf(post);
-    const down = downvoteCountOf(post);
+    rememberPayout(post);
+    const viewState = voteView(post);
+    const showDown = downvotePillWanted(post, viewState.downCount);
+    const downHidden = showDown ? "" : " hidden";
+    const upVoted = viewState.sign === 1 ? " is-voted" : "";
+    const downVoted = viewState.sign === -1 ? " is-voted" : "";
     const comments = Number(post.children) || 0;
+    const author = String(post.author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    const permlink = String(post.permlink || "").trim();
+    const zapped =
+      author && permlink && zappedContent.has(zapContentKey(author, permlink)) ? " is-zapped" : "";
     const bits = [
-      `<span class="embed-stat">▲ ${up}</span>`,
-      `<span class="embed-stat is-down">▼ ${down}</span>`,
-      `<span class="embed-stat">C ${comments}</span>`,
+      `<span class="vote-wrap vote-pills"><span class="vote-pair"><span class="vote-btn stat-pill${upVoted}">▲</span><span class="vote-count-btn stat-pill"><span class="vote-n">${viewState.upCount}</span></span></span><span class="vote-count-btn stat-pill${downVoted}" data-vote-dir="down"${downHidden}><span class="downvote-n">${downvoteCountLabel(viewState.downCount)}</span></span></span>`,
+      `<span class="zap-stat-btn stat-pill${zapped}">${zapMarkSvg()}</span>`,
+      `<span class="comment-n comment-count-link">C ${comments}</span>`,
     ];
     if (isRootPost(post)) {
+      const reblogs = reblogView(post);
+      const mine = reblogs.mine ? " is-reblogged" : "";
       bits.push(
-        `<span class="embed-stat">${reblogIconHtml()}<span class="reblog-n">${reblogCountOf(post)}</span></span>`
+        `<span class="reblog-wrap"><span class="reblog-btn stat-pill${mine}">${reblogIconHtml()}<span class="reblog-n">${reblogs.count}</span></span></span>`
       );
     }
     const figures = payoutFigures(post);
     const mode = figures.burned ? " is-burned" : figures.declined ? " is-declined" : "";
     bits.push(
-      `<span class="embed-stat is-payout${mode}"><span class="payout-value">${payoutTotalHtml(figures)}</span></span>`
+      `<span class="payout stat-pill${mode}"><span class="payout-value">${payoutTotalHtml(figures)}</span></span>`
     );
     return `<div class="card-stats embed-stats">${bits.join("")}</div>`;
   }

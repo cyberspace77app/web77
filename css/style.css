@@ -10092,39 +10092,10 @@ html.is-embed .embed-card .card-thumb {
   object-fit: cover;
 }
 
-.embed-stats {
-  flex-wrap: wrap;
-  gap: 0.55rem 0.7rem;
-}
-
-.embed-stat {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  min-height: 2.45rem;
-  padding: 0.45rem 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--gray);
-  font-family: var(--font-mono);
-  font-size: 1rem;
-  line-height: 1;
-}
-
-.embed-stat.is-payout {
-  color: var(--yellow);
-}
-
-.embed-stat.is-declined .payout-amount {
-  text-decoration: line-through;
-  text-decoration-thickness: 1.5px;
-}
-
-.embed-stat .reblog-icon {
-  width: 1.15em;
-  height: 1.15em;
+/* Under the card link and the video hit, so a click still opens the post. */
+html.is-embed .embed-card .embed-stats {
+  z-index: 0;
+  pointer-events: none;
 }
 
 body.is-dao #view {
