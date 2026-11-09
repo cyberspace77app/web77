@@ -833,18 +833,6 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   outline: none;
 }
 
-.session-account-switch {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.session-account-user {
-  text-transform: none;
-  letter-spacing: 0.04em;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 400;
-}
-
 .session-dropdown {
   display: none;
   position: absolute;

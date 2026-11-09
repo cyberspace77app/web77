@@ -6885,38 +6885,6 @@ let CS77_FILTER_LOW_REP = 20;
     resetPublishForm();
   }
 
-  function closeAccountSurfaces() {
-    const loginKey = $("#loginKey");
-    if (loginKey) loginKey.value = "";
-    const ownerKey = $("#ownerSignKey");
-    if (ownerKey) ownerKey.value = "";
-    closeLogoMenu();
-    walletMemoPlain.clear();
-    localVotes.clear();
-    votesCache.clear();
-    localReblogs.clear();
-    reblogsCache.clear();
-    payoutByKey.clear();
-    voteRefreshGen.clear();
-    commentSortByPost.clear();
-    const closeVoters = votersHist.on;
-    if (closeVoters) hideVoteVoters({ skipHistory: true });
-    hideVoteUi();
-    pendingPublish = false;
-    pendingCrossPost = null;
-    hideCrossPost(true);
-    publishSubs = [];
-    publishSubsUser = "";
-    stopNotifPoll();
-    resetNotifs();
-    resetAccountState();
-    clearSettingsProfileScratch();
-    clearSettingsKeys();
-    clearCommunityEditScratch();
-    clearSubspaceCreateDraft();
-    return closeVoters;
-  }
-
   async function activateLoggedInUser(username) {
     const name = normalizeLoginUser(username);
     const row = name ? loggedInRow(name) : null;
@@ -6942,29 +6910,23 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  function settleAccountView(closeVoters) {
+  // Refresh the open page for the account that is now signed in. The document
+  // stays up, so the Hive node is not rolled again and the address history
+  // stays put. Profile and subspace state is cleared first so the header
+  // loads again for this account.
+  async function refreshAccountView() {
     renderSession();
+    hydratePublishDraftFromStorage();
+    resetProfileState();
+    resetCommunityState();
+    feedParks.forEach((park) => discardFeedPark(park));
+    feedParks.clear();
+    communityTabParks.forEach((park) => {
+      if (park && park.holder) park.holder.replaceChildren();
+    });
+    communityTabParks.clear();
     currentViewKey = "";
-    if (editHistoryOn) {
-      editHistoryOn = false;
-      editHistoryPost = null;
-      pendingEditNav = { logoutRoute: true };
-      history.back();
-      return;
-    }
-    if (lightningHist.on) {
-      closeLightningDialog({ skipHistory: true });
-      lightningHist.pending = { logoutRoute: true };
-      history.back();
-      return;
-    }
-    if (closeVoters) {
-      votersHist.pending = { logoutRoute: true };
-      history.back();
-      return;
-    }
-    if (parseRoute().name === "publish") navigate(appHref("/"), true);
-    else route();
+    await route();
   }
 
   async function switchAccount(username) {
@@ -6975,8 +6937,7 @@ let CS77_FILTER_LOW_REP = 20;
     try {
       prepareAccountLeave();
       await activateLoggedInUser(next);
-      const closeVoters = closeAccountSurfaces();
-      settleAccountView(closeVoters);
+      await refreshAccountView();
     } finally {
       accountSwitchBusy = false;
     }
@@ -6999,14 +6960,9 @@ let CS77_FILTER_LOW_REP = 20;
           }
         }
       }
-      const closeVoters = closeAccountSurfaces();
-      if (next && isLoggedIn(next)) {
-        await activateLoggedInUser(next);
-        settleAccountView(closeVoters);
-        return;
-      }
-      await activateLoggedInUser("");
-      settleAccountView(closeVoters);
+      if (next && isLoggedIn(next)) await activateLoggedInUser(next);
+      else await activateLoggedInUser("");
+      await refreshAccountView();
     } finally {
       accountSwitchBusy = false;
     }
@@ -7103,7 +7059,7 @@ let CS77_FILTER_LOW_REP = 20;
     const rows = otherLoggedInUsers(user)
       .map((row) => {
         const safe = HiveMd.escapeHtml(row.user);
-        return `<button type="button" class="session-account-link session-account-user" data-switch-user="${safe}">@${safe}</button>`;
+        return `<button type="button" class="session-account-link" data-switch-user="${safe}">@${safe}</button>`;
       })
       .join("");
     return `<div class="session-account-switch" role="group" aria-label="Switch user"><button type="button" class="session-account-link" id="accountSwitchBtn">Switch user</button>${rows}</div>`;
