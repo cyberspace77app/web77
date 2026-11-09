@@ -175,6 +175,7 @@ let CS77_FILTER_LOW_REP = 20;
     asset: "ln",
     lnAddress: "",
     lnStatus: "missing",
+    lnDenied: false,
     pending: false,
     selected: { ln: 21, hive: 1, hbd: 0.1 },
     custom: { ln: "21", hive: "1", hbd: "0.10" },
@@ -19441,6 +19442,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!el) return;
     el.textContent = message || "";
     el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+    syncZapLnNote();
   }
 
   function zapFailText(err, fallback) {
@@ -19639,6 +19641,35 @@ let CS77_FILTER_LOW_REP = 20;
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
+  // The note stays gray until a zap is tried on an account with no address.
+  // That attempt turns this same note red. It is not copied into the status.
+  function syncZapLnNote() {
+    const missing = $("#zapLnMissing");
+    if (!missing) return;
+    const blocked = zapAssetName(zapState.asset) === "ln" && zapState.lnStatus !== "ready";
+    const message = blocked ? zapLnStatusMessage() : "";
+    const status = $("#zapStatus");
+    const statusText = status ? status.textContent || "" : "";
+    const echoed = Boolean(
+      message &&
+      status &&
+      status.classList.contains("is-error") &&
+      statusText === message
+    );
+    const denied = zapState.lnStatus === "missing" && zapState.lnDenied;
+    missing.hidden = !blocked || (echoed && !denied);
+    if (!missing.hidden) missing.textContent = message;
+    missing.classList.toggle("is-error", Boolean(!missing.hidden && denied));
+  }
+
+  function denyMissingLightning() {
+    zapState.lnDenied = true;
+    const status = $("#zapStatus");
+    const text = status ? status.textContent || "" : "";
+    if (text === zapLnStatusMessage() || text === "Checking the Lightning address\u2026") setZapStatus("", false);
+    else syncZapLnNote();
+  }
+
   // A logged-in lightning zap with a permlink turns Zap into Add comment and
   // leaves Close. That covers NWC, WebLN, and a confirmed lightning: return.
   // Hive and hbd close the dialog when the transfer is in.
@@ -19831,12 +19862,7 @@ let CS77_FILTER_LOW_REP = 20;
         btn.disabled = zapFormLocked();
       });
     }
-    const missing = $("#zapLnMissing");
-    if (missing) {
-      const show = asset === "ln" && zapState.lnStatus !== "ready";
-      missing.hidden = !show;
-      if (show) missing.textContent = zapLnStatusMessage();
-    }
+    syncZapLnNote();
     const amountBlock = $("#zapAmountBlock");
     if (amountBlock) amountBlock.hidden = asset === "ln" && zapState.lnStatus !== "ready";
     const label = $("#zapCustomLabel");
@@ -19877,6 +19903,7 @@ let CS77_FILTER_LOW_REP = 20;
     const note = $("#zapNote");
     if (note) zapState.note[previous] = note.value;
     zapState.asset = zapAssetName(asset);
+    if (zapState.asset !== "ln") zapState.lnDenied = false;
     hideZapFallback();
     setZapStatus("", false);
     paintZapForm();
@@ -20307,6 +20334,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.asset = "ln";
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
+    zapState.lnDenied = false;
     zapState.pending = false;
     zapState.selected = { ln: 21, hive: 1, hbd: 0.1 };
     zapState.custom = { ln: "21", hive: "1", hbd: "0.10" };
@@ -20395,6 +20423,7 @@ let CS77_FILTER_LOW_REP = 20;
     paintZapForm();
     if (!wasChecking) return;
     if (zapState.lnStatus === "ready") setZapStatus("", false);
+    else if (zapState.lnStatus === "missing") denyMissingLightning();
     else setZapStatus(zapLnStatusMessage(), true);
   }
 
@@ -21803,6 +21832,11 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (asset === "ln" && zapSendBlocked()) {
+      if (zapState.lnStatus === "missing") {
+        denyMissingLightning();
+        if (zapState.singleTap) revealSingleTapDialog("", false);
+        return;
+      }
       if (zapState.singleTap) revealSingleTapDialog(zapLnStatusMessage(), true);
       else setZapStatus(zapLnStatusMessage(), true);
       return;

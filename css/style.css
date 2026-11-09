@@ -6054,6 +6054,14 @@ a.wallet-tx-time:hover {
   color: var(--red-bright);
 }
 
+#zapLnMissing {
+  color: var(--gray);
+}
+
+#zapLnMissing.is-error {
+  color: var(--red-bright);
+}
+
 #zapLead:has(+ .zap-address:not([hidden])) {
   margin-bottom: 0.35rem;
 }
