@@ -20237,6 +20237,7 @@ let CS77_FILTER_LOW_REP = 20;
     const buttons = zapTapButtons(author, permlink);
     if (permlink) {
       rememberZappedContent(author, permlink);
+      invalidateZapTips(author, permlink);
       paintZappedStatButtons();
     } else if (keepProfile !== false && author) {
       zappedProfiles.add(author);
@@ -20378,6 +20379,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapState.singleTap) return;
     if (zapState.cast) {
       rememberZappedContent(zapState.author, zapState.permlink);
+      invalidateZapTips(zapState.author, zapState.permlink);
       zapState.cast = false;
       paintZappedStatButtons();
     }
@@ -20832,6 +20834,12 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
+  // A successful zap drops the loaded list. The next hover reads the chain again.
+  function invalidateZapTips(author, permlink) {
+    const key = zapContentKey(author, permlink);
+    if (key) zapTipsCache.delete(key);
+  }
+
   function loadZapTipRecord(author, permlink) {
     const key = author + "/" + permlink;
     const hit = zapTipsCache.get(key);
@@ -20870,10 +20878,11 @@ let CS77_FILTER_LOW_REP = 20;
         scannedAll: Boolean(tips.scannedAll),
         oldestMs: tips.oldestMs,
       };
-      if (record.complete) zapTipsCache.set(key, record);
-      else {
-        const current = zapTipsCache.get(key);
-        if (current && current.pending === pending) zapTipsCache.delete(key);
+      // A zap during this read deletes the slot. Do not put the old list back.
+      const current = zapTipsCache.get(key);
+      if (current && current.pending === pending) {
+        if (record.complete) zapTipsCache.set(key, record);
+        else zapTipsCache.delete(key);
       }
       return {
         entries: entries,
