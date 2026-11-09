@@ -7062,7 +7062,7 @@ let CS77_FILTER_LOW_REP = 20;
         return `<button type="button" class="session-account-link" data-switch-user="${safe}">@${safe}</button>`;
       })
       .join("");
-    return `<div class="session-account-switch" role="group" aria-label="Switch user"><button type="button" class="session-account-link" id="accountSwitchBtn">Switch user</button>${rows}</div>`;
+    return `<div class="session-account-switch" role="group" aria-label="Switch user"><button type="button" class="session-account-link session-account-switch-btn" id="accountSwitchBtn" aria-label="Switch user"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter"><path d="M4 7h16"/><path d="M16.6 3.6 20 7l-3.4 3.4"/><path d="M20 17H4"/><path d="M7.4 13.6 4 17l3.4 3.4"/></g></svg></button>${rows}</div>`;
   }
 
   function renderSession() {

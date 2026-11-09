@@ -833,6 +833,31 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   outline: none;
 }
 
+/* Icon replaces the Switch user label. 1rem keeps the stroke readable next to the 0.68rem labels. */
+.session-account-switch-btn {
+  display: flex;
+  align-items: center;
+  padding-top: calc(0.75rem - 0.16rem);
+  padding-bottom: calc(0.75rem - 0.16rem);
+}
+
+.session-account-switch-btn svg {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.session-account-switch-btn:hover,
+.session-account-switch-btn:focus-visible {
+  text-shadow: none;
+}
+
+.session-account-switch-btn:hover svg,
+.session-account-switch-btn:focus-visible svg {
+  filter: drop-shadow(0 0 6px rgba(255, 225, 74, 0.55));
+}
+
 .session-dropdown {
   display: none;
   position: absolute;
@@ -8197,6 +8222,11 @@ body:has(#lightningOverlay:not([hidden])) {
   .logo-dropdown-link,
   .session-account-link {
     padding: 0.9rem 1.15rem;
+  }
+
+  .session-account-switch-btn {
+    padding-top: calc(0.9rem - 0.16rem);
+    padding-bottom: calc(0.9rem - 0.16rem);
   }
 
   .header-right > .node-menu {
