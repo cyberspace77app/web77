@@ -327,6 +327,29 @@ html.has-mouse .logo-menu:hover .logo-dropdown {
   text-shadow: var(--glow-yellow);
 }
 
+/* Same 1.15rem gear as #zapSettings. No label; the link name is the aria-label. */
+.logo-settings-link {
+  display: flex;
+  align-items: center;
+}
+
+.logo-settings-link svg {
+  display: block;
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: 0 0 auto;
+}
+
+.logo-settings-link:hover,
+.logo-settings-link:focus-visible {
+  text-shadow: none;
+}
+
+.logo-settings-link:hover svg,
+.logo-settings-link:focus-visible svg {
+  filter: drop-shadow(0 0 6px rgba(255, 225, 74, 0.55));
+}
+
 .logo-dropdown-favs {
   display: flex;
   flex-direction: column;
@@ -9524,6 +9547,19 @@ min-height: 0;
 #settingsGeneralForm .settings-zap-field {
   margin-top: 1.85rem;
   margin-bottom: 0;
+}
+
+#settingsGeneralForm .settings-browser-field {
+  margin-top: 1.85rem;
+  margin-bottom: 0;
+}
+
+#localDataStatus {
+  margin-top: 0;
+}
+
+#localDataStatus.is-error {
+  color: var(--red-bright);
 }
 
 #settingsGeneralForm h2.settings-section-line {

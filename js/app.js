@@ -6779,6 +6779,7 @@ let CS77_FILTER_LOW_REP = 20;
   function paintLogoMenu() {
     const about = $("#logoAboutLink");
     const dao = $("#logoDaoLink");
+    const settings = $("#logoSettingsLink");
     const welcome = $("#logoWelcomeLink");
     const feed = $("#logoFeedLink");
     const search = $("#logoSearchLink");
@@ -6789,11 +6790,12 @@ let CS77_FILTER_LOW_REP = 20;
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = "welcome, feed, search, spaces, subspaces, dao, and about";
+    const menuLabel = "welcome, feed, search, spaces, subspaces, dao, settings, and about";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
     if (dao) dao.setAttribute("href", appHref("/witnesses"));
+    if (settings) settings.setAttribute("href", appHref("/settings"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
     if (search) search.setAttribute("href", appHref("/search"));
@@ -7031,6 +7033,10 @@ let CS77_FILTER_LOW_REP = 20;
       if (scrollPeoplePanel(e)) return;
     }
     if (e.key !== "Escape") return;
+    if (localDataDialogOpen()) {
+      hideLocalDataDialog();
+      return;
+    }
     if (crossPostOpen()) {
       if (crossPostMenuOpen()) {
         closeCrossPostMenu();
@@ -8917,7 +8923,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function persistPublishDraftNow() {
-    if (publishEdit) return;
+    if (localDataClearing || publishEdit) return;
     savePublishDraft();
     if (!publishFormHasContent()) {
       const ov = $("#publishOverlay");
@@ -9085,6 +9091,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function persistCommentDraftNow() {
+    if (localDataClearing) return;
     const composer = commentDraftComposer;
     if (!composer || !composer.isConnected) {
       if (commentDraftInterval || commentDraftTimer) stopCommentDraftAutosave();
@@ -32128,8 +32135,170 @@ let CS77_FILTER_LOW_REP = 20;
             </svg>
           </button>
         </div>
+        <div class="settings-field settings-browser-field">
+          <h2 class="settings-section-title settings-section-line" id="settingsBrowserHeading"><span>This browser</span></h2>
+          <button type="button" class="btn-ghost btn-compact" id="settingsClearLocalData">Clear local data</button>
+        </div>
       </form>
     `;
+  }
+
+  let localDataClearing = false;
+
+  function localDataDialogOpen() {
+    const el = $("#localDataOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function setLocalDataStatus(message, isError) {
+    const el = $("#localDataStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.hidden = !message;
+    el.classList.toggle("is-error", Boolean(isError && message));
+  }
+
+  function hideLocalDataDialog(force) {
+    if (localDataClearing && !force) return;
+    const el = $("#localDataOverlay");
+    if (el) el.hidden = true;
+    setLocalDataStatus("");
+    const confirmBtn = $("#localDataConfirm");
+    const cancelBtn = $("#localDataCancel");
+    if (confirmBtn) confirmBtn.disabled = false;
+    if (cancelBtn) cancelBtn.disabled = false;
+  }
+
+  function openLocalDataDialog() {
+    if (localDataClearing) return;
+    const el = $("#localDataOverlay");
+    if (!el) return;
+    setLocalDataStatus("");
+    const confirmBtn = $("#localDataConfirm");
+    const cancelBtn = $("#localDataCancel");
+    if (confirmBtn) confirmBtn.disabled = false;
+    if (cancelBtn) cancelBtn.disabled = false;
+    el.hidden = false;
+    if (cancelBtn) cancelBtn.focus();
+  }
+
+  function deleteSiteDatabase(name) {
+    return new Promise((resolve) => {
+      if (!name || !window.indexedDB) {
+        resolve();
+        return;
+      }
+      let req;
+      try {
+        req = indexedDB.deleteDatabase(name);
+      } catch (err) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      req.onsuccess = finish;
+      req.onerror = finish;
+      req.onblocked = () => {
+        setTimeout(finish, 400);
+      };
+    });
+  }
+
+  async function siteDatabaseNames() {
+    const names = ["cs77-auth"];
+    if (!window.indexedDB || typeof indexedDB.databases !== "function") return names;
+    try {
+      const rows = await indexedDB.databases();
+      if (!Array.isArray(rows)) return names;
+      for (let i = 0; i < rows.length; i++) {
+        const name = rows[i] && rows[i].name;
+        if (name && names.indexOf(name) < 0) names.push(name);
+      }
+    } catch (err) {
+      /* the known database is still deleted */
+    }
+    return names;
+  }
+
+  function clearSiteCookies() {
+    let raw = "";
+    try {
+      raw = document.cookie || "";
+    } catch (err) {
+      return;
+    }
+    if (!raw) return;
+    const parts = raw.split(";");
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i].split("=")[0].trim();
+      if (!name) continue;
+      document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    }
+  }
+
+  async function clearSiteCaches() {
+    if (!window.caches || typeof caches.keys !== "function") return;
+    try {
+      const keys = await caches.keys();
+      for (let i = 0; i < keys.length; i++) {
+        await caches.delete(keys[i]).catch(() => false);
+      }
+    } catch (err) {
+      /* storage clear still continues */
+    }
+  }
+
+  async function clearSiteWorkers() {
+    if (!navigator.serviceWorker || typeof navigator.serviceWorker.getRegistrations !== "function") return;
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (let i = 0; i < regs.length; i++) {
+        await regs[i].unregister().catch(() => false);
+      }
+    } catch (err) {
+      /* storage clear still continues */
+    }
+  }
+
+  async function confirmClearLocalData() {
+    if (localDataClearing) return;
+    localDataClearing = true;
+    stopPublishDraftAutosave();
+    stopCommentDraftAutosave();
+    const confirmBtn = $("#localDataConfirm");
+    const cancelBtn = $("#localDataCancel");
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    setLocalDataStatus("Clearing…");
+    try {
+      const names = await siteDatabaseNames();
+      for (let i = 0; i < names.length; i++) await deleteSiteDatabase(names[i]);
+      await clearSiteCaches();
+      await clearSiteWorkers();
+      clearSiteCookies();
+      try {
+        localStorage.clear();
+      } catch (err) {
+        /* private mode */
+      }
+      try {
+        sessionStorage.clear();
+      } catch (err) {
+        /* private mode */
+      }
+    } catch (err) {
+      localDataClearing = false;
+      if (confirmBtn) confirmBtn.disabled = false;
+      if (cancelBtn) cancelBtn.disabled = false;
+      setLocalDataStatus("Could not clear data in this browser.", true);
+      return;
+    }
+    window.location.replace(appHref("/"));
   }
 
   function fillSettingsWeights() {
@@ -32192,6 +32361,8 @@ let CS77_FILTER_LOW_REP = 20;
         openLightningDialog();
       });
     }
+    const clearLocal = $("#settingsClearLocalData");
+    if (clearLocal) clearLocal.addEventListener("click", openLocalDataDialog);
   }
 
   function profileObject(metadata) {
@@ -37877,6 +38048,22 @@ let CS77_FILTER_LOW_REP = 20;
         if (e.target.closest("#publishDiscardConfirm")) {
           e.preventDefault();
           discardPublishAndClose();
+        }
+      });
+    }
+    const localDataOverlay = $("#localDataOverlay");
+    if (localDataOverlay) {
+      localDataOverlay.addEventListener("click", (e) => {
+        if (localDataClearing) return;
+        if (e.target === localDataOverlay || e.target.closest("#localDataCancel")) {
+          hideLocalDataDialog();
+          const opener = $("#settingsClearLocalData");
+          if (opener) opener.focus();
+          return;
+        }
+        if (e.target.closest("#localDataConfirm")) {
+          e.preventDefault();
+          confirmClearLocalData();
         }
       });
     }
