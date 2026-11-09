@@ -6143,6 +6143,7 @@ a.wallet-tx-time:hover {
 
 #zapLnMissing {
   color: var(--gray);
+  font-size: 0.82rem;
 }
 
 #zapLnMissing.is-error {
