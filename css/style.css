@@ -3638,6 +3638,45 @@ a.tag:hover {
   border-radius: 12px;
 }
 
+/* Imgur lays the post out at 540px. The wrapper clips that frame, and md.js
+   scales it down when the column is narrower. */
+.post-body .imgur-embed,
+.comment-body .imgur-embed,
+.post-card .imgur-embed {
+  width: 100%;
+  max-width: 540px;
+  margin: 1.35rem auto;
+  line-height: normal;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.post-card .imgur-embed {
+  position: relative;
+  z-index: 1;
+  margin: 0 auto;
+}
+
+.post-body .imgur-embed blockquote.imgur-embed-pub,
+.comment-body .imgur-embed blockquote.imgur-embed-pub,
+.post-card .imgur-embed blockquote.imgur-embed-pub {
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-style: normal;
+  color: inherit;
+}
+
+.imgur-embed iframe {
+  display: block;
+  width: 540px;
+  max-width: none;
+  border: 0;
+  transform-origin: top left;
+}
+
 /* Comments */
 .comments {
   margin-top: 2.25rem;

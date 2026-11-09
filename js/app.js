@@ -12604,6 +12604,7 @@ let CS77_FILTER_LOW_REP = 20;
     } else {
       // A poll takes the media slot. One video plays here when that video
       // comes before a preview image, or when it is 3Speak or Skate Hype.
+      // An Imgur post uses that same slot when it is the first media.
       // Otherwise the preview image keeps the slot.
       const poll = pollShellHtml(shown);
       const video = poll ? "" : HiveMd.previewVideo(shown);
@@ -14347,6 +14348,15 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const state = searchPages[page];
+    // A typed user query keeps the rows already on screen. The searching
+    // row is for the button, or for Enter when that name is not a result yet.
+    if (state.loading && page === "users" && !state.showLoading) {
+      if (!list.querySelector(".community-row")) {
+        list.className = "community-list";
+        list.innerHTML = "";
+      }
+      return;
+    }
     if (state.loading) {
       list.className = "community-list";
       list.innerHTML = searchLoadingRowHtml();
@@ -14364,6 +14374,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (!state.results.length) {
       list.className = "community-list";
       if (!state.done) {
+        if (page === "users" && !state.showLoading) {
+          if (!list.querySelector(".community-row")) list.innerHTML = "";
+          return;
+        }
         list.innerHTML = searchLoadingRowHtml();
         return;
       }
@@ -14384,6 +14398,7 @@ let CS77_FILTER_LOW_REP = 20;
     state.looked = false;
     state.loading = false;
     state.loadingMore = false;
+    state.showLoading = false;
     state.error = "";
     state.results = [];
     state.done = false;
@@ -14991,7 +15006,7 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if ((now.looked || now.loading) && userSearchQuery(now.query) === next) return;
-      runSearch();
+      runSearch({ live: true });
     }, SEARCH_USER_DEBOUNCE_MS);
   }
 
@@ -15004,7 +15019,7 @@ let CS77_FILTER_LOW_REP = 20;
     }, 0);
   }
 
-  async function runSearch() {
+  async function runSearch(opts) {
     if (searchUserTimer) {
       clearTimeout(searchUserTimer);
       searchUserTimer = 0;
@@ -15033,10 +15048,14 @@ let CS77_FILTER_LOW_REP = 20;
       paintSearchResults();
       return;
     }
+    const live = Boolean(opts && opts.live) && page === "users";
     resetSearchPageState(state);
     state.query = raw;
     state.looked = true;
     state.loading = true;
+    // Typing updates the list when names arrive. The searching row waits
+    // for the button, or for Enter before a listed user is opened.
+    state.showLoading = !live;
     setSearchStatus("");
     setSearchMore(false);
     paintSearchResults();
@@ -34843,6 +34862,13 @@ let CS77_FILTER_LOW_REP = 20;
     return `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="" onerror="this.remove()">`;
   }
 
+  function embedImgurHtml(post) {
+    if (!showNsfwContent() && postHasNsfw(post)) return "";
+    const html = HiveMd.previewVideo(post);
+    if (!html || html.indexOf("imgur-embed") === -1) return "";
+    return html;
+  }
+
   function embedSpeakSrc(src) {
     const next = String(src || "").replace(/([?&])autoplay=[^&]*/gi, "$1autoplay=0");
     if (/[?&]autoplay=0(?:&|$)/.test(next)) return next;
@@ -34922,9 +34948,10 @@ let CS77_FILTER_LOW_REP = 20;
       : "";
     const speak = embedSpeakHtml(post);
     const file = speak ? "" : embedFileVideoHtml(post);
-    const media = speak || file || embedImageHtml(post);
+    const imgur = speak || file ? "" : embedImgurHtml(post);
+    const media = speak || file || imgur || embedImageHtml(post);
     const inner = `${embedMetaHtml(post)}<h2>${HiveMd.escapeHtml(embedTitleText(post))}</h2>${excerptHtml}${media}${embedStatsHtml(post)}`;
-    if (!speak && !file) {
+    if (!speak && !file && !imgur) {
       return `<a class="post-card embed-card" href="${href}" target="_blank" rel="noopener noreferrer" data-author="${author}" data-permlink="${permlink}">${inner}</a>`;
     }
     const label = HiveMd.escapeHtml(embedTitleText(post));

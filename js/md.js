@@ -2020,12 +2020,220 @@
     return { url: url, trail: trail };
   }
 
+  // Imgur post ids are 5 or 7 characters. A gallery, tag, or topic URL is an
+  // album: the official embed id is "a/" plus that hash. A root post, an old
+  // /r/ link, and an i.imgur.com .gifv page are a single embed. A direct
+  // picture or video file is left for the image and file-video paths.
+  const IMGUR_ID_RE = /^[A-Za-z0-9]{5,7}$/;
+  const IMGUR_RESERVED = {
+    gallery: 1, topic: 1, topics: 1, t: 1, r: 1, a: 1,
+    user: 1, users: 1, account: 1, upload: 1, search: 1, explore: 1,
+    random: 1, signin: 1, login: 1, logout: 1, register: 1,
+    about: 1, apps: 1, jobs: 1, privacy: 1, rules: 1, tos: 1,
+    store: 1, pro: 1, emerald: 1, memes: 1, advertise: 1,
+    new: 1, hot: 1, settings: 1, inbox: 1, posts: 1, images: 1, albums: 1,
+  };
+
+  function imgurIdFromSlug(slug) {
+    let s = String(slug || "");
+    try {
+      s = decodeURIComponent(s);
+    } catch (err) {
+      return "";
+    }
+    if (IMGUR_ID_RE.test(s)) return s;
+    const cut = s.lastIndexOf("-");
+    if (cut < 0) return "";
+    const last = s.slice(cut + 1);
+    return IMGUR_ID_RE.test(last) ? last : "";
+  }
+
+  function imgurSingle(id) {
+    return { id: id, album: false, page: "https://imgur.com/" + id };
+  }
+
+  function imgurAlbum(id) {
+    return { id: id, album: true, page: "https://imgur.com/a/" + id };
+  }
+
+  function imgurPostFromUrl(href) {
+    const url = httpUrl(href);
+    if (!url) return null;
+    const host = bareHost(url).replace(/^www\./, "");
+    let path = trimmedPath(url);
+    if (!path || path === "/") return null;
+    const parts = path.split("/").slice(1);
+    if (host === "i.imgur.com") {
+      if (parts.length !== 1) return null;
+      const file = parts[0];
+      if (/^[A-Za-z0-9]{5,8}[sbtmlh]?\.(?:png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(file)) return null;
+      if (/^[A-Za-z0-9]{5,8}[sbtmlh]?\.(?:mp4|webm)$/i.test(file)) return null;
+      const gifv = /^([A-Za-z0-9]{5,7})\.gifv$/i.exec(file);
+      if (gifv) return imgurSingle(gifv[1]);
+      if (IMGUR_ID_RE.test(file)) return imgurSingle(file);
+      return null;
+    }
+    if (host !== "imgur.com" && host !== "m.imgur.com") return null;
+    if (parts.length && parts[parts.length - 1].toLowerCase() === "embed") parts.pop();
+    if (!parts.length) return null;
+    const head = parts[0].toLowerCase();
+    if (head === "a") {
+      if (parts.length !== 2) return null;
+      const id = imgurIdFromSlug(parts[1]);
+      return id ? imgurAlbum(id) : null;
+    }
+    if (head === "gallery" || head === "t" || head === "topic" || head === "r") {
+      if (parts.length < 2) return null;
+      const id = imgurIdFromSlug(parts[parts.length - 1]);
+      if (!id) return null;
+      if (head === "r") return imgurSingle(id);
+      return imgurAlbum(id);
+    }
+    if (parts.length !== 1) return null;
+    if (IMGUR_RESERVED[parts[0].toLowerCase()]) return null;
+    const id = imgurIdFromSlug(parts[0]);
+    return id ? imgurSingle(id) : null;
+  }
+
+  // The blockquote is Imgur's embed code. embed.js turns it into the iframe.
+  function imgurEmbedHtml(info) {
+    if (!info || !IMGUR_ID_RE.test(info.id)) return "";
+    const dataId = info.album ? "a/" + info.id : info.id;
+    const page = info.album ? "https://imgur.com/a/" + info.id : "https://imgur.com/" + info.id;
+    return (
+      '<div class="imgur-embed">' +
+      '<blockquote class="imgur-embed-pub" lang="en" data-id="' +
+      dataId +
+      '"><a href="' +
+      escapeHtml(page) +
+      '">View post on imgur.com</a></blockquote>' +
+      "</div>"
+    );
+  }
+
+  let imgurEmbedQueued = false;
+  let imgurEmbedTries = 0;
+  let imgurEmbedListening = false;
+
+  // Imgur lays the post out at 540px (the w= they put on the iframe). A narrower
+  // column clips that frame, so the iframe stays 540px and scales down to fit.
+  const IMGUR_FRAME_WIDTH = 540;
+  let imgurResizeObserver = null;
+
+  function fitImgurFrame(frame) {
+    if (!frame || !frame.style) return;
+    const box = frame.parentElement;
+    if (!box) return;
+    if (!box.dataset.imgurWatch && typeof ResizeObserver === "function") {
+      box.dataset.imgurWatch = "1";
+      if (!imgurResizeObserver) {
+        imgurResizeObserver = new ResizeObserver(function (entries) {
+          for (let i = 0; i < entries.length; i++) {
+            const iframe = entries[i].target.querySelector("iframe");
+            if (iframe) fitImgurFrame(iframe);
+          }
+        });
+      }
+      imgurResizeObserver.observe(box);
+    }
+    const boxWidth = box.clientWidth;
+    if (!boxWidth) return;
+    const scale = boxWidth < IMGUR_FRAME_WIDTH - 1 ? boxWidth / IMGUR_FRAME_WIDTH : 1;
+    frame.style.setProperty("width", IMGUR_FRAME_WIDTH + "px", "important");
+    frame.style.setProperty("max-width", "none", "important");
+    frame.style.setProperty("margin", "0", "important");
+    frame.style.setProperty("transform-origin", "top left", "important");
+    if (scale < 0.999) frame.style.setProperty("transform", "scale(" + scale.toFixed(4) + ")", "important");
+    else frame.style.removeProperty("transform");
+    const height = Math.round(parseFloat(frame.style.height));
+    if (height) {
+      const next = Math.round(height * scale) + "px";
+      if (box.style.height !== next) box.style.height = next;
+    }
+  }
+
+  function flushImgurEmbeds() {
+    const api = global.imgurEmbed;
+    if (!api || typeof api.createIframe !== "function") return false;
+    let guard = 0;
+    while (document.querySelector("blockquote.imgur-embed-pub") && guard < 40) {
+      api.createIframe();
+      guard++;
+    }
+    const frames = document.querySelectorAll(".imgur-embed iframe");
+    for (let i = 0; i < frames.length; i++) fitImgurFrame(frames[i]);
+    return true;
+  }
+
+  function onImgurEmbedMessage(e) {
+    if (!e || !e.source) return;
+    const origin = String(e.origin || "");
+    if (origin !== "https://imgur.com" && origin !== "https://i.imgur.com") return;
+    let data = e.data;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (err) {
+        return;
+      }
+    }
+    if (!data || data.message !== "resize_imgur") return;
+    const height = Math.round(parseFloat(data.height));
+    if (!height || height < 40 || height > 5000) return;
+    const frames = document.querySelectorAll(".imgur-embed iframe");
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow !== e.source) continue;
+      frames[i].style.setProperty("height", height + "px", "important");
+      fitImgurFrame(frames[i]);
+      return;
+    }
+  }
+
+  function ensureImgurEmbed() {
+    if (typeof document === "undefined") return;
+    if (!imgurEmbedListening) {
+      imgurEmbedListening = true;
+      window.addEventListener("message", onImgurEmbedMessage);
+    }
+    if (document.getElementById("imgur-embed-js")) return;
+    const script = document.createElement("script");
+    script.id = "imgur-embed-js";
+    script.src = "https://s.imgur.com/min/embed.js";
+    script.async = true;
+    script.charset = "utf-8";
+    (document.head || document.documentElement).appendChild(script);
+  }
+
+  function queueImgurEmbeds() {
+    if (typeof document === "undefined" || imgurEmbedQueued) return;
+    imgurEmbedQueued = true;
+    const run = function () {
+      imgurEmbedQueued = false;
+      if (!document.querySelector || !document.querySelector("blockquote.imgur-embed-pub")) {
+        imgurEmbedTries = 0;
+        return;
+      }
+      ensureImgurEmbed();
+      if (flushImgurEmbeds()) {
+        imgurEmbedTries = 0;
+        return;
+      }
+      imgurEmbedTries++;
+      if (imgurEmbedTries > 80) return;
+      imgurEmbedQueued = true;
+      setTimeout(run, 50);
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    else setTimeout(run, 0);
+  }
+
   // The same player the post body builds. Empty when the address is not a video.
   // YouTube Shorts, TikTok, and Skate Hype are portrait. A 3Speak short starts
   // portrait. Any other 3Speak frame stays landscape until its thumbnail is
   // taller than it is wide. The other hosted players are landscape. A wider
   // Skate Hype preview image drops the portrait frame. An Instagram Reel stays a link.
-  // ?orientation= or ?w= and ?h= replace that guess and stay locked.
+  // An Imgur post is the official blockquote embed. A direct i.imgur.com picture
+  // or video is not a post. ?orientation= or ?w= and ?h= replace that guess and stay locked.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
@@ -2041,6 +2249,10 @@
         else {
           const hosted = hostedVideoFromUrl(url);
           if (hosted && hosted.src) html = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
+          else {
+            const imgur = imgurPostFromUrl(url);
+            if (imgur) html = imgurEmbedHtml(imgur);
+          }
         }
       }
     }
@@ -2308,8 +2520,8 @@
   // is a sibling and the surrounding text stays in the post body.
   function liftBlockEmbeds(html) {
     return String(html || "").replace(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi, function (full, attrs, inner) {
-      if (!/<div class="(?:tweet-embed|embed)\b/.test(inner)) return full;
-      const re = /<div class="(?:tweet-embed|embed)\b[^>]*>[\s\S]*?<\/div>/gi;
+      if (!/<div class="(?:tweet-embed|imgur-embed|embed)\b/.test(inner)) return full;
+      const re = /<div class="(?:tweet-embed|imgur-embed|embed)\b[^>]*>[\s\S]*?<\/div>/gi;
       const pieces = [];
       let last = 0;
       let found = false;
@@ -2730,6 +2942,17 @@
       };
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startSkateObserver);
       else startSkateObserver();
+    }
+    if (typeof MutationObserver === "function") {
+      const imgurObserver = new MutationObserver(function () {
+        if (document.querySelector("blockquote.imgur-embed-pub")) queueImgurEmbeds();
+      });
+      const startImgurObserver = function () {
+        imgurObserver.observe(document.documentElement, { childList: true, subtree: true });
+        queueImgurEmbeds();
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startImgurObserver);
+      else startImgurObserver();
     }
   }
 
@@ -3794,6 +4017,8 @@
     const hosted = hostedVideoFromUrl(url.href);
     if (hosted && hosted.plain) return keepFrameHint(hosted.plain, src);
     if (directFileVideoUrl(url.href)) return url.href;
+    const imgur = imgurPostFromUrl(url.href);
+    if (imgur) return imgur.page;
     return "";
   }
 
@@ -3923,6 +4148,7 @@
     html = linkifyMentionsTags(html);
     html = wrapWideTables(html);
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
+    if (html.indexOf("imgur-embed-pub") !== -1) queueImgurEmbeds();
     return html;
   }
 
