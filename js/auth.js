@@ -10,16 +10,22 @@
   "use strict";
 
   const DB_NAME = "cs77-auth";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORE = "keys";
-  const RECORD_ID = "posting";
-  const NWC_RECORD_ID = "nwc";
-  // Set before the IndexedDB delete so a reload mid-logout still drops the key.
+  // Records are one role per account: "posting:alice", and later "active:alice"
+  // and "memo:alice". The wallet connection is "nwc:alice". Active and memo use
+  // this same wrap and stay stored until a later change saves them. Only the
+  // posting key of the active account is unwrapped into memory.
+  const STORED_KEY_ROLES = ["posting", "active", "memo"];
+  // Username whose posting key a reload must still delete.
   const AUTH_LOGOUT_KEY = "cs77_auth_logout";
   const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2/dist/index.mjs";
 
   let sessionBytes = null;
   let sessionUser = "";
+  // Account the page is acting as. A Keychain login sets this and leaves the
+  // posting key locked, so another account's stored key stays in the database.
+  let activeUser = "";
   let hiveTxMod = null;
   let hiveTxPromise = null;
   let readyPromise = null;
@@ -33,10 +39,8 @@
   function unlockMemory(username, bytes) {
     wipe(sessionBytes);
     sessionBytes = bytes;
-    sessionUser = String(username || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    sessionUser = accountName(username);
+    activeUser = sessionUser;
   }
 
   function lockMemory() {
@@ -110,19 +114,30 @@
     return idbRequest("readwrite", (store) => store.delete(id));
   }
 
-  function markAuthLogout() {
+  function validStoredName(name) {
+    return /^[a-z0-9.\-]{3,16}$/.test(name);
+  }
+
+  function recordId(role, username) {
+    return role + ":" + accountName(username);
+  }
+
+  function markAuthLogout(username) {
+    const name = accountName(username);
+    if (!validStoredName(name)) return;
     try {
-      localStorage.setItem(AUTH_LOGOUT_KEY, "1");
+      localStorage.setItem(AUTH_LOGOUT_KEY, name);
     } catch {
       /* ignore quota / private mode */
     }
   }
 
-  function authLogoutMarked() {
+  function readLogoutMark() {
     try {
-      return localStorage.getItem(AUTH_LOGOUT_KEY) === "1";
+      const name = accountName(localStorage.getItem(AUTH_LOGOUT_KEY) || "");
+      return validStoredName(name) ? name : "";
     } catch {
-      return false;
+      return "";
     }
   }
 
@@ -259,15 +274,26 @@
     return sessionUser === String(username).toLowerCase().replace(/^@/, "");
   }
 
-  async function persist(username, bytes) {
+  async function persistRole(role, username, bytes) {
+    const roleName = normalizeRole(role);
+    if (STORED_KEY_ROLES.indexOf(roleName) < 0) {
+      throw new Error("Unknown key role.");
+    }
+    const name = accountName(username);
+    if (!validStoredName(name)) throw new Error("Enter a valid Hive username.");
     const wrapped = await wrapBytes(bytes);
     await idbPut({
-      id: RECORD_ID,
-      username,
+      id: recordId(roleName, name),
+      role: roleName,
+      username: name,
       wrappingKey: wrapped.wrappingKey,
       iv: wrapped.iv,
       ciphertext: wrapped.ciphertext,
     });
+  }
+
+  async function persist(username, bytes) {
+    await persistRole("posting", username, bytes);
   }
 
   async function checkedPostingKey(username, wif) {
@@ -311,7 +337,7 @@
   async function storePostingBytes(name, bytes) {
     try {
       if (clearPromise) await clearPromise.catch(() => {});
-      unmarkAuthLogout();
+      if (readLogoutMark() === name) unmarkAuthLogout();
       await persist(name, bytes);
     } catch (err) {
       wipe(bytes);
@@ -432,8 +458,12 @@
 
   // Presence only. The connection string stays encrypted until a payment reads it.
   async function noteNwc() {
+    if (!activeUser) {
+      nwcPresent = false;
+      return false;
+    }
     try {
-      const record = await idbGet(NWC_RECORD_ID);
+      const record = await idbGet(recordId("nwc", activeUser));
       nwcPresent = recordWrapped(record);
     } catch {
       nwcPresent = false;
@@ -444,51 +474,74 @@
   async function ready() {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
+      const mark = readLogoutMark();
+      if (!mark) return;
       try {
-        if (authLogoutMarked()) {
-          lockMemory();
-          try {
-            await idbDelete(RECORD_ID);
-            unmarkAuthLogout();
-          } catch {
-            /* marker stays so the next load tries the delete again */
-          }
-          return;
-        }
-        let record;
-        try {
-          record = await idbGet(RECORD_ID);
-        } catch {
-          return;
-        }
-        if (!record || !record.wrappingKey || !record.ciphertext || !record.username) {
-          return;
-        }
-        try {
-          const bytes = await unwrapBytes(record);
-          if (!bytes || bytes.length !== 32) {
-            wipe(bytes);
-            await idbDelete(RECORD_ID).catch(() => {});
-            return;
-          }
-          unlockMemory(record.username, bytes);
-        } catch {
-          lockMemory();
-          await idbDelete(RECORD_ID).catch(() => {});
-        }
-      } finally {
-        await noteNwc();
+        if (sessionUser === mark) lockMemory();
+        if (activeUser === mark) activeUser = "";
+        await idbDelete(recordId("posting", mark));
+        unmarkAuthLogout();
+      } catch {
+        /* marker stays so the next load tries the delete again */
       }
     })();
     return readyPromise;
   }
 
-  function clear() {
+  // Unlock this account's posting key, or leave the key locked when the
+  // account signs with Keychain. Other accounts' keys stay stored.
+  async function activate(username, opts) {
+    const name = accountName(username);
+    const keychain = Boolean(opts && opts.keychain);
+    if (!validStoredName(name)) {
+      lockMemory();
+      activeUser = "";
+      nwcPresent = false;
+      return "";
+    }
+    activeUser = name;
+    if (!keychain && sessionUser === name && sessionBytes && sessionBytes.length === 32) {
+      await noteNwc();
+      return name;
+    }
     lockMemory();
-    markAuthLogout();
-    const job = idbDelete(RECORD_ID)
+    activeUser = name;
+    if (!keychain) {
+      let record = null;
+      try {
+        record = await idbGet(recordId("posting", name));
+      } catch {
+        record = null;
+      }
+      if (recordWrapped(record)) {
+        try {
+          const bytes = await unwrapBytes(record);
+          if (bytes && bytes.length === 32) unlockMemory(name, bytes);
+          else wipe(bytes);
+        } catch {
+          lockMemory();
+          activeUser = name;
+        }
+      }
+    }
+    await noteNwc();
+    return sessionUser === name ? name : "";
+  }
+
+  function clear(username) {
+    const name = accountName(username || activeUser || sessionUser);
+    if (!validStoredName(name)) {
+      lockMemory();
+      activeUser = "";
+      nwcPresent = false;
+      return Promise.resolve();
+    }
+    if (sessionUser === name) lockMemory();
+    if (activeUser === name) activeUser = "";
+    markAuthLogout(name);
+    const job = idbDelete(recordId("posting", name))
       .then(() => {
-        if (!sessionUser) unmarkAuthLogout();
+        if (readLogoutMark() === name) unmarkAuthLogout();
       })
       .catch(() => {});
     clearPromise = job;
@@ -517,9 +570,15 @@
     } finally {
       wipe(bytes);
     }
+    const name = activeUser;
+    if (!validStoredName(name)) {
+      throw new Error("Log in before saving the wallet connection.");
+    }
     try {
       await idbPut({
-        id: NWC_RECORD_ID,
+        id: recordId("nwc", name),
+        role: "nwc",
+        username: name,
         wrappingKey: wrapped.wrappingKey,
         iv: wrapped.iv,
         ciphertext: wrapped.ciphertext,
@@ -531,9 +590,14 @@
   }
 
   async function readNwc() {
+    if (!validStoredName(activeUser)) {
+      nwcPresent = false;
+      return "";
+    }
+    const id = recordId("nwc", activeUser);
     let record;
     try {
-      record = await idbGet(NWC_RECORD_ID);
+      record = await idbGet(id);
     } catch {
       nwcPresent = false;
       return "";
@@ -550,7 +614,7 @@
       return text;
     } catch {
       nwcPresent = false;
-      await idbDelete(NWC_RECORD_ID).catch(() => {});
+      await idbDelete(id).catch(() => {});
       return "";
     } finally {
       wipe(bytes);
@@ -559,7 +623,8 @@
 
   async function clearNwc() {
     nwcPresent = false;
-    await idbDelete(NWC_RECORD_ID);
+    if (!validStoredName(activeUser)) return;
+    await idbDelete(recordId("nwc", activeUser));
   }
 
   function hasNwc() {
@@ -818,6 +883,7 @@
 
   global.cs77Auth = {
     ready,
+    activate,
     login,
     clear,
     hasKey,
@@ -827,7 +893,7 @@
     hasNwc,
     peekNwc: noteNwc,
     user: function () {
-      return sessionUser;
+      return activeUser || sessionUser;
     },
     signBytes,
     broadcast,

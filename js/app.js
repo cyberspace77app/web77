@@ -21,8 +21,6 @@ let CS77_FILTER_LOW_REP = 20;
   // Hivemind list_subscribers accepts at most 100 names.
   const COMMUNITY_SUBSCRIBER_PAGE = 100;
   const SESSION_KEY = "cs77_user";
-  const KEYCHAIN_USER_KEY = "cs77_keychain_user";
-  const KEYCHAIN_PERSIST_KEY = "cs77_keychain_persist";
   const FEED_VIEW_KEY = "cs77_feed_view";
   const FEED_SORTS = ["feed", "latest", "trending"];
   const VOTE_WEIGHT_KEYS = {
@@ -66,6 +64,10 @@ let CS77_FILTER_LOW_REP = 20;
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
+  // Logged-in accounts, in login order. Posting-key and Keychain accounts share this list.
+  const LOGGED_IN_KEY = "cs77_logged_in";
+  // One settings object per account. Guests keep the original keys below.
+  const ACCOUNT_BAG_PREFIX = "cs77_account:";
   const PROFILE_FIELDS = ["name", "about", "location", "website", "profile_image", "cover_image"];
   const SETTINGS_METADATA_MAX = 16384;
   const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
@@ -537,52 +539,202 @@ let CS77_FILTER_LOW_REP = 20;
     return /^[a-z0-9.\-]{3,16}$/.test(name);
   }
 
-  function readKeychainUser() {
+  function readLoggedIn() {
     try {
-      const name = normalizeLoginUser(localStorage.getItem(KEYCHAIN_USER_KEY));
-      return validLoginUser(name) ? name : "";
+      const raw = localStorage.getItem(LOGGED_IN_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const out = [];
+      const seen = new Set();
+      parsed.forEach((row) => {
+        const user = normalizeLoginUser(row && row.user);
+        if (!validLoginUser(user) || seen.has(user)) return;
+        seen.add(user);
+        out.push({ user: user, via: row.via === "keychain" ? "keychain" : "posting" });
+      });
+      return out;
     } catch {
-      return "";
+      return [];
     }
   }
 
-  function keychainPersistStarted() {
+  function writeLoggedIn(list) {
     try {
-      return localStorage.getItem(KEYCHAIN_PERSIST_KEY) === "1";
-    } catch {
-      return false;
-    }
-  }
-
-  function writeKeychainUser(username) {
-    try {
-      localStorage.setItem(KEYCHAIN_USER_KEY, username);
-      localStorage.setItem(KEYCHAIN_PERSIST_KEY, "1");
+      localStorage.setItem(LOGGED_IN_KEY, JSON.stringify(list));
     } catch {
       /* ignore quota / private mode */
     }
   }
 
-  function clearKeychainUser() {
-    try {
-      localStorage.removeItem(KEYCHAIN_USER_KEY);
-    } catch {
-      /* ignore */
+  function rememberLoggedIn(username, via) {
+    const name = normalizeLoginUser(username);
+    if (!validLoginUser(name)) return;
+    const method = via === "keychain" ? "keychain" : "posting";
+    const list = readLoggedIn();
+    const idx = list.findIndex((row) => row.user === name);
+    if (idx >= 0) list[idx].via = method;
+    else list.push({ user: name, via: method });
+    writeLoggedIn(list);
+  }
+
+  function forgetLoggedIn(username) {
+    const name = normalizeLoginUser(username);
+    writeLoggedIn(readLoggedIn().filter((row) => row.user !== name));
+  }
+
+  function loggedInRow(username) {
+    const name = normalizeLoginUser(username);
+    const list = readLoggedIn();
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].user === name) return list[i];
     }
+    return null;
+  }
+
+  function isLoggedIn(username) {
+    return Boolean(loggedInRow(username));
+  }
+
+  function nextLoggedInUser(username) {
+    const list = readLoggedIn();
+    const name = normalizeLoginUser(username);
+    const idx = list.findIndex((row) => row.user === name);
+    if (idx < 0) return list.length ? list[0].user : "";
+    for (let step = 1; step < list.length; step++) {
+      const row = list[(idx + step) % list.length];
+      if (row.user !== name) return row.user;
+    }
+    return "";
+  }
+
+  function otherLoggedInUsers(username) {
+    const name = normalizeLoginUser(username);
+    return readLoggedIn().filter((row) => row.user !== name);
   }
 
   function restoreRememberedSession() {
-    const postingUser = (window.cs77Auth && cs77Auth.user()) || "";
     let sessionUser = normalizeLoginUser(sessionStorage.getItem(SESSION_KEY));
-    if (!validLoginUser(sessionUser)) sessionUser = "";
+    if (!validLoginUser(sessionUser) || !isLoggedIn(sessionUser)) sessionUser = "";
     if (!sessionUser) {
-      const user = postingUser || readKeychainUser();
-      if (user) sessionStorage.setItem(SESSION_KEY, user);
+      const list = readLoggedIn();
+      sessionUser = list.length ? list[0].user : "";
+    }
+    if (sessionUser) sessionStorage.setItem(SESSION_KEY, sessionUser);
+    else {
+      try {
+        sessionStorage.removeItem(SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  let activeBagUser = "";
+  let activeBag = null;
+
+  function accountBagKey(user) {
+    return ACCOUNT_BAG_PREFIX + user;
+  }
+
+  function readAccountBag(user) {
+    const name = normalizeLoginUser(user);
+    if (!validLoginUser(name)) return null;
+    if (name === activeBagUser && activeBag) return activeBag;
+    try {
+      const raw = localStorage.getItem(accountBagKey(name));
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistActiveBag() {
+    if (!activeBagUser || !activeBag) return;
+    try {
+      localStorage.setItem(accountBagKey(activeBagUser), JSON.stringify(activeBag));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function forgetActiveBagCache() {
+    activeBagUser = "";
+    activeBag = null;
+  }
+
+  function ensureActiveBag() {
+    const user = observer();
+    if (!validLoginUser(user)) {
+      forgetActiveBagCache();
+      return null;
+    }
+    if (activeBagUser === user && activeBag) return activeBag;
+    let bag = null;
+    try {
+      const raw = localStorage.getItem(accountBagKey(user));
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (data && typeof data === "object" && !Array.isArray(data)) bag = data;
+      }
+    } catch {
+      bag = null;
+    }
+    if (!bag) bag = { v: 1 };
+    activeBagUser = user;
+    activeBag = bag;
+    persistActiveBag();
+    return bag;
+  }
+
+  function readScopedItem(key) {
+    const user = observer();
+    if (!validLoginUser(user)) {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    }
+    const bag = ensureActiveBag();
+    if (!bag || !Object.prototype.hasOwnProperty.call(bag, key)) return null;
+    const value = bag[key];
+    return value == null ? null : String(value);
+  }
+
+  function writeScopedItem(key, value) {
+    const user = observer();
+    if (!validLoginUser(user)) {
+      try {
+        localStorage.setItem(key, String(value));
+      } catch {
+        /* ignore quota / private mode */
+      }
       return;
     }
-    // Remember a Keychain username already held by this tab. The marker survives logout,
-    // so a stale tab cannot write that username back.
-    if (!postingUser && !keychainPersistStarted()) writeKeychainUser(sessionUser);
+    const bag = ensureActiveBag();
+    if (!bag) return;
+    bag[key] = String(value);
+    persistActiveBag();
+  }
+
+  function removeScopedItem(key) {
+    const user = observer();
+    if (!validLoginUser(user)) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const bag = ensureActiveBag();
+    if (!bag || !Object.prototype.hasOwnProperty.call(bag, key)) return;
+    delete bag[key];
+    persistActiveBag();
   }
 
   function hasSigner(username) {
@@ -2088,7 +2240,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readStoredWeight(kind) {
     kind = normalizeVoteKind(kind);
-    const specific = parseStoredWeight(localStorage.getItem(VOTE_WEIGHT_KEYS[kind]));
+    const specific = parseStoredWeight(readScopedItem(VOTE_WEIGHT_KEYS[kind]));
     if (specific != null) return specific;
     return 100;
   }
@@ -2096,7 +2248,7 @@ let CS77_FILTER_LOW_REP = 20;
   function storeWeight(percent, kind) {
     kind = normalizeVoteKind(kind);
     const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
-    localStorage.setItem(VOTE_WEIGHT_KEYS[kind], String(pct));
+    writeScopedItem(VOTE_WEIGHT_KEYS[kind], String(pct));
     return pct;
   }
 
@@ -2106,7 +2258,7 @@ let CS77_FILTER_LOW_REP = 20;
     kind = normalizeVoteKind(kind);
     let raw = null;
     try {
-      raw = localStorage.getItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
+      raw = readScopedItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
     } catch {
       return null;
     }
@@ -2125,11 +2277,11 @@ let CS77_FILTER_LOW_REP = 20;
     const clear = !text || !Number.isFinite(n) || n <= 0;
     try {
       if (clear) {
-        localStorage.removeItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
+        removeScopedItem(DEFAULT_VOTE_WEIGHT_KEYS[kind]);
         return null;
       }
       const pct = Math.max(1, Math.min(100, Math.round(n)));
-      localStorage.setItem(DEFAULT_VOTE_WEIGHT_KEYS[kind], String(pct));
+      writeScopedItem(DEFAULT_VOTE_WEIGHT_KEYS[kind], String(pct));
       return pct;
     } catch {
       return null;
@@ -2144,7 +2296,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readStoredDownvoteWeight(kind) {
     kind = normalizeVoteKind(kind);
-    const specific = parseStoredWeight(localStorage.getItem(DOWNVOTE_WEIGHT_KEYS[kind]));
+    const specific = parseStoredWeight(readScopedItem(DOWNVOTE_WEIGHT_KEYS[kind]));
     if (specific != null) return specific;
     return 100;
   }
@@ -2152,7 +2304,7 @@ let CS77_FILTER_LOW_REP = 20;
   function storeDownvoteWeight(percent, kind) {
     kind = normalizeVoteKind(kind);
     const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
-    localStorage.setItem(DOWNVOTE_WEIGHT_KEYS[kind], String(pct));
+    writeScopedItem(DOWNVOTE_WEIGHT_KEYS[kind], String(pct));
     return pct;
   }
 
@@ -4886,7 +5038,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readStoredFeedView() {
     try {
-      const raw = localStorage.getItem(FEED_VIEW_KEY);
+      const raw = readScopedItem(FEED_VIEW_KEY);
       if (FEED_SORTS.indexOf(raw) >= 0) return raw;
     } catch {
       /* private mode */
@@ -4897,7 +5049,7 @@ let CS77_FILTER_LOW_REP = 20;
   function storeFeedView(sort) {
     if (!observer() || FEED_SORTS.indexOf(sort) < 0) return;
     try {
-      localStorage.setItem(FEED_VIEW_KEY, sort);
+      writeScopedItem(FEED_VIEW_KEY, sort);
     } catch {
       /* ignore quota / private mode */
     }
@@ -4905,7 +5057,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readFavoriteTags() {
     try {
-      const raw = localStorage.getItem(FAVORITE_TAGS_KEY);
+      const raw = readScopedItem(FAVORITE_TAGS_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
@@ -4920,7 +5072,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function storeFavoriteTags(tags) {
     try {
-      localStorage.setItem(FAVORITE_TAGS_KEY, JSON.stringify(tags));
+      writeScopedItem(FAVORITE_TAGS_KEY, JSON.stringify(tags));
     } catch {
       /* ignore quota / private mode */
     }
@@ -4950,7 +5102,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readFavoriteCommunities() {
     try {
-      const raw = localStorage.getItem(FAVORITE_COMMUNITIES_KEY);
+      const raw = readScopedItem(FAVORITE_COMMUNITIES_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
@@ -4970,7 +5122,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function storeFavoriteCommunities(list) {
     try {
-      localStorage.setItem(
+      writeScopedItem(
         FAVORITE_COMMUNITIES_KEY,
         JSON.stringify(
           list.map((row) => ({
@@ -4995,7 +5147,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readFavoriteUsers() {
     try {
-      const raw = localStorage.getItem(FAVORITE_USERS_KEY);
+      const raw = readScopedItem(FAVORITE_USERS_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
@@ -5010,7 +5162,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function storeFavoriteUsers(users) {
     try {
-      localStorage.setItem(FAVORITE_USERS_KEY, JSON.stringify(users));
+      writeScopedItem(FAVORITE_USERS_KEY, JSON.stringify(users));
     } catch {
       /* ignore quota / private mode */
     }
@@ -5827,31 +5979,46 @@ let CS77_FILTER_LOW_REP = 20;
 
   // One record for the signed-in user. Empty image is stored so the next
   // login can show the satoshi fallback immediately.
-  function readStoredProfileImage(user) {
-    if (!user) return null;
+  function profileImageValue(user, raw) {
+    if (raw == null || raw === "") return raw == null ? null : "";
     try {
-      const raw = localStorage.getItem(PROFILE_IMAGE_KEY);
-      if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-      if (String(data.user || "") !== user) return null;
-      if (!Object.prototype.hasOwnProperty.call(data, "image")) return null;
-      return String(data.image || "");
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        if (String(data.user || "") !== user) return null;
+        if (!Object.prototype.hasOwnProperty.call(data, "image")) return null;
+        return String(data.image || "");
+      }
     } catch {
-      return null;
+      /* a bare image string */
     }
+    return String(raw);
+  }
+
+  function readStoredProfileImage(user) {
+    const name = normalizeLoginUser(user);
+    if (!validLoginUser(name)) return null;
+    const bag = readAccountBag(name);
+    if (!bag || !Object.prototype.hasOwnProperty.call(bag, PROFILE_IMAGE_KEY)) return null;
+    return profileImageValue(name, bag[PROFILE_IMAGE_KEY]);
   }
 
   function writeStoredProfileImage(user, image) {
-    if (!user) return;
+    const name = normalizeLoginUser(user);
+    if (!validLoginUser(name)) return;
+    const payload = JSON.stringify({ user: name, image: String(image || "") });
+    if (observer() === name) {
+      writeScopedItem(PROFILE_IMAGE_KEY, payload);
+      return;
+    }
+    let bag = readAccountBag(name);
+    if (!bag) bag = { v: 1 };
+    bag[PROFILE_IMAGE_KEY] = payload;
     try {
-      localStorage.setItem(
-        PROFILE_IMAGE_KEY,
-        JSON.stringify({ user: String(user), image: String(image || "") })
-      );
+      localStorage.setItem(accountBagKey(name), JSON.stringify(bag));
     } catch {
       /* ignore quota / private mode */
     }
+    if (activeBagUser === name) activeBag = bag;
   }
 
   function metadataFromAccount(account) {
@@ -6708,18 +6875,22 @@ let CS77_FILTER_LOW_REP = 20;
       });
   }
 
-  function logout() {
-    stopPublishDraftAutosave();
-    clearStoredPublishDraft();
+  let accountSwitchBusy = false;
+
+  // Save this account's publish draft and drop the open comment draft.
+  // The session is still the account being left.
+  function prepareAccountLeave() {
     clearStoredCommentDraft();
+    hidePublishOverlay({ persist: !publishEdit });
+    resetPublishForm();
+  }
+
+  function closeAccountSurfaces() {
     const loginKey = $("#loginKey");
     if (loginKey) loginKey.value = "";
     const ownerKey = $("#ownerSignKey");
     if (ownerKey) ownerKey.value = "";
     closeLogoMenu();
-    if (window.cs77Auth) cs77Auth.clear();
-    sessionStorage.removeItem(SESSION_KEY);
-    clearKeychainUser();
     walletMemoPlain.clear();
     localVotes.clear();
     votesCache.clear();
@@ -6727,16 +6898,15 @@ let CS77_FILTER_LOW_REP = 20;
     reblogsCache.clear();
     payoutByKey.clear();
     voteRefreshGen.clear();
-    const closeVotersForLogout = votersHist.on;
-    if (closeVotersForLogout) hideVoteVoters({ skipHistory: true });
+    commentSortByPost.clear();
+    const closeVoters = votersHist.on;
+    if (closeVoters) hideVoteVoters({ skipHistory: true });
     hideVoteUi();
     pendingPublish = false;
     pendingCrossPost = null;
     hideCrossPost(true);
     publishSubs = [];
     publishSubsUser = "";
-    resetPublishForm();
-    hidePublishOverlay({ persist: false });
     stopNotifPoll();
     resetNotifs();
     resetAccountState();
@@ -6744,6 +6914,35 @@ let CS77_FILTER_LOW_REP = 20;
     clearSettingsKeys();
     clearCommunityEditScratch();
     clearSubspaceCreateDraft();
+    return closeVoters;
+  }
+
+  async function activateLoggedInUser(username) {
+    const name = normalizeLoginUser(username);
+    const row = name ? loggedInRow(name) : null;
+    forgetActiveBagCache();
+    if (validLoginUser(name)) sessionStorage.setItem(SESSION_KEY, name);
+    else {
+      try {
+        sessionStorage.removeItem(SESSION_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (window.cs77Auth && typeof cs77Auth.activate === "function") {
+      try {
+        await cs77Auth.activate(name, { keychain: Boolean(row && row.via === "keychain") });
+      } catch {
+        /* the session still changes */
+      }
+    }
+    if (validLoginUser(name)) ensureActiveBag();
+    zapNwcSaved = Boolean(
+      window.cs77Auth && typeof cs77Auth.hasNwc === "function" && cs77Auth.hasNwc()
+    );
+  }
+
+  function settleAccountView(closeVoters) {
     renderSession();
     currentViewKey = "";
     if (editHistoryOn) {
@@ -6759,13 +6958,58 @@ let CS77_FILTER_LOW_REP = 20;
       history.back();
       return;
     }
-    if (closeVotersForLogout) {
+    if (closeVoters) {
       votersHist.pending = { logoutRoute: true };
       history.back();
       return;
     }
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
     else route();
+  }
+
+  async function switchAccount(username) {
+    const next = normalizeLoginUser(username);
+    const current = observer();
+    if (accountSwitchBusy || !validLoginUser(next) || next === current || !isLoggedIn(next)) return;
+    accountSwitchBusy = true;
+    try {
+      prepareAccountLeave();
+      await activateLoggedInUser(next);
+      const closeVoters = closeAccountSurfaces();
+      settleAccountView(closeVoters);
+    } finally {
+      accountSwitchBusy = false;
+    }
+  }
+
+  async function logout() {
+    if (accountSwitchBusy) return;
+    accountSwitchBusy = true;
+    const leaving = observer();
+    try {
+      const next = leaving ? nextLoggedInUser(leaving) : "";
+      prepareAccountLeave();
+      if (leaving) {
+        forgetLoggedIn(leaving);
+        if (window.cs77Auth && typeof cs77Auth.clear === "function") {
+          try {
+            await cs77Auth.clear(leaving);
+          } catch {
+            /* the roster entry is already gone */
+          }
+        }
+      }
+      const closeVoters = closeAccountSurfaces();
+      if (next && isLoggedIn(next)) {
+        await activateLoggedInUser(next);
+        settleAccountView(closeVoters);
+        return;
+      }
+      await activateLoggedInUser("");
+      settleAccountView(closeVoters);
+    } finally {
+      accountSwitchBusy = false;
+    }
   }
 
   function logoFeedHref() {
@@ -6855,6 +7099,16 @@ let CS77_FILTER_LOW_REP = 20;
     closeNodeMenus();
   }
 
+  function switchUserMenuHtml(user) {
+    const rows = otherLoggedInUsers(user)
+      .map((row) => {
+        const safe = HiveMd.escapeHtml(row.user);
+        return `<button type="button" class="session-account-link session-account-user" data-switch-user="${safe}">@${safe}</button>`;
+      })
+      .join("");
+    return `<div class="session-account-switch" role="group" aria-label="Switch user"><button type="button" class="session-account-link" id="accountSwitchBtn">Switch user</button>${rows}</div>`;
+  }
+
   function renderSession() {
     paintLogoMenu();
     const user = observer();
@@ -6881,6 +7135,7 @@ let CS77_FILTER_LOW_REP = 20;
                   <a class="session-account-link" href="${repliesUrl}">Replies</a>
                   <a class="session-account-link" href="${walletUrl}">Wallet</a>
                   <a class="session-account-link" href="${HiveMd.escapeHtml(appHref("/settings"))}">Settings</a>
+                  ${switchUserMenuHtml(user)}
                   <button type="button" class="session-account-link" id="accountLogoutBtn">Logout</button>
                 </nav>
               </div>
@@ -7009,9 +7264,20 @@ let CS77_FILTER_LOW_REP = 20;
         dismissAccountMenu();
       }
       if (e.target.closest(".session-account-link")) {
+        const switchBtn = e.target.closest("[data-switch-user]");
         if (hoverFine()) dismissAccountMenu();
         else setAccountMenuOpen(false);
         setSessionMenuOpen(false);
+        if (switchBtn) {
+          e.preventDefault();
+          switchAccount(switchBtn.getAttribute("data-switch-user"));
+          return;
+        }
+        if (e.target.closest("#accountSwitchBtn")) {
+          e.preventDefault();
+          openLogin();
+          return;
+        }
         const focused = document.activeElement;
         if (focused && focused.closest && focused.closest("#sessionAccount")) focused.blur();
         return;
@@ -7257,8 +7523,9 @@ let CS77_FILTER_LOW_REP = 20;
     const resumePublish = pendingPublish;
     const resumeCross = pendingCrossPost;
     sessionStorage.setItem(SESSION_KEY, username);
-    if (method === "keychain") writeKeychainUser(username);
-    else clearKeychainUser();
+    rememberLoggedIn(username, method === "keychain" ? "keychain" : "posting");
+    forgetActiveBagCache();
+    ensureActiveBag();
     closeLogin();
     clearCommunityEditScratch();
     renderSession();
@@ -7333,7 +7600,12 @@ let CS77_FILTER_LOW_REP = 20;
       "Posting",
       (res) => {
         if (res && res.success) {
-          const done = window.cs77Auth ? cs77Auth.clear() : Promise.resolve();
+          const prev = observer();
+          if (prev && prev !== username) prepareAccountLeave();
+          const done =
+            window.cs77Auth && typeof cs77Auth.activate === "function"
+              ? cs77Auth.activate(username, { keychain: true })
+              : Promise.resolve();
           Promise.resolve(done)
             .catch(() => {})
             .then(() => {
@@ -7396,6 +7668,7 @@ let CS77_FILTER_LOW_REP = 20;
           const loginJob = cs77Auth.loginMaster(username, password);
           password = "";
           await loginJob;
+          if (observer() && observer() !== username) prepareAccountLeave();
           finishLogin(username, "posting");
           return;
         }
@@ -7415,6 +7688,7 @@ let CS77_FILTER_LOW_REP = 20;
           const loginJob = cs77Auth.login(username, wif);
           wif = "";
           await loginJob;
+          if (observer() && observer() !== username) prepareAccountLeave();
           finishLogin(username, "posting");
           return;
         }
@@ -11931,7 +12205,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function autoplayVideos() {
     try {
-      return localStorage.getItem(AUTOPLAY_VIDEOS_KEY) !== "0";
+      return readScopedItem(AUTOPLAY_VIDEOS_KEY) !== "0";
     } catch (err) {
       return true;
     }
@@ -11939,7 +12213,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function storeAutoplayVideos(on) {
     try {
-      localStorage.setItem(AUTOPLAY_VIDEOS_KEY, on ? "1" : "0");
+      writeScopedItem(AUTOPLAY_VIDEOS_KEY, on ? "1" : "0");
     } catch (err) {
       // The preference stays on when storage is blocked.
     }
@@ -11947,7 +12221,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function showNsfwContent() {
     try {
-      return localStorage.getItem(SHOW_NSFW_KEY) === "1";
+      return readScopedItem(SHOW_NSFW_KEY) === "1";
     } catch (err) {
       return false;
     }
@@ -11955,7 +12229,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function storeShowNsfw(on) {
     try {
-      localStorage.setItem(SHOW_NSFW_KEY, on ? "1" : "0");
+      writeScopedItem(SHOW_NSFW_KEY, on ? "1" : "0");
     } catch (err) {
       // The preference stays off when storage is blocked.
     }
@@ -15128,7 +15402,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function readCommentSort() {
     try {
-      return normalizeCommentSort(localStorage.getItem(COMMENT_SORT_KEY));
+      return normalizeCommentSort(readScopedItem(COMMENT_SORT_KEY));
     } catch (err) {
       return "reward";
     }
@@ -15137,7 +15411,7 @@ let CS77_FILTER_LOW_REP = 20;
   function storeCommentSort(value) {
     const mode = normalizeCommentSort(value);
     try {
-      localStorage.setItem(COMMENT_SORT_KEY, mode);
+      writeScopedItem(COMMENT_SORT_KEY, mode);
     } catch (err) {
       // The choice stays on the control when storage is blocked.
     }
@@ -20067,7 +20341,7 @@ let CS77_FILTER_LOW_REP = 20;
   function readZapSingleTap() {
     const base = defaultZapSingleTap();
     try {
-      const raw = localStorage.getItem(ZAP_SINGLE_TAP_KEY);
+      const raw = readScopedItem(ZAP_SINGLE_TAP_KEY);
       if (!raw) return base;
       const data = JSON.parse(raw);
       if (!data || typeof data !== "object") return base;
@@ -20087,7 +20361,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function writeZapSingleTap(prefs) {
     try {
-      localStorage.setItem(ZAP_SINGLE_TAP_KEY, JSON.stringify(prefs));
+      writeScopedItem(ZAP_SINGLE_TAP_KEY, JSON.stringify(prefs));
     } catch (err) {
       /* private mode */
     }
@@ -23646,17 +23920,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // The signed-in account when Hive Keychain should sign without the
-  // sign dialog. A recorded Keychain login wins even if a posting key is
-  // also stored. Otherwise a stored posting key is a private-key login:
+  // sign dialog. A Keychain login wins even if a posting key is also
+  // stored. Otherwise a stored posting key is a private-key login:
   // it can sign Posting, and an active, owner, or memo operation opens
-  // the dialog. With neither a posting key nor a marker, an installed
-  // Keychain is still the signer, same as a vote or a comment.
+  // the dialog. With neither, an installed Keychain is still the signer.
   function keychainLoginActive() {
     const user = normalizeLoginUser(observer());
     if (!validLoginUser(user)) return "";
     const kc = window.hive_keychain;
     if (!kc || typeof kc.requestBroadcast !== "function") return "";
-    if (readKeychainUser() === user) return user;
+    const row = loggedInRow(user);
+    if (row && row.via === "keychain") return user;
     if (window.cs77Auth && cs77Auth.hasKey(user)) return "";
     return user;
   }
@@ -38085,15 +38359,64 @@ let CS77_FILTER_LOW_REP = 20;
 
     function start() {
       restoreRememberedSession();
-      renderSession();
-      hydratePublishDraftFromStorage();
-      renderQueueStatus(ChainQueue.size());
-      try {
-        route();
-      } finally {
-        initialPageLoad = false;
-      }
+      const user = observer();
+      const row = loggedInRow(user);
+      const job =
+        window.cs77Auth && typeof cs77Auth.activate === "function"
+          ? cs77Auth.activate(user, { keychain: Boolean(row && row.via === "keychain") })
+          : Promise.resolve();
+      Promise.resolve(job)
+        .catch(() => {})
+        .then(() => {
+          if (user) ensureActiveBag();
+          renderSession();
+          hydratePublishDraftFromStorage();
+          renderQueueStatus(ChainQueue.size());
+          try {
+            route();
+          } finally {
+            initialPageLoad = false;
+          }
+        });
     }
+
+    window.addEventListener("storage", (e) => {
+      if (!e || e.key !== LOGGED_IN_KEY || accountSwitchBusy) return;
+      const current = observer();
+      if (!current) return;
+      if (isLoggedIn(current)) {
+        if ($("#sessionAccountMenu")) renderSession();
+        return;
+      }
+      let previous = [];
+      try {
+        const parsed = JSON.parse(e.oldValue || "[]");
+        if (Array.isArray(parsed)) {
+          previous = parsed
+            .map((row) => normalizeLoginUser(row && row.user))
+            .filter((name) => validLoginUser(name));
+        }
+      } catch {
+        previous = [];
+      }
+      const idx = previous.indexOf(current);
+      let next = "";
+      if (idx >= 0) {
+        for (let step = 1; step < previous.length; step++) {
+          const name = previous[(idx + step) % previous.length];
+          if (name !== current && isLoggedIn(name)) {
+            next = name;
+            break;
+          }
+        }
+      }
+      if (!next) {
+        const list = readLoggedIn();
+        next = list.length ? list[0].user : "";
+      }
+      if (next) switchAccount(next);
+      else logout();
+    });
 
     if (window.cs77Auth && typeof cs77Auth.ready === "function") {
       cs77Auth.ready().then(start, start);
