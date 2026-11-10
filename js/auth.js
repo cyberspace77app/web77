@@ -1,9 +1,9 @@
 /**
  * Posting-key login and the Nostr Wallet Connect secret.
  * A master password is derived into one role key and then dropped.
- * Login stores only the posting private key, wrapped with a
- * non-extractable AES-GCM CryptoKey in IndexedDB.
- * The wallet connection is a separate record in that database.
+ * Login stores only the posting private key. One non-extractable
+ * AES-GCM CryptoKey in IndexedDB wraps every stored key and wallet
+ * connection. Each record keeps its own IV and ciphertext.
  * Logout removes the posting key and leaves the wallet connection.
  */
 (function (global) {
@@ -12,10 +12,13 @@
   const DB_NAME = "cs77-auth";
   const DB_VERSION = 2;
   const STORE = "keys";
+  // One wrapping key, id "wrap", encrypts every secret in this store.
   // Records are one role per account: "posting:alice", and later "active:alice"
-  // and "memo:alice". The wallet connection is "nwc:alice". Active and memo use
+  // and "memo:alice". The wallet connection is "nwc:alice". Each of those
+  // stores a fresh IV and ciphertext, not its own key. Active and memo use
   // this same wrap and stay stored until a later change saves them. Only the
   // posting key of the active account is unwrapped into memory.
+  const WRAP_ID = "wrap";
   const STORED_KEY_ROLES = ["posting", "active", "memo"];
   // Username whose posting key a reload must still delete.
   const AUTH_LOGOUT_KEY = "cs77_auth_logout";
@@ -31,6 +34,7 @@
   let readyPromise = null;
   let clearPromise = null;
   let nwcPresent = false;
+  let wrappingKeyPromise = null;
 
   function wipe(bytes) {
     if (bytes && bytes.fill) bytes.fill(0);
@@ -149,32 +153,96 @@
     }
   }
 
+  function isWrappingKey(value) {
+    return Boolean(
+      value &&
+        value.type === "secret" &&
+        value.algorithm &&
+        value.algorithm.name === "AES-GCM"
+    );
+  }
+
+  // Two tabs can both see an empty store. The write transaction takes the
+  // store lock, and the tab that arrives second keeps the key already stored.
+  function storeWrappingKey(created) {
+    return openDb().then((db) => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readwrite");
+        const store = tx.objectStore(STORE);
+        const req = store.get(WRAP_ID);
+        let chosen = created;
+        req.onsuccess = () => {
+          const record = req.result;
+          if (record && isWrappingKey(record.wrappingKey)) {
+            chosen = record.wrappingKey;
+            return;
+          }
+          chosen = created;
+          store.put({ id: WRAP_ID, wrappingKey: created });
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve(chosen);
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error || new Error("IndexedDB transaction failed."));
+        };
+        tx.onabort = () => {
+          db.close();
+          reject(tx.error || new Error("IndexedDB transaction aborted."));
+        };
+      });
+    });
+  }
+
+  function loadOrCreateWrappingKey() {
+    return idbGet(WRAP_ID).then((record) => {
+      if (record && isWrappingKey(record.wrappingKey)) return record.wrappingKey;
+      if (!hasSubtle()) {
+        throw new Error(
+          "This page needs HTTPS or localhost to store a posting key."
+        );
+      }
+      return crypto.subtle
+        .generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
+        .then((created) => storeWrappingKey(created));
+    });
+  }
+
+  function getWrappingKey() {
+    if (!wrappingKeyPromise) {
+      wrappingKeyPromise = loadOrCreateWrappingKey().catch((err) => {
+        wrappingKeyPromise = null;
+        throw err;
+      });
+    }
+    return wrappingKeyPromise;
+  }
+
   async function wrapBytes(bytes) {
     if (!hasSubtle()) {
       throw new Error(
         "This page needs HTTPS or localhost to store a posting key."
       );
     }
-    const wrappingKey = await crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"]
-    );
+    const wrappingKey = await getWrappingKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await crypto.subtle.encrypt(
       { name: "AES-GCM", iv },
       wrappingKey,
       bytes
     );
-    return { wrappingKey, iv: iv.buffer, ciphertext };
+    return { iv: iv.buffer, ciphertext };
   }
 
   async function unwrapBytes(record) {
+    const wrappingKey = await getWrappingKey();
     const ivSrc = record.iv;
     const iv = ivSrc instanceof Uint8Array ? ivSrc : new Uint8Array(ivSrc);
     const plain = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
-      record.wrappingKey,
+      wrappingKey,
       record.ciphertext
     );
     return new Uint8Array(plain);
@@ -286,7 +354,6 @@
       id: recordId(roleName, name),
       role: roleName,
       username: name,
-      wrappingKey: wrapped.wrappingKey,
       iv: wrapped.iv,
       ciphertext: wrapped.ciphertext,
     });
@@ -453,7 +520,7 @@
   }
 
   function recordWrapped(record) {
-    return Boolean(record && record.wrappingKey && record.ciphertext);
+    return Boolean(record && record.iv && record.ciphertext);
   }
 
   // Presence only. The connection string stays encrypted until a payment reads it.
@@ -549,7 +616,7 @@
   }
 
   // The connection string can spend from the linked wallet. Same wrap as
-  // the posting key: a non-extractable AES-GCM key kept in this database.
+  // the posting key: the one non-extractable AES-GCM key in this database.
   // Same-origin script can still decrypt it. There is no separate password.
   async function saveNwc(url) {
     const text = String(url || "");
@@ -579,7 +646,6 @@
         id: recordId("nwc", name),
         role: "nwc",
         username: name,
-        wrappingKey: wrapped.wrappingKey,
         iv: wrapped.iv,
         ciphertext: wrapped.ciphertext,
       });
@@ -612,9 +678,12 @@
       const text = new TextDecoder().decode(bytes);
       nwcPresent = Boolean(text);
       return text;
-    } catch {
+    } catch (err) {
       nwcPresent = false;
-      await idbDelete(id).catch(() => {});
+      const name = err && err.name;
+      if (name === "OperationError" || name === "DataError") {
+        await idbDelete(id).catch(() => {});
+      }
       return "";
     } finally {
       wipe(bytes);
