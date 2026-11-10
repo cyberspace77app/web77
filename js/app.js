@@ -33675,8 +33675,10 @@ let CS77_FILTER_LOW_REP = 20;
     view.innerHTML = `
       <section class="about">
         <h2 class="about-title">About</h2>
-        <p>cyberspace77 is a modern, fast and lightweight, open-source social media app for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
-        <p>The <a href="https://hive.io/">hive blockchain</a> is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
+        <p>For cyberpunks, by cyberpunks.</p>
+        <p>CyberSpace77 is a modern, fast and lightweight, open-source social media app for <a href="https://hive.io/">hive</a>, the world's first fintech-powered decentralized social network.</p>
+        <p>Love what someone posted? Zap the creator with Bitcoin sats. No account required.</p>
+        <p>Or join as a creator. Zero transaction fees. A web3 ecosystem built for social media and dapps.</p>
         <h3>developed by</h3>
         <div class="social-links about-social">
           <a class="btn-social btn-social-red" href="${HiveMd.escapeHtml(appHref("/@vikisecrets"))}">@vikisecrets</a>
@@ -33686,7 +33688,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="social-links about-social">
           <a class="btn-social btn-social-gray" href="${HiveMd.escapeHtml(appHref("/@cyberspace77"))}">hive</a>
           <a class="btn-social btn-social-gray" href="https://x.com/cyberspace77x">X</a>
-          <a class="btn-social btn-social-gray" href="https://instagram.com/cryptospace77com">instagram</a>
+          <a class="btn-social btn-social-gray" href="https://instagram.com/cyberspace77com">instagram</a>
         </div>
         <h3>source code (MIT license)</h3>
          <div class="social-links about-social">
