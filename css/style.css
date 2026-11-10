@@ -327,10 +327,13 @@ html.has-mouse .logo-menu:hover .logo-dropdown {
   text-shadow: var(--glow-yellow);
 }
 
-/* Same 1.15rem gear as #zapSettings. No label; the link name is the aria-label. */
+/* Same 1.15rem gear as #zapSettings. No label; the link name is the aria-label.
+   Orbitron at 0.68rem uses a 14px normal line box. The gear is 18.4px, so 2.2px less padding each side matches the label rows. */
 .logo-settings-link {
   display: flex;
   align-items: center;
+  padding-top: calc(0.75rem - 2.2px);
+  padding-bottom: calc(0.75rem - 2.2px);
 }
 
 .logo-settings-link svg {
@@ -8223,6 +8226,11 @@ body:has(#lightningOverlay:not([hidden])) {
   .logo-dropdown-link,
   .session-account-link {
     padding: 0.9rem 1.15rem;
+  }
+
+  .logo-settings-link {
+    padding-top: calc(0.9rem - 2.2px);
+    padding-bottom: calc(0.9rem - 2.2px);
   }
 
   .session-account-switch-btn {
