@@ -179,7 +179,7 @@
             if (entries[i].isIntersecting) applyLazyAvatar(entries[i].target);
           }
         },
-        { root: null, rootMargin: "240px 0px", threshold: 0 }
+        { root: null, rootMargin: "600px 0px", threshold: 0 }
       );
     }
     lazyAvatarMutations = new global.MutationObserver(function (records) {
