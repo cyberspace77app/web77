@@ -72,6 +72,40 @@
     return `https://images.hive.blog/u/${encodeURIComponent(name)}/avatar/${dim}`;
   }
 
+  // Same encoding as images.hive.blog's avatar redirect: Base58 of the picture
+  // URL, then /p/<that>?width=&height= at 64, 128, or 512.
+  const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+  function base58Encode(text) {
+    const bytes = new TextEncoder().encode(String(text));
+    let zeros = 0;
+    while (zeros < bytes.length && bytes[zeros] === 0) zeros += 1;
+    const digits = [0];
+    for (let i = zeros; i < bytes.length; i++) {
+      let carry = bytes[i];
+      for (let j = 0; j < digits.length; j++) {
+        carry += digits[j] << 8;
+        digits[j] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      while (carry > 0) {
+        digits.push(carry % 58);
+        carry = (carry / 58) | 0;
+      }
+    }
+    let out = "";
+    for (let i = 0; i < zeros; i++) out += "1";
+    for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET.charAt(digits[i]);
+    return out;
+  }
+
+  function directAvatarUrl(imageUrl, size) {
+    const raw = String(imageUrl || "").trim();
+    if (!/^https?:\/\//i.test(raw)) return "";
+    const px = size === "small" ? 64 : size === "large" ? 512 : 128;
+    return "https://images.hive.blog/p/" + base58Encode(raw) + "?width=" + px + "&height=" + px;
+  }
+
   // An <img src> starts the images.hive.blog redirect even while the row is
   // hidden or far down the page. The URL stays in data-lazy-avatar until the
   // row nears the viewport, then it is painted as a background image.
@@ -4251,6 +4285,7 @@
     previewVideo,
     proxyImage,
     avatarUrl,
+    directAvatarUrl,
     lazyAvatarHtml,
     paintLazyAvatar,
     excerpt,

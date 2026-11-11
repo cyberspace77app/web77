@@ -6169,6 +6169,12 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.avatarUrl(user, size);
   }
 
+  // Profile and subspace banners already have the picture URL from Hive.
+  // Build the resized images.hive.blog file directly and skip /u/avatar.
+  function directLargeAvatarSrc(image) {
+    return HiveMd.directAvatarUrl(image, "large") || AVATAR_DEFAULT_LARGE;
+  }
+
   function sessionAvatarSrc(user) {
     return avatarSrcFromImage(user, knownProfileImage(user), "small");
   }
@@ -23003,7 +23009,7 @@ let CS77_FILTER_LOW_REP = 20;
     const profileImage = String(
       (info && info.profile_image) || (profile && profile.profile_image) || ""
     ).trim();
-    const avatarSrc = avatarSrcFromImage(author, profileImage, "large");
+    const avatarSrc = HiveMd.escapeHtml(directLargeAvatarSrc(profileImage));
     const about = profileAboutText(profile);
     const display =
       (info && info.name) || (profile && profile.name) || author;
@@ -23120,7 +23126,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!banner) return;
     const img = banner.querySelector(".profile-head .avatar");
     if (img) {
-      const src = avatarSrcFromImage(accountState.user, accountState.profileImage || "", "large");
+      const src = directLargeAvatarSrc(accountState.profileImage || "");
       if (img.getAttribute("src") !== src) img.setAttribute("src", src);
     }
     const info = metadata && metadata.profile;
@@ -28886,15 +28892,39 @@ let CS77_FILTER_LOW_REP = 20;
       .catch(() => {});
   }
 
+  function communityBannerAvatarSrc(name) {
+    const known = knownAuthorImage(name);
+    if (known == null) return "";
+    return directLargeAvatarSrc(known);
+  }
+
+  function paintCommunityBannerAvatar(name) {
+    const id = normalizeCommunityName(name);
+    const apply = function (image) {
+      if (communityState.name !== id) return;
+      const img = view.querySelector(".community-banner .profile-head .avatar");
+      if (!img || img.getAttribute("src")) return;
+      img.src = directLargeAvatarSrc(image);
+    };
+    const known = knownAuthorImage(id);
+    if (known != null) {
+      apply(known);
+      return;
+    }
+    authorImage(id).then(apply);
+  }
+
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
     const about = communityAboutText(info);
     const href = HiveMd.escapeHtml(communityHref(name));
+    const avatarSrc = communityBannerAvatarSrc(name);
+    const avatarAttr = avatarSrc ? ` src="${HiveMd.escapeHtml(avatarSrc)}"` : "";
     return `
       <div class="profile-banner community-banner">
         <div class="profile-head">
-          <img class="avatar" src="${HiveMd.avatarUrl(name, "large")}" alt="">
+          <img class="avatar"${avatarAttr} alt="">
           <div>
             <h1>${HiveMd.escapeHtml(title)}</h1>
             <p class="profile-handle"><a href="${href}">${HiveMd.escapeHtml(name)}</a></p>
@@ -30269,7 +30299,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (bustAvatar) {
       const img = banner.querySelector(".avatar");
       if (img) {
-        img.src = HiveMd.avatarUrl(communityState.name, "large");
+        const next = String(fields.avatar_url || "").trim();
+        rememberAuthorImage(communityState.name, next);
+        img.src = directLargeAvatarSrc(next);
       }
     }
   }
@@ -32426,6 +32458,7 @@ let CS77_FILTER_LOW_REP = 20;
       const chrome = communityBannerHtml(info) + communityNavHtml(loadedName, tab);
       view.innerHTML =
         chrome + `<div id="communitySubpage">${communitySubpageLoadingHtml()}</div>`;
+      paintCommunityBannerAvatar(loadedName);
       paintCommunityZapLightning(loadedName);
       await renderCommunitySubpage(id, tab);
     } catch (err) {
