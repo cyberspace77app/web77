@@ -196,6 +196,8 @@ let CS77_FILTER_LOW_REP = 20;
     singleTap: false,
     weblnEnable: null,
     kind: "",
+    // Subspace title to cite. Empty cites @author.
+    subspace: "",
     commentBusy: false,
   };
   const zapWalletCache = new Map();
@@ -5334,7 +5336,17 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const PEOPLE_HISTORY_KEYS = ["peoplePanel", "peopleKind", "peopleId"];
-  const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor", "zapPermlink", "zapKind"];
+  const ZAP_HISTORY_KEYS = ["zapPanel", "zapAuthor", "zapPermlink", "zapKind", "zapSubspace"];
+
+  function zapHistoryFields() {
+    return {
+      zapPanel: true,
+      zapAuthor: zapState.author || "",
+      zapPermlink: zapState.permlink || "",
+      zapKind: zapState.kind || "",
+      zapSubspace: zapState.subspace || "",
+    };
+  }
   const LIGHTNING_HISTORY_KEYS = ["lightningPanel", "lightningFocus"];
   const VOTERS_HISTORY_KEYS = [
     "votersPanel",
@@ -5769,12 +5781,7 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       const state = Object.assign(historyRecord(), { zapPayConfirm: true });
-      if (zapDialogOpen() || zapState.singleTap) {
-        state.zapPanel = true;
-        state.zapAuthor = zapState.author || "";
-        state.zapPermlink = zapState.permlink || "";
-        state.zapKind = zapState.kind || "";
-      }
+      if (zapDialogOpen() || zapState.singleTap) Object.assign(state, zapHistoryFields());
       history.pushState(state, "", location.href);
       if (state.zapPanel) zapHist.on = true;
       return;
@@ -5845,16 +5852,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapSignBlocksClose()) {
       if (!ownerSignBusy) cancelOwnerSign();
       if (zapDialogOpen() && !(history.state && history.state.zapPanel)) {
-        history.pushState(
-          Object.assign(historyRecord(), {
-            zapPanel: true,
-            zapAuthor: zapState.author || "",
-            zapPermlink: zapState.permlink || "",
-            zapKind: zapState.kind || "",
-          }),
-          "",
-          location.href
-        );
+        history.pushState(Object.assign(historyRecord(), zapHistoryFields()), "", location.href);
         zapHist.on = true;
       }
       return true;
@@ -19953,6 +19951,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (zapState.lnStatus === "loading") return "Checking the Lightning address\u2026";
     if (zapState.lnStatus === "error") return "Could not load the Lightning address.";
     if (zapState.lnStatus === "invalid") return "The Lightning address on this profile cannot be used.";
+    if (zapState.subspace) return "This subspace has not added a Bitcoin Lightning address yet.";
     return "This user has not added a Bitcoin Lightning address yet.";
   }
 
@@ -20123,6 +20122,13 @@ let CS77_FILTER_LOW_REP = 20;
     return raw.trim().slice(0, 250);
   }
 
+  // Subspace zaps cite the subspace title. Every other zap cites @username.
+  function zapCitedName() {
+    const space = String(zapState.subspace || "").trim();
+    if (space) return space;
+    return zapState.author ? "@" + zapState.author : "";
+  }
+
   function paintZapLead() {
     const lead = $("#zapLead");
     if (!lead) return;
@@ -20131,8 +20137,8 @@ let CS77_FILTER_LOW_REP = 20;
     const raw = field ? field.value : zapState.custom[asset];
     const parsed = zapParsedFieldAmount(asset, raw);
     const amountText = parsed == null ? (asset === "ln" ? "sats" : asset) : zapLeadAmount(asset, parsed);
-    const who = zapState.author ? " to @" + zapState.author : "";
-    lead.textContent = "Send " + amountText + who + ".";
+    const who = zapCitedName();
+    lead.textContent = "Send " + amountText + (who ? " to " + who : "") + ".";
   }
 
   function paintZapChoices() {
@@ -20269,22 +20275,31 @@ let CS77_FILTER_LOW_REP = 20;
       .toLowerCase();
     if (!author || isOwnAuthor(author)) return;
     const permlink = String((state && state.zapPermlink) || "").trim();
+    const subspace = String((state && state.zapSubspace) || "").trim();
     if (permlink) {
       const kind = state && state.zapKind === "comment" ? "comment" : "post";
       const cached = cachedZapWallet(author);
       openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, {
         fromHistory: true,
         kind: kind,
+        subspace: subspace,
       });
       return;
     }
+    const routeNow = parseRoute();
+    const communityId =
+      routeNow && routeNow.name === "community" ? normalizeCommunityName(routeNow.community) : "";
+    if (communityId && communityId === author) {
+      openCommunityZap({ fromHistory: true, author: author, subspace: subspace });
+      return;
+    }
+    if (subspace) return;
     const here = String(profileState.author || "")
       .replace(/^@/, "")
       .trim()
       .toLowerCase();
     if (here && here !== author) return;
     if (!here) {
-      const routeNow = parseRoute();
       if (!routeNow || routeNow.name !== "profile" || routeNow.author !== author) return;
     }
     openLoadedProfileZap({ fromHistory: true, author: author });
@@ -20563,16 +20578,7 @@ let CS77_FILTER_LOW_REP = 20;
     setZapTriggerOpen(true);
     paintZapForm();
     if (!keepStatus) setZapStatus(message || "", Boolean(isError) && Boolean(message));
-    writePanelHistory(
-      zapHist,
-      {
-        zapPanel: true,
-        zapAuthor: zapState.author,
-        zapPermlink: zapState.permlink,
-        zapKind: zapState.kind,
-      },
-      false
-    );
+    writePanelHistory(zapHist, zapHistoryFields(), false);
   }
 
   async function runSingleTapZap(lookGen) {
@@ -20612,6 +20618,8 @@ let CS77_FILTER_LOW_REP = 20;
   // wallet is posting profile.wallet, or null when the user has no Lightning address.
   // loadWallet true reads that object from the chain. false uses wallet as given.
   // opts.kind is "post" or "comment" and only changes the receipt sentence.
+  // opts.subspace (or opts.subspaceName) is the subspace title to cite.
+  // When that name is empty, the messages cite @username.
   function ownZapRefusal(kind) {
     return kind === "comment" ? "You cannot zap your own comment." : "You cannot zap your own post.";
   }
@@ -20647,6 +20655,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.author = author;
     zapState.permlink = link;
     zapState.kind = zapState.permlink && opts && opts.kind === "comment" ? "comment" : zapState.permlink ? "post" : "";
+    zapState.subspace = String((opts && (opts.subspace || opts.subspaceName)) || "").trim();
     zapState.commentBusy = false;
     zapState.asset = "ln";
     zapState.lnAddress = "";
@@ -20688,16 +20697,7 @@ let CS77_FILTER_LOW_REP = 20;
     setZapTriggerOpen(true);
     paintZapForm();
     if (fetchWallet) loadZapLightning(author, zapLookGen);
-    writePanelHistory(
-      zapHist,
-      {
-        zapPanel: true,
-        zapAuthor: author,
-        zapPermlink: zapState.permlink,
-        zapKind: zapState.kind,
-      },
-      fromHistory
-    );
+    writePanelHistory(zapHist, zapHistoryFields(), fromHistory);
   }
 
   function setZapTriggerOpen(on) {
@@ -20720,8 +20720,25 @@ let CS77_FILTER_LOW_REP = 20;
     const profile = profileState.profile;
     const next = Object.assign({}, opts);
     next.singleTap = false;
+    next.subspace = "";
+    next.subspaceName = "";
     if (profile && profile.walletLoaded) openZapDialog(username, null, profileReceiveWallet(profile), false, next);
     else openZapDialog(username, null, null, true, next);
+  }
+
+  // Pays the subspace account. opts.subspace is the title shown in the dialog.
+  function openCommunityZap(opts) {
+    const name = normalizeCommunityName((opts && opts.author) || communityState.name);
+    if (!name || isOwnAuthor(name)) return;
+    const title =
+      String((opts && opts.subspace) || "").trim() ||
+      String(communityTitleOf(communityState.info, name) || "").trim();
+    const cached = cachedZapWallet(name);
+    const next = Object.assign({}, opts);
+    next.subspace = title;
+    next.singleTap = false;
+    if (cached) openZapDialog(name, null, cached.wallet, false, next);
+    else openZapDialog(name, null, null, true, next);
   }
 
   async function loadZapLightning(author, gen) {
@@ -20811,6 +20828,9 @@ let CS77_FILTER_LOW_REP = 20;
           wallet: wallet,
           accepts: Boolean(parsed.address) && !parsed.error,
         };
+        // A subspace save can replace this slot while the read is still in flight.
+        const current = zapWalletCache.get(name);
+        if (current && current.loaded && current.pending !== pending) return current;
         zapWalletCache.set(name, record);
         return record;
       })
@@ -21722,8 +21742,8 @@ let CS77_FILTER_LOW_REP = 20;
     const lead = $("#zapPayLead");
     if (lead) {
       const sats = formatGroupedNumber(zapState.sentSats || 0, 0);
-      const who = zapState.author ? " to @" + zapState.author : "";
-      lead.textContent = "Was the payment of " + sats + " sats" + who + " successful?";
+      const who = zapCitedName();
+      lead.textContent = "Was the payment of " + sats + " sats" + (who ? " to " + who : "") + " successful?";
     }
     const note = $("#zapPayNote");
     const noteText = zapPayCommentNote();
@@ -21811,7 +21831,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.paid = true;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
-    const who = zapState.author ? "@" + zapState.author : "this user";
+    const who = zapCitedName() || "this user";
     setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
     syncZapPayAction();
   }
@@ -21982,6 +22002,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const chainSymbol = asset === "hbd" ? "HBD" : "HIVE";
     const shown = formatHiveAsset(amount, asset);
+    const cited = zapCitedName() || "@" + target;
     const operations = [
       [
         "transfer",
@@ -22004,8 +22025,8 @@ let CS77_FILTER_LOW_REP = 20;
         user +
         ". Sends " +
         shown +
-        " to @" +
-        target +
+        " to " +
+        cited +
         ".",
       cancelMessage: "The zap was cancelled.",
       failMessage: "Could not sign this zap.",
@@ -22018,7 +22039,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.paid = true;
     // No receipt step for hive or hbd. A single-tap send never opened this dialog.
     if (zapDialogOpen() && closeZapOverlay()) return;
-    setZapStatus("Sent " + shown + " to @" + target + ".", false);
+    setZapStatus("Sent " + shown + " to " + cited + ".", false);
   }
 
   function zapTransferMemo() {
@@ -28786,6 +28807,57 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="community-sub-count${active ? " is-active" : ""}" data-people="subscribers" data-people-id="${HiveMd.escapeHtml(id)}" aria-expanded="${active ? "true" : "false"}">${text}</button>`;
   }
 
+  function communityZapHtml(name) {
+    const id = normalizeCommunityName(name);
+    if (!id || isOwnAuthor(id)) return "";
+    const cached = cachedZapWallet(id);
+    const ready = Boolean(cached && cached.accepts);
+    const zapped = zappedProfiles.has(id) ? " is-zapped" : "";
+    return (
+      '<button type="button" class="profile-zap-btn community-zap-btn' +
+      (ready ? " has-lightning" : "") +
+      zapped +
+      '" data-community="' +
+      HiveMd.escapeHtml(id) +
+      '" aria-label="Zap">' +
+      zapMarkSvg() +
+      "</button>"
+    );
+  }
+
+  function rememberCommunityZapWallet(name, lightning) {
+    const id = normalizeCommunityName(name);
+    if (!id) return;
+    const parsed = normalizeLightningAddress(lightning || "");
+    const address = parsed.error ? "" : parsed.address || "";
+    const hit = zapWalletCache.get(id);
+    const wallet = hit && hit.loaded && plainObject(hit.wallet) ? copyJsonKeys(hit.wallet) : {};
+    if (address) wallet.ln = address;
+    else delete wallet.ln;
+    zapWalletCache.set(id, {
+      loaded: true,
+      wallet: Object.keys(wallet).length ? wallet : null,
+      accepts: Boolean(address),
+    });
+    const btn = view && view.querySelector(".community-zap-btn");
+    if (btn && normalizeCommunityName(btn.getAttribute("data-community")) === id) {
+      btn.classList.toggle("has-lightning", Boolean(address));
+    }
+  }
+
+  function paintCommunityZapLightning(name) {
+    const id = normalizeCommunityName(name);
+    if (!id || isOwnAuthor(id)) return;
+    ensureZapWallet(id)
+      .then((rec) => {
+        if (communityState.name !== id) return;
+        const btn = view && view.querySelector(".community-zap-btn");
+        if (!btn || normalizeCommunityName(btn.getAttribute("data-community")) !== id) return;
+        btn.classList.toggle("has-lightning", Boolean(rec && rec.accepts));
+      })
+      .catch(() => {});
+  }
+
   function communityBannerHtml(info) {
     const name = String((info && info.name) || communityState.name || "");
     const title = communityTitleOf(info, name);
@@ -28806,6 +28878,7 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
             <div class="community-head-actions">
               <button type="button" class="btn-primary btn-compact community-sub-btn" data-community="${HiveMd.escapeHtml(name)}" data-subscribed="${communityState.subscribed ? "1" : "0"}"${communityState.pending ? " disabled" : ""}>${communitySubscribeLabel()}</button>
+              ${communityZapHtml(name)}
               ${communityMoreHtml(name, info)}
             </div>
           </div>
@@ -29272,8 +29345,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // account_update2 replaces posting_json_metadata. The owner custom JSON is
-  // that object minus the picture, beneficiary, and preferred-space keys this
-  // form writes itself. Legacy json_metadata is not included.
+  // that object minus the picture, beneficiary, preferred-space, and Lightning
+  // address keys this form writes itself. Other wallet keys stay. Legacy
+  // json_metadata is not included.
   function communityOwnerCustomObject(metadata) {
     const out = copyJsonKeys(metadata, { profile: true, beneficiary: true });
     const profile =
@@ -29287,7 +29361,18 @@ let CS77_FILTER_LOW_REP = 20;
       version: true,
       beneficiary: true,
       preferred_tags: true,
+      wallet: true,
     });
+    if (Object.prototype.hasOwnProperty.call(profile, "wallet")) {
+      const rawWallet = profile.wallet;
+      if (plainObject(rawWallet)) {
+        const wallet = copyJsonKeys(rawWallet);
+        delete wallet.ln;
+        if (Object.keys(wallet).length) extra.wallet = wallet;
+      } else if (rawWallet != null) {
+        extra.wallet = rawWallet;
+      }
+    }
     if (Object.keys(extra).length) out.profile = extra;
     return out;
   }
@@ -29521,6 +29606,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {
       title: communityText(info && info.title),
       about: communityText(info && info.about),
+      lightning: ready ? communityLightningField(posting) : "",
       avatar_url: avatar,
       cover_url: cover,
       description: communityText(info && info.description),
@@ -29533,6 +29619,14 @@ let CS77_FILTER_LOW_REP = 20;
       tags: communityPreferredTags(metadata, settings),
       owner_custom: formatSettingsCustom(posting ? communityOwnerCustomObject(posting) : {}),
     };
+  }
+
+  function communityLightningField(posting) {
+    const profile = posting && plainObject(posting.profile) ? posting.profile : null;
+    const raw = lightningAddressFromWallet(profile && profile.wallet);
+    if (!raw) return "";
+    const parsed = normalizeLightningAddress(raw);
+    return parsed.error ? raw : parsed.address;
   }
 
   function communityEditFieldsFor(info) {
@@ -29679,6 +29773,10 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
           </div>
           <div class="settings-field">
+            <label class="settings-label" for="communityLightning">Bitcoin Lightning Address</label>
+            <input id="communityLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain" value="${esc(fields.lightning || "")}"${ownerLock}>
+          </div>
+          <div class="settings-field">
             <label class="settings-label" for="communityBeneficiary">Required beneficiary</label>
             <p class="settings-note">One account. Auto added to new posts in the subspace.</p>
             <div class="settings-beneficiary">
@@ -29749,6 +29847,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {
       title: ($("#communityTitle") && $("#communityTitle").value) || "",
       about: ($("#communityAbout") && $("#communityAbout").value) || "",
+      lightning: ($("#communityLightning") && $("#communityLightning").value) || "",
       avatar_url: ($("#communityAvatar") && $("#communityAvatar").value) || "",
       cover_url: ($("#communityCover") && $("#communityCover").value) || "",
       description: ($("#communityDescription") && $("#communityDescription").value) || "",
@@ -29777,6 +29876,7 @@ let CS77_FILTER_LOW_REP = 20;
     };
     set("#communityTitle", fields.title || "");
     set("#communityAbout", fields.about || "");
+    set("#communityLightning", fields.lightning || "");
     set("#communityAvatar", fields.avatar_url || "");
     set("#communityCover", fields.cover_url || "");
     set("#communityDescription", fields.description || "");
@@ -29901,6 +30001,8 @@ let CS77_FILTER_LOW_REP = 20;
     const account = $("#communityBeneficiary");
     const percent = $("#communityBeneficiaryPercent");
     const ownerCustom = $("#communityOwnerCustom");
+    const lightning = $("#communityLightning");
+    if (lightning) lightning.disabled = communityEditBusy || !ownerReady;
     if (account) account.disabled = communityEditBusy || !ownerReady;
     if (percent) percent.disabled = communityEditBusy || !ownerReady;
     if (ownerCustom) ownerCustom.disabled = communityEditBusy || !ownerReady;
@@ -30018,6 +30120,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {
       title: String((raw && raw.title) || "").trim(),
       about: String((raw && raw.about) || "").trim(),
+      lightning: String(raw && raw.lightning != null ? raw.lightning : "").trim(),
       avatar_url: String((raw && raw.avatar_url) || "").trim(),
       cover_url: String((raw && raw.cover_url) || "").trim(),
       description: String((raw && raw.description) || "").trim(),
@@ -30032,7 +30135,21 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
-  function communityEditError(fields, ownerReady) {
+  // An unchanged address, including one that is not a Lightning address, stays
+  // as stored. A real edit must be a LUD-16 name@domain, or empty to remove it.
+  function settleCommunityLightning(fields, base, ownerReady) {
+    if (!ownerReady) return "";
+    if (!base || !lightningAddressChanged(fields.lightning, base.lightning)) {
+      if (base) fields.lightning = base.lightning || "";
+      return "";
+    }
+    const lightning = normalizeLightningAddress(fields.lightning);
+    if (lightning.error) return lightning.error;
+    fields.lightning = lightning.address;
+    return "";
+  }
+
+  function communityEditError(fields, ownerReady, base) {
     if (fields.title.length < 3 || fields.title.length > 20) return "Title must be 3 to 20 characters.";
     if (fields.title[0] === "@" || fields.title[0] === "#") return "Title cannot start with @ or #.";
     if (fields.about.length > 120) return "About must be 120 characters or fewer.";
@@ -30042,6 +30159,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (!fields.type_id) return "Choose a subspace type.";
     if (communityHttpUrl(fields.avatar_url) === null) return "Subspace picture must be an http or https link.";
     if (communityHttpUrl(fields.cover_url) === null) return "Cover picture must be an http or https link.";
+    const lightningProblem = settleCommunityLightning(fields, base, ownerReady);
+    if (lightningProblem) return lightningProblem;
     if (ownerReady && (fields.beneficiary_account || fields.beneficiary_percent)) {
       if (!validLoginUser(fields.beneficiary_account)) return "Enter a Hive account for the required beneficiary.";
       const weight = Math.round(Number(fields.beneficiary_percent) * 100);
@@ -30154,6 +30273,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (communityProfileNeedsVersion()) return true;
     if (!ownerReady) return false;
     return (
+      lightningAddressChanged(fields.lightning, base.lightning) ||
       fields.beneficiary_account !== (base.beneficiary_account || "") ||
       fields.beneficiary_percent !== (base.beneficiary_percent || "") ||
       !communitySameTags(fields.tags, base.tags) ||
@@ -30195,6 +30315,7 @@ let CS77_FILTER_LOW_REP = 20;
       else if (ownerReadyNow || communityStoredPicture(storedBefore, "avatar_url")) delete posting.profile.profile_image;
       if (fields.cover_url) posting.profile.cover_image = fields.cover_url;
       else if (ownerReadyNow || communityStoredPicture(storedBefore, "cover_url")) delete posting.profile.cover_image;
+      if (ownerReadyNow) applyLightningAddress(posting.profile, fields.lightning || "");
       communityEditOwner.posting = posting;
     }
     const patch = {};
@@ -30210,6 +30331,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (which.owner) {
       patch.avatar_url = fields.avatar_url;
       patch.cover_url = fields.cover_url;
+      if (ownerReadyNow) {
+        patch.lightning = fields.lightning || "";
+        rememberCommunityZapWallet(communityState.name, fields.lightning || "");
+      }
       patch.beneficiary_account = fields.beneficiary_account;
       patch.beneficiary_percent = fields.beneficiary_percent;
       patch.tags = fields.tags.slice();
@@ -30270,6 +30395,7 @@ let CS77_FILTER_LOW_REP = 20;
       delete meta.beneficiary;
       if (fields.tags.length) profile.preferred_tags = fields.tags.slice();
       else delete profile.preferred_tags;
+      applyLightningAddress(profile, String(fields.lightning == null ? "" : fields.lightning).trim());
     }
     return meta;
   }
@@ -30708,15 +30834,16 @@ let CS77_FILTER_LOW_REP = 20;
     if (!raw) return;
     const ownerReady = communityOwnerReady(name);
     const fields = preparedCommunityEditFields(raw);
-    const problem = communityEditError(fields, ownerReady);
+    const base = communityEditBaseline;
+    if (!base || base.community !== name || base.user !== user) return;
+    const problem = communityEditError(fields, ownerReady, base);
     if (problem) {
       setCommunityEditStatus(problem, true);
+      if (problem === "Enter a Lightning address like name@domain.") focusDesktop($("#communityLightning"));
       return;
     }
     fields.avatar_url = communityHttpUrl(fields.avatar_url) || "";
     fields.cover_url = communityHttpUrl(fields.cover_url) || "";
-    const base = communityEditBaseline;
-    if (!base || base.community !== name || base.user !== user) return;
     const adminDirty = communityAdminChanged(fields, base);
     const ownerDirty = communityOwnerChanged(fields, base, ownerReady);
     writeCommunityEditFields(fields);
@@ -32218,7 +32345,7 @@ let CS77_FILTER_LOW_REP = 20;
       bindCommunityEdit();
       if (!communityOwnerReady(communityState.name) && $("#communityEditForm")) {
         setCommunityEditStatus(
-          "Could not load the subspace account. Beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
+          "Could not load the subspace account. The Bitcoin Lightning address, beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
           true
         );
       }
@@ -32239,6 +32366,7 @@ let CS77_FILTER_LOW_REP = 20;
     setCommunityMeta(id, tab, known);
     if (communityBannerReady(id)) {
       paintCommunityNavActive(tab);
+      paintCommunityZapLightning(id);
       showCommunitySubpageLoading();
       try {
         await renderCommunitySubpage(id, tab);
@@ -32270,6 +32398,7 @@ let CS77_FILTER_LOW_REP = 20;
       const chrome = communityBannerHtml(info) + communityNavHtml(loadedName, tab);
       view.innerHTML =
         chrome + `<div id="communitySubpage">${communitySubpageLoadingHtml()}</div>`;
+      paintCommunityZapLightning(loadedName);
       await renderCommunitySubpage(id, tab);
     } catch (err) {
       if (!communityRouteStill(id, tab)) return;
@@ -37059,7 +37188,8 @@ let CS77_FILTER_LOW_REP = 20;
       const zapBtn = e.target.closest(".profile-zap-btn");
       if (zapBtn && inInteractiveSurface(zapBtn)) {
         e.preventDefault();
-        openLoadedProfileZap();
+        if (zapBtn.classList.contains("community-zap-btn")) openCommunityZap();
+        else openLoadedProfileZap();
         return;
       }
       const followBtn = e.target.closest(".profile-follow-btn");
