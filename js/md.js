@@ -106,6 +106,44 @@
     return "https://images.hive.blog/p/" + base58Encode(raw) + "?width=" + px + "&height=" + px;
   }
 
+  // Canvas probe. A missing WebP encoder keeps format=match, which is the
+  // same stored file the old /<width>x0/ redirect points at.
+  let webpEncodeOk = null;
+
+  function browserEncodesWebp() {
+    if (webpEncodeOk !== null) return webpEncodeOk;
+    webpEncodeOk = false;
+    try {
+      const canvas = global.document && global.document.createElement("canvas");
+      if (canvas && canvas.getContext && canvas.getContext("2d")) {
+        webpEncodeOk = canvas.toDataURL("image/webp").indexOf("data:image/webp") === 0;
+      }
+    } catch (err) {
+      webpEncodeOk = false;
+    }
+    return webpEncodeOk;
+  }
+
+  // Direct /p/<base58> file. Width 0 is the animated GIF pass-through
+  // (format=match and mode=fit, no size), the same file as /0x0/<url>.
+  // A width is mode=fit with no height, so a tall photo stays tall.
+  function directImageUrl(url, width) {
+    if (!url) return "";
+    if (/^data:/i.test(url)) return url;
+    let abs = "";
+    try {
+      abs = new URL(url, global.location.href).href;
+    } catch (err) {
+      return url;
+    }
+    if (!/^https?:\/\//i.test(abs)) return url;
+    const w = Math.round(Number(width) || 0);
+    const format = w > 0 && browserEncodesWebp() ? "webp" : "match";
+    let query = "format=" + format + "&mode=fit";
+    if (w > 0) query = "width=" + w + "&" + query;
+    return "https://images.hive.blog/p/" + base58Encode(abs) + "?" + query;
+  }
+
   // An <img src> starts the images.hive.blog redirect even while the row is
   // hidden or far down the page. The URL stays in data-lazy-avatar until the
   // row nears the viewport, then it is painted as a background image.
@@ -4284,6 +4322,7 @@
     extractImage,
     previewVideo,
     proxyImage,
+    directImageUrl,
     avatarUrl,
     directAvatarUrl,
     lazyAvatarHtml,

@@ -12442,11 +12442,32 @@ let CS77_FILTER_LOW_REP = 20;
       });
   }
 
-  // The resize proxy answers 413 for a large GIF and drops the animation.
+  // The card photo is the full column: about 548 CSS px in the 600px view,
+  // about 320 CSS px on a phone, at the photo's own aspect ratio.
+  // PeakD's list row asks for 660x330 or 1320x660 and fits inside that box.
+  // A height cap would shrink a portrait below this card, so the request is
+  // width only. 640 covers the 1x card. 1280 covers a 2x card and is the
+  // image host's ordinary maximum.
+  function cardThumbWidth() {
+    let retina = false;
+    try {
+      retina = window.devicePixelRatio > 1;
+      if (!retina && window.matchMedia) {
+        retina = window.matchMedia("(min-resolution: 1.5dppx)").matches;
+      }
+    } catch (err) {
+      retina = false;
+    }
+    return retina ? 1280 : 640;
+  }
+
+  // GIFs stay on the unsized pass-through. A resized GIF is a still, and a
+  // large one is refused with 413.
   function cardThumbSrc(url) {
     const raw = String(url || "").trim();
-    if (/\.gif(?:$|[?#])/i.test(raw)) return raw;
-    return HiveMd.proxyImage(raw, 480);
+    if (!raw) return "";
+    if (/\.gif(?:$|[?#])/i.test(raw)) return HiveMd.directImageUrl(raw, 0);
+    return HiveMd.directImageUrl(raw, cardThumbWidth());
   }
 
   // Rumble, PeerTube, Odysee, and Twitch have no pause command that keeps
