@@ -8009,7 +8009,15 @@ let CS77_FILTER_LOW_REP = 20;
     return user ? sessionAvatarSrc(user) : AVATAR_DEFAULT_SMALL;
   }
 
+  function publishOverlayOpen() {
+    const ov = $("#publishOverlay");
+    return Boolean(ov && !ov.hidden);
+  }
+
+  // The button starts with no src. Assigning one while the dialog is closed
+  // still fetches the file on a cold visit.
   function paintPublishBlogAvatar() {
+    if (!publishOverlayOpen()) return;
     const src = blogDestAvatarSrc();
     const onBlog = !(publishDest.type === "community" && publishDest.name);
     const btnImg = $("#publishDestAvatar");
@@ -8024,11 +8032,12 @@ let CS77_FILTER_LOW_REP = 20;
     const img = $("#publishDestAvatar");
     const nameEl = $("#publishDestName");
     if (!img || !nameEl) return;
+    const open = publishOverlayOpen();
     if (publishDest.type === "community" && publishDest.name) {
-      img.src = HiveMd.avatarUrl(publishDest.name, "small");
+      if (open) img.src = HiveMd.avatarUrl(publishDest.name, "small");
       nameEl.textContent = publishDest.title || publishDest.name;
     } else {
-      img.src = blogDestAvatarSrc();
+      if (open) img.src = blogDestAvatarSrc();
       nameEl.textContent = "My cyberspace";
     }
   }
@@ -10740,6 +10749,7 @@ let CS77_FILTER_LOW_REP = 20;
     setPublishFabHidden(true);
     pendingPublish = false;
     ov.hidden = false;
+    paintPublishDest();
     fitPublishTitle();
     requestAnimationFrame(() => fitPublishTitle());
     focusPublishField();
