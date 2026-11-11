@@ -11,7 +11,8 @@
   const AUTO_SWITCH_KEY = "cs77_hive_auto_switch";
   const CUSTOM_NODES_KEY = "cs77_hive_custom_nodes";
   const CUSTOM_NODE_LIMIT = 8;
-  // Load balancing on full page load. About one reload in 21 moves to another public node.
+  // First visit with no stored node picks one public node and saves it.
+  // Later loads keep that node. About one reload in 21 moves to another public node.
   const NODE_SWITCH_ROLL = 21;
 
   // Hive public nodes
@@ -119,22 +120,34 @@
     }
   }
 
-  let activeNode = readStoredNode() || HIVE_NODES[0];
+  function pickPublicNode(except) {
+    const pool = [];
+    for (let i = 0; i < HIVE_NODES.length; i++) {
+      if (HIVE_NODES[i] !== except) pool.push(HIVE_NODES[i]);
+    }
+    if (!pool.length) return HIVE_NODES[0] || "";
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
 
-  // Dice once per full load. A hit leaves the current node for another public one.
+  let activeNode = readStoredNode();
+
+  // Dice once per full load when a node is already saved.
+  // A hit leaves the current node for another public one.
   function rollAnotherNode() {
     if (!readAutoSwitch()) return;
     if (!(Math.random() < 1 / NODE_SWITCH_ROLL)) return;
-    const pool = [];
-    for (let i = 0; i < HIVE_NODES.length; i++) {
-      if (HIVE_NODES[i] !== activeNode) pool.push(HIVE_NODES[i]);
-    }
-    if (!pool.length) return;
-    activeNode = pool[Math.floor(Math.random() * pool.length)];
+    const next = pickPublicNode(activeNode);
+    if (!next || next === activeNode) return;
+    activeNode = next;
     writeStoredNode(activeNode);
   }
 
-  rollAnotherNode();
+  if (!activeNode) {
+    activeNode = pickPublicNode();
+    writeStoredNode(activeNode);
+  } else {
+    rollAnotherNode();
+  }
 
   function getKnownNodes() {
     return HIVE_NODES.concat(readCustomNodes());
