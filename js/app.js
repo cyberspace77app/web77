@@ -6550,8 +6550,8 @@ let CS77_FILTER_LOW_REP = 20;
     const profile = actor ? profileHref(actor) : "";
     const avatar = actor
       ? (profile
-          ? `<a class="session-notif-actor" href="${HiveMd.escapeHtml(profile)}" aria-label="@${HiveMd.escapeHtml(actor)}"><img class="session-notif-avatar" src="${HiveMd.avatarUrl(actor, "small")}" alt=""></a>`
-          : `<img class="session-notif-avatar" src="${HiveMd.avatarUrl(actor, "small")}" alt="">`)
+          ? `<a class="session-notif-actor" href="${HiveMd.escapeHtml(profile)}" aria-label="@${HiveMd.escapeHtml(actor)}">${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(actor, "small"), "session-notif-avatar")}</a>`
+          : HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(actor, "small"), "session-notif-avatar"))
       : "";
     const kind = notificationKindLabel(item);
     const time = timeAgo(item.date);
@@ -8025,7 +8025,7 @@ let CS77_FILTER_LOW_REP = 20;
     const menu = $("#publishDestMenu");
     if (!menu) return;
     const opt = menu.querySelector('.publish-dest-option[data-dest-type="blog"] .avatar');
-    if (opt && opt.getAttribute("src") !== src) opt.src = src;
+    if (opt) HiveMd.paintLazyAvatar(opt, src);
   }
 
   function paintPublishDest() {
@@ -8044,7 +8044,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function destOptionHtml(name, title, avatarSrc, selected) {
     return `<button type="button" class="publish-dest-option${selected ? " is-selected" : ""}" data-dest-type="${name ? "community" : "blog"}" data-dest-name="${HiveMd.escapeHtml(name)}" data-dest-title="${HiveMd.escapeHtml(title)}" role="option">
-        <img class="avatar" src="${HiveMd.escapeHtml(avatarSrc)}" alt="" width="24" height="24">
+        ${HiveMd.lazyAvatarHtml(avatarSrc)}
         <span>${HiveMd.escapeHtml(title)}</span>
       </button>`;
   }
@@ -11855,7 +11855,7 @@ let CS77_FILTER_LOW_REP = 20;
     const avatar =
       opts && opts.avatar === false
         ? ""
-        : `<img class="avatar" src="${HiveMd.avatarUrl(name, size)}" alt="">`;
+        : HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, size));
     return `<a class="author-link" href="${href}">${avatar}<span class="author-name">@${safe}</span></a>`;
   }
 
@@ -13362,7 +13362,7 @@ let CS77_FILTER_LOW_REP = 20;
         : `<button type="button" class="community-fav-btn${fav ? " is-saved" : ""}" data-toggle-community="${name}" data-community-title="${title}" aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Remove " + title + " from favorites" : "Add " + title + " to favorites"}">${fav ? "Favorite" : "Add"}</button>`;
     return `<div class="community-row">
         <a class="community-row-main" href="${HiveMd.escapeHtml(communityHref(rec.name))}">
-          <img class="avatar" src="${HiveMd.avatarUrl(rec.name, "small")}" alt="">
+          ${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(rec.name, "small"))}
           <span class="community-row-text">
             <span class="community-row-title">${title}</span>
             ${metaHtml}
@@ -14532,7 +14532,7 @@ let CS77_FILTER_LOW_REP = 20;
         : `<button type="button" class="community-fav-btn${fav ? " is-saved" : ""}" data-toggle-user="${safe}" aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Remove @" + safe + " from favorites" : "Add @" + safe + " to favorites"}">${fav ? "Favorite" : "Add"}</button>`;
     return `<div class="community-row search-user-row">
         <a class="community-row-main" href="${HiveMd.escapeHtml(profileHref(name))}">
-          <img class="avatar" src="${HiveMd.avatarUrl(name, "small")}" alt="">
+          ${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"))}
           <span class="community-row-text">
             <span class="community-row-title">@${safe}</span>
           </span>
@@ -28055,8 +28055,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function followAccountHtml(name) {
     const safe = HiveMd.escapeHtml(name);
-    const src = HiveMd.escapeHtml(HiveMd.avatarUrl(name, "small"));
-    return `<a class="follow-account" href="${HiveMd.escapeHtml(profileHref(name))}"><img class="avatar" src="${src}" alt="" width="28" height="28"><span>@${safe}</span></a>`;
+    return `<a class="follow-account" href="${HiveMd.escapeHtml(profileHref(name))}">${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"))}<span>@${safe}</span></a>`;
   }
 
   function peopleTitle(kind) {
@@ -35458,7 +35457,7 @@ let CS77_FILTER_LOW_REP = 20;
   function embedMetaHtml(post) {
     const name = String(post.author || "").replace(/^@/, "");
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
-    const avatar = `<img class="avatar" src="${HiveMd.escapeHtml(HiveMd.avatarUrl(name, "small"))}" alt="">`;
+    const avatar = HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"));
     const community = embedCommunityHtml(post);
     return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span><span>${rep}</span>${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
   }
@@ -35621,7 +35620,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.0";
+      script.src = "/js/dao.js?v=0.21.1";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);

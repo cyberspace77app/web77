@@ -2310,6 +2310,15 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   background: var(--bg-avatar);
 }
 
+.avatar.is-lazy,
+.session-notif-avatar.is-lazy {
+  display: block;
+  flex-shrink: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+
 .author-link {
   display: inline-flex;
   align-items: center;

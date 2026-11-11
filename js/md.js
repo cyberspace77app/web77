@@ -72,6 +72,97 @@
     return `https://images.hive.blog/u/${encodeURIComponent(name)}/avatar/${dim}`;
   }
 
+  // An <img src> starts the images.hive.blog redirect even while the row is
+  // hidden or far down the page. The URL stays in data-lazy-avatar until the
+  // row nears the viewport, then it is painted as a background image.
+  // The circle is only the blank --bg-avatar fill until that file has decoded.
+  // Stacking satoshi-small underneath flashes the mark before the real picture.
+  let lazyAvatarObserver = null;
+  let lazyAvatarMutations = null;
+
+  function cssImageValue(url) {
+    const safe = String(url || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return 'url("' + safe + '")';
+  }
+
+  function lazyAvatarHtml(url, className) {
+    const src = String(url || "");
+    if (!src) return "";
+    const cls = (className || "avatar") + " is-lazy";
+    return `<span class="${cls}" data-lazy-avatar="${escapeHtml(src)}" aria-hidden="true"></span>`;
+  }
+
+  function paintLazyAvatar(el, url) {
+    if (!el) return;
+    const src = String(url || "");
+    if (!src) return;
+    el.setAttribute("data-lazy-avatar", src);
+    if (el.getAttribute("data-lazy-ready") === "1") applyLazyAvatar(el);
+    else armLazyAvatar(el);
+  }
+
+  function applyLazyAvatar(el) {
+    const src = el.getAttribute("data-lazy-avatar");
+    if (!src) return;
+    // One layer only. Until the file paints, the circle stays the blank fill.
+    el.style.backgroundImage = cssImageValue(src);
+    el.setAttribute("data-lazy-ready", "1");
+    if (lazyAvatarObserver) lazyAvatarObserver.unobserve(el);
+  }
+
+  function armLazyAvatar(el) {
+    if (!el || el.getAttribute("data-lazy-ready") === "1" || !el.getAttribute("data-lazy-avatar")) return;
+    if (!global.IntersectionObserver) {
+      applyLazyAvatar(el);
+      return;
+    }
+    if (!lazyAvatarObserver) return;
+    lazyAvatarObserver.observe(el);
+  }
+
+  function armLazyAvatarTree(node) {
+    if (!node || node.nodeType !== 1) return;
+    if (node.matches && node.matches("[data-lazy-avatar]")) armLazyAvatar(node);
+    if (!node.querySelectorAll) return;
+    const list = node.querySelectorAll("[data-lazy-avatar]");
+    for (let i = 0; i < list.length; i++) armLazyAvatar(list[i]);
+  }
+
+  function dropLazyAvatarTree(node) {
+    if (!node || node.nodeType !== 1 || !lazyAvatarObserver) return;
+    if (node.matches && node.matches("[data-lazy-avatar]")) lazyAvatarObserver.unobserve(node);
+    if (!node.querySelectorAll) return;
+    const list = node.querySelectorAll("[data-lazy-avatar]");
+    for (let i = 0; i < list.length; i++) lazyAvatarObserver.unobserve(list[i]);
+  }
+
+  function startLazyAvatars() {
+    if (lazyAvatarMutations || !global.document) return;
+    if (global.IntersectionObserver) {
+      lazyAvatarObserver = new global.IntersectionObserver(
+        function (entries) {
+          for (let i = 0; i < entries.length; i++) {
+            if (entries[i].isIntersecting) applyLazyAvatar(entries[i].target);
+          }
+        },
+        { root: null, rootMargin: "240px 0px", threshold: 0 }
+      );
+    }
+    lazyAvatarMutations = new global.MutationObserver(function (records) {
+      for (let i = 0; i < records.length; i++) {
+        const rec = records[i];
+        for (let a = 0; a < rec.addedNodes.length; a++) armLazyAvatarTree(rec.addedNodes[a]);
+        for (let r = 0; r < rec.removedNodes.length; r++) dropLazyAvatarTree(rec.removedNodes[r]);
+      }
+    });
+    const root = global.document.documentElement;
+    if (!root) return;
+    lazyAvatarMutations.observe(root, { childList: true, subtree: true });
+    armLazyAvatarTree(root);
+  }
+
+  startLazyAvatars();
+
   const WORLDMAPPIN_INNER =
     "!(?:worldmappin|pinmapple)\\s+(-?\\d+(?:\\.\\d+)?)\\s+lat\\s+(-?\\d+(?:\\.\\d+)?)\\s+long\\s*(.*?)\\s*d3scr";
 
@@ -4160,6 +4251,8 @@
     previewVideo,
     proxyImage,
     avatarUrl,
+    lazyAvatarHtml,
+    paintLazyAvatar,
     excerpt,
     markdownReady: markdownEnginesReady,
     whenMarkdownReady,

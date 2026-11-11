@@ -676,9 +676,7 @@
       '<a class="witness-who" href="' +
       esc(state.host.appHref("/witness/@" + name)) +
       '">' +
-      '<img class="avatar" src="' +
-      esc(md().avatarUrl(name, "small")) +
-      '" alt="" width="28" height="28" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">' +
+      md().lazyAvatarHtml(md().avatarUrl(name, "small")) +
       '<span class="witness-name">@' +
       esc(name) +
       "</span></a>" +
@@ -2008,15 +2006,7 @@
           esc(receiver) +
           "</a>"
         : "";
-    var avatar = creator
-      ? '<img class="avatar" src="' +
-        esc(md().avatarUrl(creator, dim)) +
-        '" alt="" width="' +
-        px +
-        '" height="' +
-        px +
-        '" onerror="this.onerror=null;this.src=\'/assets/satoshi-small.png\'">'
-      : "";
+    var avatar = creator ? md().lazyAvatarHtml(md().avatarUrl(creator, dim)) : "";
     if (avatar && dim === "medium") {
       avatar =
         '<a class="proposal-avatar" href="' +
