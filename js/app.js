@@ -20917,25 +20917,38 @@ let CS77_FILTER_LOW_REP = 20;
     return entries;
   }
 
+  // A receipt just posted uses the client clock. The same comment read back from
+  // the discussion uses the chain `created`, so who + amount + time is not one zap.
+  function zapTipRowId(row) {
+    const link = String(row.permlink || "");
+    if (link) return row.who + "\n" + link;
+    return row.who + "\n" + row.label + "\n" + row.at;
+  }
+
   function mergeLocalZapTips(author, permlink, entries) {
     const local = zapTipLocal.get(author + "/" + permlink) || [];
-    const all = local.concat(entries || []);
     const seen = {};
     const out = [];
-    for (let i = 0; i < all.length; i++) {
-      const row = all[i];
-      if (!row || !row.who) continue;
-      const id = row.who + "\n" + row.label + "\n" + row.at;
-      if (seen[id]) continue;
+    const push = (row) => {
+      if (!row || !row.who) return;
+      const id = zapTipRowId(row);
+      if (seen[id]) return;
       seen[id] = true;
       out.push(row);
-    }
+    };
+    const remote = entries || [];
+    for (let i = 0; i < remote.length; i++) push(remote[i]);
+    for (let i = 0; i < local.length; i++) push(local[i]);
     return out;
   }
 
   function rememberLocalZapTip(author, permlink, entry) {
     const key = author + "/" + permlink;
     const list = zapTipLocal.get(key) || [];
+    const id = zapTipRowId(entry);
+    for (let i = 0; i < list.length; i++) {
+      if (zapTipRowId(list[i]) === id) return;
+    }
     list.unshift(entry);
     zapTipLocal.set(key, list);
     const cached = zapTipsCache.get(key);
@@ -21026,6 +21039,7 @@ let CS77_FILTER_LOW_REP = 20;
       who: who,
       label: sats > 0 ? formatGroupedNumber(sats, 0) + " sats" : "Lightning",
       at: String(node.created || ""),
+      permlink: String(node.permlink || ""),
     };
   }
 
@@ -22156,6 +22170,7 @@ let CS77_FILTER_LOW_REP = 20;
         who: user,
         label: formatGroupedNumber(zapState.sentSats, 0) + " sats",
         at: node.created,
+        permlink: permlink,
       });
       zapState.offerComment = false;
       setZapStatus("Zap comment added.", false);
