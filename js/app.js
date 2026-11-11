@@ -22129,6 +22129,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.commentBusy = true;
     syncZapPayAction();
     setZapStatus("Publishing\u2026", false);
+    let posted = false;
     try {
       const { promise } = ChainQueue.comment({
         author: user,
@@ -22173,11 +22174,14 @@ let CS77_FILTER_LOW_REP = 20;
         permlink: permlink,
       });
       zapState.offerComment = false;
-      setZapStatus("Zap comment added.", false);
+      posted = true;
     } catch (err) {
       setZapStatus((err && err.message) || "Could not add the zap comment.", true);
     } finally {
       zapState.commentBusy = false;
+      // Close starts the bolt strobe. A hidden single-tap zap flashes on its own.
+      if (posted && zapDialogOpen() && closeZapOverlay()) return;
+      if (posted && zapDialogOpen()) setZapStatus("Zap comment added.", false);
       if (zapDialogOpen()) syncZapPayAction();
     }
   }
