@@ -12808,12 +12808,12 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.directImageUrl(raw, cardThumbWidth());
   }
 
-  // Rumble, PeerTube, Odysee, and Twitch have no pause command that keeps
-  // the place. They start from a muted autoplay URL and stop when the
-  // original player address is restored. The other kinds pause in place.
+  // Rumble, Odysee, and Twitch have no pause command that keeps the place.
+  // They start from a muted autoplay URL and stop when the original player
+  // address is restored. peertube.tv and blurt.media share the PeerTube embed
+  // channel, so those cards pause in place.
   const FEED_SWAP_PARAMS = {
     rumble: { autoplay: "2" },
-    peertube: { autoplay: "1", muted: "1" },
     odysee: { autoplay: "true" },
     twitch: { autoplay: "true", muted: "true" },
   };
@@ -12842,7 +12842,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (/play\.3speak\.tv\//i.test(s)) return "3speak";
     if (/player\.vimeo\.com\/video\//i.test(s)) return "vimeo";
     if (/rumble\.com\/embed\//i.test(s)) return "rumble";
-    if (/peertube\.tv\/videos\/embed\//i.test(s)) return "peertube";
+    if (/peertube\.tv\/videos\/embed\/|blurt\.media\/videos\/embed\//i.test(s)) return "peertube";
     if (/play\.d\.tube\//i.test(s)) return "dtube";
     if (/odysee\.com\/\$\/embed\//i.test(s)) return "odysee";
     if (/skatehype\.com\/ifplay\.php/i.test(s)) return "skatehype";
@@ -12876,6 +12876,14 @@ let CS77_FILTER_LOW_REP = 20;
       const hash = hashAt >= 0 ? src.slice(hashAt) : "";
       const base = hashAt >= 0 ? src.slice(0, hashAt) : src;
       return base + (base.indexOf("?") === -1 ? "?" : "&") + "mute=1" + hash;
+    }
+    if (kind === "peertube") {
+      // api=1 opens the embed channel. muted=1 lets a feed play start without
+      // a click. Autoplay stays off so the clip waits until it is in view.
+      url.searchParams.set("api", "1");
+      url.searchParams.set("muted", "1");
+      url.searchParams.delete("autoplay");
+      return url.toString();
     }
     if (kind === "twitch") {
       url.searchParams.set("muted", "true");
@@ -12917,6 +12925,94 @@ let CS77_FILTER_LOW_REP = 20;
       if (updated !== raw) next = next.replace(srcMatch[0], 'src="' + HiveMd.escapeHtml(updated) + '"');
       return "<iframe" + next + ">";
     });
+  }
+
+  let peerListening = false;
+  let peerTranId = 1;
+
+  function peerPlayerOriginOk(origin) {
+    return origin === "https://peertube.tv" || origin === "https://blurt.media";
+  }
+
+  function peerPlayerOrigin(iframe) {
+    try {
+      const src = iframe && iframe.getAttribute ? iframe.getAttribute("src") || "" : "";
+      if (!src) return "";
+      const origin = new URL(src, location.href).origin;
+      return peerPlayerOriginOk(origin) ? origin : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  // PeerTube's embed channel speaks jschannel on scope "peertube". The iframe
+  // sends peertube::__ready with a publish-request. The reply lets it deliver
+  // ready, play, and pause. Those calls keep the playback position. peertube.tv
+  // and blurt.media both use this, so the reply goes back to that iframe.
+  function ensurePeerChannel() {
+    if (peerListening || typeof window === "undefined") return;
+    peerListening = true;
+    window.addEventListener("message", onPeerChannelMessage);
+  }
+
+  function peerFrameFromSource(source) {
+    if (!source || !document.querySelectorAll) return null;
+    const frames = document.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow === source) return frames[i];
+    }
+    return null;
+  }
+
+  function onPeerChannelMessage(e) {
+    if (!e || !peerPlayerOriginOk(e.origin)) return;
+    let data = e.data;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (err) {
+        return;
+      }
+    }
+    if (!data || typeof data.method !== "string") return;
+    // PeerTube answers a publish-request with a publish-reply. Until that
+    // reply lands, the iframe queues its ready notice and play is ignored.
+    const handshake = data.params && data.params.type;
+    if (data.method === "peertube::__ready" && handshake === "publish-request") {
+      if (!e.source || typeof e.source.postMessage !== "function") return;
+      try {
+        e.source.postMessage(
+          JSON.stringify({
+            method: "peertube::__ready",
+            params: { type: "publish-reply", publish: [] },
+          }),
+          e.origin
+        );
+      } catch (err) {
+        // The frame can close between the request and the reply.
+      }
+      return;
+    }
+    // The player binds play only once it is ready. A feed retry can land
+    // before that, so the ready notice starts the clip that is still current.
+    if (data.method !== "peertube::ready" || data.params !== true) return;
+    const frame = peerFrameFromSource(e.source);
+    const box = frame && frame.closest && frame.closest(".card-video");
+    if (!box || box !== feedVideoCurrent) return;
+    postPeerPlayer(frame, "play");
+  }
+
+  function postPeerPlayer(iframe, method) {
+    ensurePeerChannel();
+    if (!iframe || !iframe.contentWindow) return;
+    const origin = peerPlayerOrigin(iframe);
+    if (!origin) return;
+    const msg = { id: peerTranId++, method: "peertube::" + method };
+    try {
+      iframe.contentWindow.postMessage(JSON.stringify(msg), origin);
+    } catch (err) {
+      // A player that is already gone cannot take the command.
+    }
   }
 
   function postFeedPlayer(iframe, message) {
@@ -13004,6 +13100,13 @@ let CS77_FILTER_LOW_REP = 20;
       } else {
         postFeedPlayer(iframe, { type: "pause" });
       }
+      return;
+    }
+    if (kind === "peertube") {
+      // muted=1 is already on the card address. play() and pause() keep the
+      // position. A call before the player exists is ignored, and the feed
+      // retries it. This covers peertube.tv and blurt.media.
+      postPeerPlayer(iframe, action === "play" ? "play" : "pause");
       return;
     }
     if (kind === "vimeo") {
@@ -13213,8 +13316,8 @@ let CS77_FILTER_LOW_REP = 20;
     `;
     } else {
       // A poll takes the media slot. One video plays here when that video
-      // comes before a preview image, or when it is 3Speak or Skate Hype.
-      // An Imgur post uses that same slot when it is the first media.
+      // comes before a preview image, or when it is 3Speak, Skate Hype, or
+      // Blurt. An Imgur post uses that same slot when it is the first media.
       // Otherwise the preview image keeps the slot.
       const poll = pollShellHtml(shown);
       const video = poll ? "" : HiveMd.previewVideo(shown);
@@ -37379,6 +37482,7 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("scroll", queueFeedVideoSync, { passive: true });
     window.addEventListener("resize", queueFeedVideoSync);
     window.addEventListener("pagehide", pauseCurrentFeedVideo);
+    ensurePeerChannel();
     watchFeedVideos();
     window.addEventListener("scroll", maybeLoadMoreWallet, { passive: true });
     window.addEventListener("resize", maybeLoadMoreWallet);

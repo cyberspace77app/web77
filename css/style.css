@@ -3555,6 +3555,15 @@ a.tag:hover {
   aspect-ratio: 1 / 1;
 }
 
+/* PeerTube's responsive share box. The ratio is the video's width / height. */
+.post-body .embed.embed-ratio,
+.comment-body .embed.embed-ratio,
+.post-card .embed.embed-ratio {
+  height: auto;
+  padding-bottom: 0;
+  aspect-ratio: var(--embed-ratio, 16 / 9);
+}
+
 .post-body .embed.embed-twitch,
 .comment-body .embed.embed-twitch,
 .post-card .embed.embed-twitch {

@@ -1234,7 +1234,7 @@
         !url.hash
       );
     }
-    if (host === "peertube.tv") {
+    if (host === "peertube.tv" || host === "blurt.media") {
       if (!/^\/videos\/embed\/(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9_-]{22})$/i.test(path)) {
         return false;
       }
@@ -1322,18 +1322,23 @@
     return !blocked[slug.toLowerCase()];
   }
 
-  function iframeEmbedHtml(src, title, kind) {
+  function iframeEmbedHtml(src, title, kind, sandbox) {
     if (!trustedPlayerSrc(src)) return "";
     let cls = "embed";
     if (kind === "portrait") cls += " embed-portrait";
     else if (kind === "twitch") cls += " embed-twitch";
+    const sand = sandbox
+      ? ' sandbox="allow-same-origin allow-scripts allow-popups allow-forms"'
+      : "";
     return (
       '<div class="' +
       cls +
       '">' +
       '<iframe src="' +
       escapeHtml(src) +
-      '" allow="fullscreen; picture-in-picture" allowfullscreen loading="lazy" title="' +
+      '" allow="fullscreen; picture-in-picture"' +
+      sand +
+      ' allowfullscreen loading="lazy" title="' +
       escapeHtml(title || "Video") +
       '"></iframe>' +
       "</div>"
@@ -1374,16 +1379,26 @@
     );
   }
 
-  // peertube.tv only. A watch or embed URL becomes that instance's player.
-  function peerTubeFromUrl(href) {
+  // These two PeerTube sites only. Other instances stay links. The player is
+  // the column-wide .embed box, not the fixed 560×315 share snippet. A taller
+  // video and any other ratio are applied after the API returns aspectRatio.
+  // A channel, account, or playlist page stays a link. Blurt still wins the
+  // feed card when a poster image comes first. peertube.tv does not.
+  const PEER_INSTANCES = {
+    "peertube.tv": { origin: "https://peertube.tv", title: "PeerTube", lead: false },
+    "blurt.media": { origin: "https://blurt.media", title: "Blurt", lead: true },
+    "www.blurt.media": { origin: "https://blurt.media", title: "Blurt", lead: true },
+  };
+
+  function peerInstanceFromUrl(href) {
     const url = httpUrl(href);
     if (!url) return null;
-    if (bareHost(url) !== "peertube.tv") return null;
+    const instance = PEER_INSTANCES[bareHost(url)];
+    if (!instance) return null;
     const path = trimmedPath(url);
-    let id = "";
     const watch = /^\/w\/([^/]+)$/.exec(path) || /^\/videos\/(?:watch|embed)\/([^/]+)$/.exec(path);
     if (!watch) return null;
-    id = watch[1];
+    let id = watch[1];
     try {
       id = decodeURIComponent(id);
     } catch (err) {
@@ -1395,9 +1410,16 @@
     let query = "";
     if (start) query += "start=" + start;
     if (stop) query += (query ? "&" : "") + "stop=" + stop;
-    const src = "https://peertube.tv/videos/embed/" + id + (query ? "?" + query : "");
-    const plain = "https://peertube.tv/w/" + id + (query ? "?" + query : "");
-    return { src: src, plain: plain, title: "PeerTube" };
+    const src = instance.origin + "/videos/embed/" + id + (query ? "?" + query : "");
+    const plain = instance.origin + "/w/" + id + (query ? "?" + query : "");
+    return {
+      src: src,
+      plain: plain,
+      title: instance.title,
+      sandbox: true,
+      lead: instance.lead,
+      origin: instance.origin,
+    };
   }
 
   // play.d.tube accepts a UUID or a 21–22 character base58 short id.
@@ -1653,7 +1675,7 @@
   function hostedVideoFromUrl(href) {
     return (
       rumbleFromUrl(href) ||
-      peerTubeFromUrl(href) ||
+      peerInstanceFromUrl(href) ||
       dtubeFromUrl(href) ||
       odyseeFromUrl(href) ||
       skatehypeFromUrl(href) ||
@@ -2321,10 +2343,12 @@
   // The same player the post body builds. Empty when the address is not a video.
   // YouTube Shorts, TikTok, and Skate Hype are portrait. A 3Speak short starts
   // portrait. Any other 3Speak frame stays landscape until its thumbnail is
-  // taller than it is wide. The other hosted players are landscape. A wider
-  // Skate Hype preview image drops the portrait frame. An Instagram Reel stays a link.
-  // An Imgur post is the official blockquote embed. A direct i.imgur.com picture
-  // or video is not a post. ?orientation= or ?w= and ?h= replace that guess and stay locked.
+  // taller than it is wide. peertube.tv and blurt.media start as the responsive
+  // 16:9 frame and follow the video's aspect ratio once the API answers. The
+  // other hosted players are landscape. A wider Skate Hype preview image drops the portrait
+  // frame. An Instagram Reel stays a link. An Imgur post is the official
+  // blockquote embed. A direct i.imgur.com picture or video is not a post.
+  // ?orientation= or ?w= and ?h= replace that guess and stay locked.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
@@ -2339,8 +2363,9 @@
         if (vimeo) html = vimeoEmbedHtml(vimeo.id, vimeo.hash);
         else {
           const hosted = hostedVideoFromUrl(url);
-          if (hosted && hosted.src) html = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind);
-          else {
+          if (hosted && hosted.src) {
+            html = iframeEmbedHtml(hosted.src, hosted.title, hosted.kind, hosted.sandbox);
+          } else {
             const imgur = imgurPostFromUrl(url);
             if (imgur) html = imgurEmbedHtml(imgur);
           }
@@ -2647,9 +2672,10 @@
     return /^https?:\/\//i.test(src);
   }
 
-  // 3Speak and Skate Hype stay the card even when a poster image comes first.
+  // 3Speak, Skate Hype, and Blurt stay the card even when a poster image comes first.
   function previewHostLeads(href) {
-    return !!(threeSpeakFromUrl(href) || skatehypeFromUrl(href));
+    const peer = peerInstanceFromUrl(href);
+    return !!(threeSpeakFromUrl(href) || skatehypeFromUrl(href) || (peer && peer.lead));
   }
 
   // A linked thumbnail is still a preview image. The link address is not a video.
@@ -2689,8 +2715,8 @@
   // The card embeds one video: the first plain URL, autolink, iframe, embed,
   // or video tag in reading order. Fences, inline code, comments, and markdown
   // links are skipped, including a linked thumbnail. That video takes the card
-  // when it appears before a preview image, or when it is 3Speak or Skate Hype.
-  // A later video is left in the post. An earlier image keeps the card.
+  // when it appears before a preview image, or when it is 3Speak, Skate Hype,
+  // or Blurt. A later video is left in the post. An earlier image keeps the card.
   function firstPreviewVideoHtml(src) {
     const s = String(src || "").replace(/\r\n/g, "\n");
     let i = 0;
@@ -3005,6 +3031,70 @@
     }
   }
 
+  function peerFrameInfo(box) {
+    const iframe = box.querySelector && box.querySelector("iframe");
+    const src = (iframe && iframe.getAttribute("src")) || "";
+    let url;
+    try {
+      url = new URL(src);
+    } catch (err) {
+      return null;
+    }
+    const instance = PEER_INSTANCES[url.hostname];
+    if (!instance) return null;
+    let path = url.pathname || "";
+    if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
+    const match = /^\/videos\/embed\/([^/]+)$/.exec(path);
+    if (!match || !peerTubeIdOk(match[1])) return null;
+    return { id: match[1], origin: instance.origin };
+  }
+
+  // PeerTube's responsive share box uses the video's own aspect ratio.
+  // A taller video uses the same capped portrait frame as a 3Speak short.
+  // A failed lookup stays the 16:9 box. peertube.tv and blurt.media both do this.
+  function watchPeerBox(box) {
+    if (!box || frameLocked(box) || box.getAttribute("data-peer-watch")) return;
+    const info = peerFrameInfo(box);
+    if (!info || typeof fetch !== "function") return;
+    box.setAttribute("data-peer-watch", "1");
+    fetch(info.origin + "/api/v1/videos/" + encodeURIComponent(info.id), { credentials: "omit" })
+      .then(function (res) {
+        return res && res.ok ? res.json() : null;
+      })
+      .then(function (data) {
+        if (!box.isConnected || frameLocked(box)) return;
+        const ratio = Number(data && data.aspectRatio);
+        if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 20) return;
+        if (ratio < 1) {
+          box.classList.add("embed-portrait");
+          box.classList.remove("embed-ratio");
+          box.style.removeProperty("--embed-ratio");
+          return;
+        }
+        if (Math.abs(ratio - 16 / 9) < 0.04) return;
+        box.classList.remove("embed-portrait");
+        box.classList.add("embed-ratio");
+        box.style.setProperty("--embed-ratio", ratio.toFixed(4));
+      })
+      .catch(function () {});
+  }
+
+  function watchPeerFrames(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const frames = scope.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      const src = frames[i].getAttribute("src") || "";
+      if (
+        src.indexOf("peertube.tv/videos/embed/") === -1 &&
+        src.indexOf("blurt.media/videos/embed/") === -1
+      ) {
+        continue;
+      }
+      const box = frames[i].closest && frames[i].closest(".embed");
+      if (box) watchPeerBox(box);
+    }
+  }
+
   if (typeof document !== "undefined") {
     document.addEventListener(
       "loadedmetadata",
@@ -3019,6 +3109,7 @@
         skateOrientQueued = false;
         watchSkatehypeFrames(document);
         watchThreeSpeakFrames(document);
+        watchPeerFrames(document);
       };
       const queueSkateOrient = function () {
         if (skateOrientQueued) return;
