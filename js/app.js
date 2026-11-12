@@ -36990,6 +36990,7 @@ let CS77_FILTER_LOW_REP = 20;
   // j and k move through the feed. Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
+  // An open post has no feed list, so z uses the article stats-bar bolt instead.
   // n opens the notification panel, and n again closes it.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
@@ -37234,7 +37235,20 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function openPostZapButton() {
+    const view = document.getElementById("postView");
+    const article = view && view.querySelector(":scope > article.article");
+    if (!article) return null;
+    return article.querySelector(":scope > .post-stats-bar .zap-stat-btn");
+  }
+
   function feedKeyZap() {
+    if (document.body.classList.contains("is-post-open")) {
+      const btn = openPostZapButton();
+      if (!btn || btn.disabled) return Boolean(btn);
+      openContentZap(btn);
+      return true;
+    }
     const items = feedKeyItems();
     if (!items.length) return false;
     const item = feedKeyLocked(items) || feedKeyCurrentItem(items);
@@ -37303,6 +37317,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
     if (key === "n") {
       if (!feedKeyNotifications()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (key === "z" && document.body.classList.contains("is-post-open")) {
+      if (!feedKeyZap()) return;
       e.preventDefault();
       e.stopPropagation();
       return;
