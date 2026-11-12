@@ -16,9 +16,6 @@ let CS77_FILTER_LOW_REP = 20;
   // viewport, so the request finishes before the reader reaches the end.
   const FEED_INFINITE_LEAD = 3;
   const FEED_INFINITE_MARGIN = 720;
-  // A feed card is a full column. The first two can sit in the opening screen,
-  // so their pictures stay eager. Later pictures are below that screen.
-  const EAGER_FEED_CARDS = 2;
   // One page of a profile follow list. 48 fills 16 rows of the 3-column grid.
   const FOLLOW_PAGE = 48;
   // Hivemind list_subscribers accepts at most 100 names.
@@ -11271,7 +11268,6 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function removeDeletedCards(author, permlink) {
-    let removedFeedCard = false;
     const items = feedState.items || [];
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i];
@@ -11294,10 +11290,8 @@ let CS77_FILTER_LOW_REP = 20;
       ) {
         const wrap = card.closest(".feed-item") || card;
         wrap.remove();
-        removedFeedCard = true;
       }
     });
-    if (removedFeedCard) syncFeedThumbLoading(document.getElementById("feedList"));
   }
 
   function leaveDeletedPost(author, permlink) {
@@ -12814,10 +12808,6 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.directImageUrl(raw, cardThumbWidth());
   }
 
-  function cardThumbLoading(index) {
-    return index >= EAGER_FEED_CARDS ? ' loading="lazy"' : "";
-  }
-
   // Rumble, PeerTube, Odysee, and Twitch have no pause command that keeps
   // the place. They start from a muted autoplay URL and stop when the
   // original player address is restored. The other kinds pause in place.
@@ -13195,7 +13185,7 @@ let CS77_FILTER_LOW_REP = 20;
     queueFeedVideoSync();
   }
 
-  function cardHtml(post, index) {
+  function cardHtml(post) {
     const shown = cardDisplayPost(post) || post;
     const share = shareLineHtml(post);
     const authorAttr = HiveMd.escapeHtml(shown.author);
@@ -13231,7 +13221,7 @@ let CS77_FILTER_LOW_REP = 20;
       const img = poll || video ? "" : HiveMd.extractImage(shown);
       const hideNsfw = !showNsfwContent() && (postHasNsfw(shown) || postHasNsfw(post));
       const thumb = img
-        ? `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt=""${cardThumbLoading(index)}>`
+        ? `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="">`
         : "";
       const thumbLink = thumb
         ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
@@ -19398,43 +19388,12 @@ let CS77_FILTER_LOW_REP = 20;
     dest.children = commentCount;
   }
 
-  function feedItemIndex(node) {
-    const item = node && node.closest ? node.closest(".feed-item") : null;
-    if (!item) return 0;
-    let index = 0;
-    for (let el = item.previousElementSibling; el; el = el.previousElementSibling) {
-      if (el.classList.contains("feed-item")) index += 1;
-    }
-    return index;
-  }
-
-  // Pinning and deleting move cards across the eager window without a rebuild.
-  function syncFeedThumbLoading(list) {
-    if (!list || !list.children) return;
-    const children = list.children;
-    let index = 0;
-    for (let i = 0; i < children.length; i++) {
-      const el = children[i];
-      if (!el.classList.contains("feed-item")) continue;
-      const img = el.querySelector("img.card-thumb");
-      if (img) {
-        if (index >= EAGER_FEED_CARDS) {
-          if (img.getAttribute("loading") !== "lazy") img.setAttribute("loading", "lazy");
-        } else if (img.hasAttribute("loading")) {
-          img.removeAttribute("loading");
-        }
-      }
-      index += 1;
-    }
-  }
-
   function replaceFeedCard(card, post) {
     const shown = cardDisplayPost(post);
-    const index = feedItemIndex(card);
     const html =
       profileState.author && !isRootPost(shown)
-        ? profileCardHtml(post, index)
-        : cardHtml(post, index);
+        ? profileCardHtml(post)
+        : cardHtml(post);
     const wrap = document.createElement("div");
     wrap.innerHTML = String(html || "").trim();
     const next = wrap.firstElementChild;
@@ -23208,7 +23167,6 @@ let CS77_FILTER_LOW_REP = 20;
     const list = document.getElementById("feedList");
     if (node && list && node.parentNode === list && list.firstElementChild !== node) {
       list.insertBefore(node, list.firstElementChild);
-      syncFeedThumbLoading(list);
     }
   }
 
@@ -23715,13 +23673,13 @@ let CS77_FILTER_LOW_REP = 20;
     el.textContent = String(Math.floor(HiveMd.displayReputation(profile.reputation || 0)));
   }
 
-  function profileCardHtml(post, index) {
-    if (isRootPost(cardDisplayPost(post))) return cardHtml(post, index);
+  function profileCardHtml(post) {
+    if (isRootPost(cardDisplayPost(post))) return cardHtml(post);
     const rootTitle = String((post && (post.root_title || post.title)) || "").trim();
     const title = rootTitle
       ? String((post && post.title) || "").trim() || "RE: " + rootTitle
       : String((post && post.title) || "").trim() || "Comment";
-    return cardHtml(Object.assign({}, post, { title }), index);
+    return cardHtml(Object.assign({}, post, { title }));
   }
 
   function toggleProfileFollow() {
