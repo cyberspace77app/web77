@@ -6393,8 +6393,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // The signed-in picture is already on the account, or stored from the last
-  // visit. Remember it so the chip and a notification from this user do not
-  // wait on another get_accounts.
+  // visit. Remember it so the session chip does not wait on another get_accounts.
   function noteLoggedInAvatar() {
     const user = authorImageKey(observer());
     if (!user) return "";
@@ -6484,13 +6483,6 @@ let CS77_FILTER_LOW_REP = 20;
     if (img && user) {
       const src = sessionAvatarSrc(user);
       if (img.getAttribute("src") !== src) img.setAttribute("src", src);
-      const want = authorImageKey(user);
-      const rows = document.querySelectorAll("#sessionNotifs .session-notif");
-      for (let i = 0; i < rows.length; i++) {
-        if (authorImageKey(rows[i].getAttribute("data-account")) !== want) continue;
-        const avatar = rows[i].querySelector("img.session-notif-avatar");
-        if (avatar && avatar.getAttribute("src") !== src) avatar.setAttribute("src", src);
-      }
     }
     paintPublishBlogAvatar();
   }
@@ -6875,35 +6867,12 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  async function prepareNotifActors(actors) {
-    const list = Array.isArray(actors) ? actors : [];
-    let known = noteLoggedInAvatar();
-    const user = authorImageKey(observer());
-    let mentionsUser = false;
-    for (let i = 0; i < list.length; i++) {
-      if (user && authorImageKey(list[i]) === user) {
-        mentionsUser = true;
-        break;
-      }
-    }
-    if (mentionsUser && !known) {
-      await loadAccountResources();
-      known = noteLoggedInAvatar();
-    }
-    const names = [];
-    for (let i = 0; i < list.length; i++) {
-      if (known && authorImageKey(list[i]) === known) continue;
-      names.push(list[i]);
-    }
-    await prepareAvatars(names);
-  }
-
   async function prependNotifDom(items) {
     const wrap = $("#sessionNotifs");
     if (!wrap || !items.length) return;
     const gen = ++notifPaintGen;
     const actors = items.map(notificationActor).filter(Boolean);
-    await prepareNotifActors(actors);
+    await prepareAvatars(actors);
     if (gen !== notifPaintGen) return;
     const live = $("#sessionNotifs");
     if (!live) return;
@@ -6924,7 +6893,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!wrap || !items.length) return;
     const gen = ++notifPaintGen;
     const actors = items.map(notificationActor).filter(Boolean);
-    await prepareNotifActors(actors);
+    await prepareAvatars(actors);
     if (gen !== notifPaintGen) return;
     const live = $("#sessionNotifs");
     if (!live) return;
@@ -7004,7 +6973,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const actors = notifState.items.map(notificationActor).filter(Boolean);
-    await prepareNotifActors(actors);
+    await prepareAvatars(actors);
     if (gen !== notifPaintGen) return;
     const live = $("#sessionNotifs");
     if (!live) return;
