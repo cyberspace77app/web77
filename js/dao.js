@@ -652,6 +652,17 @@
     );
   }
 
+  function prepareNames(names) {
+    if (!window.HiveAvatars) return Promise.resolve();
+    return window.HiveAvatars.prepare(names);
+  }
+
+  function avatarImg(name, size) {
+    var dim = size || "small";
+    if (window.HiveAvatars) return window.HiveAvatars.html(name, dim);
+    return md().lazyAvatarHtml(md().avatarUrl(name, dim));
+  }
+
   function rowHtml(witness, rank, listMode) {
     var name = witnessName(witness);
     var top = listMode === "rank" && rank > 0 && rank <= 20;
@@ -676,7 +687,7 @@
       '<a class="witness-who" href="' +
       esc(state.host.appHref("/witness/@" + name)) +
       '">' +
-      md().lazyAvatarHtml(md().avatarUrl(name, "small")) +
+      avatarImg(name, "small") +
       '<span class="witness-name">@' +
       esc(name) +
       "</span></a>" +
@@ -842,10 +853,34 @@
       return;
     }
     list.innerHTML = rowsHtml(state.votedRows, "voted");
+    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
     paintVoteButtons();
   }
 
+  var witnessPaintGen = 0;
+
+  function witnessNamesForPaint() {
+    var names = [];
+    var rows =
+      witnessFilter() === "voted" && state.listMode !== "search"
+        ? state.votedRows
+        : (state.listMode === "search" ? state.search : state.ranked).rows;
+    (rows || []).forEach(function (witness) {
+      names.push(witnessName(witness));
+    });
+    return names;
+  }
+
   function paintCurrentList() {
+    if (state.mode !== "witnesses") return;
+    var gen = ++witnessPaintGen;
+    prepareNames(witnessNamesForPaint()).then(function () {
+      if (gen !== witnessPaintGen) return;
+      paintCurrentListBody();
+    });
+  }
+
+  function paintCurrentListBody() {
     if (state.mode !== "witnesses") return;
     var list = document.getElementById("witnessList");
     if (!list) return;
@@ -870,6 +905,7 @@
       return;
     }
     list.innerHTML = html;
+    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
     paintVoteButtons();
   }
 
@@ -2006,7 +2042,7 @@
           esc(receiver) +
           "</a>"
         : "";
-    var avatar = creator ? md().lazyAvatarHtml(md().avatarUrl(creator, dim)) : "";
+    var avatar = creator ? avatarImg(creator, dim) : "";
     if (avatar && dim === "medium") {
       avatar =
         '<a class="proposal-avatar" href="' +
@@ -2164,6 +2200,8 @@
       (isReturnProposal(row) ? " is-return" : "") +
       '" data-proposal="' +
       esc(id == null ? "" : String(id)) +
+      '" data-account="' +
+      esc(accountName(row && row.creator)) +
       '">' +
       '<div class="proposal-body">' +
       '<div class="proposal-top">' +
@@ -2336,7 +2374,30 @@
     setProposalStat("proposalThreshold", hp && hp.compact && hp.compact !== "—" ? hp.compact : "—");
   }
 
+  var proposalPaintGen = 0;
+
+  function proposalNamesForPaint() {
+    var names = [];
+    var groups = proposalGroups();
+    var rows = groups.above.concat(groups.threshold ? [groups.threshold] : [], groups.below);
+    rows.forEach(function (row) {
+      if (row && row.creator) names.push(row.creator);
+      if (row && row.receiver) names.push(row.receiver);
+    });
+    return names;
+  }
+
   function paintProposalList() {
+    if (state.mode !== "proposals") return;
+    var gen = ++proposalPaintGen;
+    var names = state.proposals.rows.length ? proposalNamesForPaint() : [];
+    prepareNames(names).then(function () {
+      if (gen !== proposalPaintGen) return;
+      paintProposalListBody();
+    });
+  }
+
+  function paintProposalListBody() {
     if (state.mode !== "proposals") return;
     paintProposalOwn();
     var list = document.getElementById("proposalList");
@@ -2363,6 +2424,7 @@
       return;
     }
     list.innerHTML = proposalRowsHtml(groups, chainNow(), proposalFilter(), returnVotes());
+    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
   }
 
   function paintProposalActions() {
@@ -4316,7 +4378,19 @@
     );
   }
 
+  var proposalDetailPaint = 0;
+
   function paintProposalDetail(gen) {
+    var row = state.detailProposal;
+    if (!row || !alive(gen) || state.mode !== "proposal") return;
+    var token = ++proposalDetailPaint;
+    prepareNames([row.creator, row.receiver]).then(function () {
+      if (token !== proposalDetailPaint || !alive(gen)) return;
+      paintProposalDetailBody(gen);
+    });
+  }
+
+  function paintProposalDetailBody(gen) {
     var row = state.detailProposal;
     var id = state.detailProposalId;
     if (!row || !alive(gen) || state.mode !== "proposal") return;

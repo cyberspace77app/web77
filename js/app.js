@@ -6166,10 +6166,26 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function avatarSrcFromImage(user, image, size) {
-    if (image != null && !String(image).trim()) {
-      return (size === "large") ? AVATAR_DEFAULT_LARGE : AVATAR_DEFAULT_SMALL;
-    }
-    return HiveMd.avatarUrl(user, size);
+    const fallback = size === "large" || size === "medium" ? AVATAR_DEFAULT_LARGE : AVATAR_DEFAULT_SMALL;
+    const raw = image == null ? null : String(image).trim();
+    if (raw === "") return fallback;
+    if (raw && /^https?:\/\//i.test(raw)) return HiveMd.directAvatarUrl(raw, size) || fallback;
+    if (window.HiveAvatars && HiveAvatars.has(user)) return HiveAvatars.src(user, size);
+    return fallback;
+  }
+
+  function prepareAvatars(names) {
+    if (!window.HiveAvatars) return Promise.resolve();
+    return HiveAvatars.prepare(names);
+  }
+
+  function stampAvatars(root) {
+    if (window.HiveAvatars && root) HiveAvatars.stamp(root);
+  }
+
+  function avatarImgHtml(name, size, className) {
+    if (window.HiveAvatars) return HiveAvatars.html(name, size, className);
+    return HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, size), className, AVATAR_DEFAULT_SMALL);
   }
 
   // Profile and subspace banners already have the picture URL from Hive.
@@ -6178,7 +6194,25 @@ let CS77_FILTER_LOW_REP = 20;
     return HiveMd.directAvatarUrl(image, "large") || AVATAR_DEFAULT_LARGE;
   }
 
+  // The signed-in picture is already on the account, or stored from the last
+  // visit. Remember it so the chip and a notification from this user do not
+  // wait on another get_accounts.
+  function noteLoggedInAvatar() {
+    const user = authorImageKey(observer());
+    if (!user || !window.HiveAvatars) return "";
+    let image = null;
+    if (accountState.loaded && authorImageKey(accountState.user) === user) {
+      image = accountState.profileImage || "";
+    } else {
+      image = readStoredProfileImage(user);
+    }
+    if (image == null) return "";
+    HiveAvatars.rememberImage(user, image);
+    return HiveAvatars.has(user) ? user : "";
+  }
+
   function sessionAvatarSrc(user) {
+    noteLoggedInAvatar();
     return avatarSrcFromImage(user, knownProfileImage(user), "small");
   }
 
@@ -6252,6 +6286,13 @@ let CS77_FILTER_LOW_REP = 20;
     if (img && user) {
       const src = sessionAvatarSrc(user);
       if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+      const want = authorImageKey(user);
+      const rows = document.querySelectorAll("#sessionNotifs .session-notif");
+      for (let i = 0; i < rows.length; i++) {
+        if (authorImageKey(rows[i].getAttribute("data-account")) !== want) continue;
+        const avatar = rows[i].querySelector("img.session-notif-avatar");
+        if (avatar && avatar.getAttribute("src") !== src) avatar.setAttribute("src", src);
+      }
     }
     paintPublishBlogAvatar();
   }
@@ -6559,8 +6600,8 @@ let CS77_FILTER_LOW_REP = 20;
     const profile = actor ? profileHref(actor) : "";
     const avatar = actor
       ? (profile
-          ? `<a class="session-notif-actor" href="${HiveMd.escapeHtml(profile)}" aria-label="@${HiveMd.escapeHtml(actor)}">${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(actor, "small"), "session-notif-avatar")}</a>`
-          : HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(actor, "small"), "session-notif-avatar"))
+          ? `<a class="session-notif-actor" href="${HiveMd.escapeHtml(profile)}" aria-label="@${HiveMd.escapeHtml(actor)}">${avatarImgHtml(actor, "small", "session-notif-avatar")}</a>`
+          : avatarImgHtml(actor, "small", "session-notif-avatar"))
       : "";
     const kind = notificationKindLabel(item);
     const time = timeAgo(item.date);
@@ -6568,7 +6609,7 @@ let CS77_FILTER_LOW_REP = 20;
     const timeHtml = `<span class="session-notif-time">${HiveMd.escapeHtml(meta)}</span>`;
     const hrefAttr = href ? ` data-href="${HiveMd.escapeHtml(href)}"` : "";
     return (
-      `<div class="${cls}"${hrefAttr}>` +
+      `<div class="${cls}"${hrefAttr}${actor ? ` data-account="${HiveMd.escapeHtml(actor)}"` : ""}>` +
       avatar +
       `<span class="session-notif-body">` +
       `<span class="session-notif-msg">${notificationMessageHtml(item, actor, href)}</span>` +
@@ -6636,32 +6677,69 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function prependNotifDom(items) {
+  async function prepareNotifActors(actors) {
+    const list = Array.isArray(actors) ? actors : [];
+    let known = noteLoggedInAvatar();
+    const user = authorImageKey(observer());
+    let mentionsUser = false;
+    for (let i = 0; i < list.length; i++) {
+      if (user && authorImageKey(list[i]) === user) {
+        mentionsUser = true;
+        break;
+      }
+    }
+    if (mentionsUser && !known) {
+      await loadAccountResources();
+      known = noteLoggedInAvatar();
+    }
+    const names = [];
+    for (let i = 0; i < list.length; i++) {
+      if (known && authorImageKey(list[i]) === known) continue;
+      names.push(list[i]);
+    }
+    await prepareAvatars(names);
+  }
+
+  async function prependNotifDom(items) {
     const wrap = $("#sessionNotifs");
     if (!wrap || !items.length) return;
-    const first = wrap.querySelector(".session-notif");
+    const gen = ++notifPaintGen;
+    const actors = items.map(notificationActor).filter(Boolean);
+    await prepareNotifActors(actors);
+    if (gen !== notifPaintGen) return;
+    const live = $("#sessionNotifs");
+    if (!live) return;
+    const first = live.querySelector(".session-notif");
     if (!first) {
       paintNotifs();
       return;
     }
-    const before = wrap.scrollHeight;
-    const top = wrap.scrollTop;
+    const before = live.scrollHeight;
+    const top = live.scrollTop;
     first.insertAdjacentHTML("beforebegin", items.map(renderNotifItem).join(""));
-    if (top > 0) wrap.scrollTop = top + (wrap.scrollHeight - before);
+    if (top > 0) live.scrollTop = top + (live.scrollHeight - before);
+    stampAvatars(live);
   }
 
-  function appendNotifDom(items) {
+  async function appendNotifDom(items) {
     const wrap = $("#sessionNotifs");
     if (!wrap || !items.length) return;
-    if (!wrap.querySelector(".session-notif")) {
+    const gen = ++notifPaintGen;
+    const actors = items.map(notificationActor).filter(Boolean);
+    await prepareNotifActors(actors);
+    if (gen !== notifPaintGen) return;
+    const live = $("#sessionNotifs");
+    if (!live) return;
+    if (!live.querySelector(".session-notif")) {
       paintNotifs();
       return;
     }
-    const footer = wrap.querySelector(".session-notifs-more");
+    const footer = live.querySelector(".session-notifs-more");
     const html = items.map(renderNotifItem).join("");
     if (footer) footer.insertAdjacentHTML("beforebegin", html);
-    else wrap.insertAdjacentHTML("beforeend", html);
-    syncNotifFooter(wrap);
+    else live.insertAdjacentHTML("beforeend", html);
+    syncNotifFooter(live);
+    stampAvatars(live);
   }
 
   function isNotifUnread(item, lastread) {
@@ -6708,9 +6786,12 @@ let CS77_FILTER_LOW_REP = 20;
     btn.disabled = !(notifState.loaded && notifState.unread > 0);
   }
 
-  function paintNotifs() {
+  let notifPaintGen = 0;
+
+  async function paintNotifs() {
     const wrap = $("#sessionNotifs");
     if (!wrap) return;
+    const gen = ++notifPaintGen;
     const top = wrap.scrollTop;
     if (!notifState.loaded && !notifState.error) {
       wrap.innerHTML = `<p class="session-notifs-empty">Loading…</p>`;
@@ -6724,8 +6805,18 @@ let CS77_FILTER_LOW_REP = 20;
       wrap.innerHTML = `<p class="session-notifs-empty">No notifications</p>`;
       return;
     }
-    wrap.innerHTML = notifState.items.map(renderNotifItem).join("") + notifFooterHtml();
-    wrap.scrollTop = top;
+    const actors = notifState.items.map(notificationActor).filter(Boolean);
+    await prepareNotifActors(actors);
+    if (gen !== notifPaintGen) return;
+    const live = $("#sessionNotifs");
+    if (!live) return;
+    if (!notifState.items.length) {
+      live.innerHTML = `<p class="session-notifs-empty">No notifications</p>`;
+      return;
+    }
+    live.innerHTML = notifState.items.map(renderNotifItem).join("") + notifFooterHtml();
+    live.scrollTop = top;
+    stampAvatars(live);
   }
 
   async function loadMoreNotifications() {
@@ -7085,7 +7176,7 @@ let CS77_FILTER_LOW_REP = 20;
           <div class="session-chip">
             <button type="button" class="session-avatar-btn" aria-haspopup="true" aria-expanded="false" aria-controls="sessionDropdown" aria-label="Notifications">
               <span class="session-avatar-wrap">
-                <img src="${sessionAvatarSrc(user)}" alt="" width="24" height="24">
+                <img src="${sessionAvatarSrc(user)}" alt="" width="24" height="24" data-avatar-fallback="${AVATAR_DEFAULT_SMALL}" onerror="this.onerror=null;this.src=this.dataset.avatarFallback">
                 <span class="session-badge" id="sessionBadge" hidden></span>
               </span>
             </button>
@@ -8043,7 +8134,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!img || !nameEl) return;
     const open = publishOverlayOpen();
     if (publishDest.type === "community" && publishDest.name) {
-      if (open) img.src = HiveMd.avatarUrl(publishDest.name, "small");
+      if (open) img.src = window.HiveAvatars ? HiveAvatars.src(publishDest.name, "small") : AVATAR_DEFAULT_SMALL;
       nameEl.textContent = publishDest.title || publishDest.name;
     } else {
       if (open) img.src = blogDestAvatarSrc();
@@ -8053,7 +8144,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function destOptionHtml(name, title, avatarSrc, selected) {
     return `<button type="button" class="publish-dest-option${selected ? " is-selected" : ""}" data-dest-type="${name ? "community" : "blog"}" data-dest-name="${HiveMd.escapeHtml(name)}" data-dest-title="${HiveMd.escapeHtml(title)}" role="option">
-        ${HiveMd.lazyAvatarHtml(avatarSrc)}
+        ${HiveMd.lazyAvatarHtml(avatarSrc, "avatar", AVATAR_DEFAULT_SMALL)}
         <span>${HiveMd.escapeHtml(title)}</span>
       </button>`;
   }
@@ -8076,7 +8167,28 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  let destMenuGen = 0;
+
   function renderDestMenu() {
+    const menu = $("#publishDestMenu");
+    if (!menu) return;
+    const gen = ++destMenuGen;
+    const names = [];
+    const user = observer();
+    if (user) names.push(user);
+    publishSubs.forEach((c) => {
+      if (c && c.name) names.push(c.name);
+    });
+    if (publishPinnedCommunity && publishPinnedCommunity.name) names.push(publishPinnedCommunity.name);
+    if (publishDest && publishDest.name) names.push(publishDest.name);
+    prepareAvatars(names).then(() => {
+      if (gen !== destMenuGen) return;
+      writeDestMenu();
+      paintPublishDest();
+    });
+  }
+
+  function writeDestMenu() {
     const menu = $("#publishDestMenu");
     if (!menu) return;
     const selectedName =
@@ -8097,14 +8209,14 @@ let CS77_FILTER_LOW_REP = 20;
       const id = normalizeCommunityName(c.name);
       if (id) seen.add(id);
       const selected = Boolean(selectedName) && id === selectedName;
-      parts.push(destOptionHtml(c.name, c.title || c.name, HiveMd.avatarUrl(c.name, "small"), selected));
+      parts.push(destOptionHtml(c.name, c.title || c.name, window.HiveAvatars ? HiveAvatars.src(c.name, "small") : AVATAR_DEFAULT_SMALL, selected));
     });
     const extras = [];
     function pushExtra(name, title) {
       const id = normalizeCommunityName(name);
       if (!id || seen.has(id)) return;
       seen.add(id);
-      extras.push(destOptionHtml(id, title || id, HiveMd.avatarUrl(id, "small"), selectedName === id));
+      extras.push(destOptionHtml(id, title || id, window.HiveAvatars ? HiveAvatars.src(id, "small") : AVATAR_DEFAULT_SMALL, selectedName === id));
     }
     if (publishPinnedCommunity) {
       pushExtra(publishPinnedCommunity.name, publishPinnedCommunity.title);
@@ -11212,7 +11324,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (crossPostDest && crossPostDest.name) {
       if (img) {
         img.hidden = false;
-        img.src = HiveMd.avatarUrl(crossPostDest.name, "small");
+        img.src = window.HiveAvatars ? HiveAvatars.src(crossPostDest.name, "small") : AVATAR_DEFAULT_SMALL;
       }
       nameEl.textContent = crossPostDest.title || crossPostDest.name;
       btn.classList.remove("is-empty");
@@ -11253,7 +11365,22 @@ let CS77_FILTER_LOW_REP = 20;
     return list;
   }
 
+  let crossPostMenuGen = 0;
+
   function renderCrossPostMenu() {
+    const menu = $("#crossPostDestMenu");
+    if (!menu) return;
+    const gen = ++crossPostMenuGen;
+    const names = crossPostSpaces.map((row) => row && row.name);
+    if (crossPostDest && crossPostDest.name) names.push(crossPostDest.name);
+    prepareAvatars(names).then(() => {
+      if (gen !== crossPostMenuGen) return;
+      writeCrossPostMenu();
+      paintCrossPostDest();
+    });
+  }
+
+  function writeCrossPostMenu() {
     const menu = $("#crossPostDestMenu");
     if (!menu) return;
     const selected = crossPostDest ? normalizeCommunityName(crossPostDest.name) : "";
@@ -11273,7 +11400,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!id || seen.has(id)) return;
       seen.add(id);
       parts.push(
-        destOptionHtml(id, row.title || id, HiveMd.avatarUrl(id, "small"), id === selected)
+        destOptionHtml(id, row.title || id, window.HiveAvatars ? HiveAvatars.src(id, "small") : AVATAR_DEFAULT_SMALL, id === selected)
       );
     });
     if (selected && !seen.has(selected)) {
@@ -11281,7 +11408,7 @@ let CS77_FILTER_LOW_REP = 20;
         destOptionHtml(
           selected,
           crossPostDest.title || selected,
-          HiveMd.avatarUrl(selected, "small"),
+          window.HiveAvatars ? HiveAvatars.src(selected, "small") : AVATAR_DEFAULT_SMALL,
           true
         )
       );
@@ -11760,6 +11887,41 @@ let CS77_FILTER_LOW_REP = 20;
     return kind === "following" || kind === "ranked" || kind === "tag" || kind === "community";
   }
 
+  // Posts and comments on a profile already have that account's picture.
+  // Replies are other people, so they still go through get_accounts.
+  function noteProfileFeedAvatar() {
+    if (feedState.kind !== "profile") return "";
+    if (feedState.sort !== "posts" && feedState.sort !== "comments") return "";
+    if (!profileState.profile || !window.HiveAvatars) return "";
+    const name = authorImageKey(profileState.author);
+    if (!name || authorImageKey(feedState.scope) !== name) return "";
+    HiveAvatars.rememberImage(name, profileImageOf(profileState.profile));
+    return HiveAvatars.has(name) ? name : "";
+  }
+
+  // After a page of posts arrives, load those authors and keep the account
+  // on the post the card will show.
+  async function rememberFeedAccounts(posts) {
+    const list = posts || [];
+    const known = noteProfileFeedAvatar();
+    const names = [];
+    for (let i = 0; i < list.length; i++) {
+      const shown = cardDisplayPost(list[i]) || list[i];
+      if (!shown || !shown.author) continue;
+      if (known && authorImageKey(shown.author) === known) continue;
+      names.push(shown.author);
+    }
+    await prepareAvatars(names);
+    for (let i = 0; i < list.length; i++) {
+      const post = list[i];
+      const shown = cardDisplayPost(post) || post;
+      if (!shown || !window.HiveAvatars || !HiveAvatars.has(shown.author)) continue;
+      const record = HiveAvatars.account(shown.author);
+      post._hiveAccount = record;
+      if (shown !== post) shown._hiveAccount = record;
+    }
+  }
+
   async function loadFeedPage() {
     if (feedState.loading || feedState.done) return;
     const kind = feedState.kind;
@@ -11827,10 +11989,14 @@ let CS77_FILTER_LOW_REP = 20;
         }
         await resolveCrossPosts(incoming);
         if (!feedStill(gen)) return;
+        const pushed = [];
         for (let i = 0; i < incoming.length; i++) {
           if (!keepHydratedPost(incoming[i])) continue;
           feedState.items.push(incoming[i]);
+          pushed.push(incoming[i]);
         }
+        await rememberFeedAccounts(pushed);
+        if (!feedStill(gen)) return;
 
         const last = batch[batch.length - 1];
         if (
@@ -11867,7 +12033,7 @@ let CS77_FILTER_LOW_REP = 20;
     const avatar =
       opts && opts.avatar === false
         ? ""
-        : HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, size));
+        : avatarImgHtml(name, size);
     return `<a class="author-link" href="${href}">${avatar}<span class="author-name">@${safe}</span></a>`;
   }
 
@@ -12436,9 +12602,14 @@ let CS77_FILTER_LOW_REP = 20;
           // renderMarkdown escapes the source when the CDN scripts fail.
         }
         if (!postStill(gen, author, permlink)) return;
+        const names = [];
+        collectPostAuthors(root, names);
+        await prepareAvatars(names);
+        if (!postStill(gen, author, permlink)) return;
         patchOpenArticle(prev, root);
         setCommentCount(count);
         fillCommentList(renderedCommentsHtml(root));
+        stampAvatars(document.getElementById("comments"));
         if (list.isConnected) list.setAttribute("data-comments", "ready");
       })
       .catch((err) => {
@@ -13397,9 +13568,9 @@ let CS77_FILTER_LOW_REP = 20;
       mode === "favorite"
         ? `<button type="button" class="fav-tag-remove" data-remove-community="${name}" aria-label="Remove ${title}">×</button>`
         : `<button type="button" class="community-fav-btn${fav ? " is-saved" : ""}" data-toggle-community="${name}" data-community-title="${title}" aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Remove " + title + " from favorites" : "Add " + title + " to favorites"}">${fav ? "Favorite" : "Add"}</button>`;
-    return `<div class="community-row">
+    return `<div class="community-row" data-account="${name}">
         <a class="community-row-main" href="${HiveMd.escapeHtml(communityHref(rec.name))}">
-          ${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(rec.name, "small"))}
+          ${avatarImgHtml(rec.name, "small")}
           <span class="community-row-text">
             <span class="community-row-title">${title}</span>
             ${metaHtml}
@@ -13428,7 +13599,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function paintFavoriteCommunities() {
+  async function paintFavoriteCommunities() {
     const list = $("#favCommunitiesList");
     if (!list) return;
     const rows = readFavoriteCommunities();
@@ -13436,10 +13607,13 @@ let CS77_FILTER_LOW_REP = 20;
       list.innerHTML = `<p class="feed-hint tags-empty">No favorite communities yet.</p>`;
       return;
     }
+    await prepareAvatars(rows.map((row) => row.name));
+    if (!list.isConnected) return;
     list.innerHTML = rows.map((row) => communityDirRowHtml(row, "favorite")).join("");
+    stampAvatars(list);
   }
 
-  function paintSubscribedCommunities() {
+  async function paintSubscribedCommunities() {
     const list = $("#subscribedCommunitiesList");
     if (!list) return;
     if (communityDirState.subsError) {
@@ -13450,12 +13624,15 @@ let CS77_FILTER_LOW_REP = 20;
       list.innerHTML = `<p class="feed-hint tags-empty">You are not subscribed to any communities yet.</p>`;
       return;
     }
+    await prepareAvatars(communityDirState.subs.map((row) => row.name));
+    if (!list.isConnected) return;
     list.innerHTML = communityDirState.subs
       .map((row) => communityDirRowHtml(row, "toggle"))
       .join("");
+    stampAvatars(list);
   }
 
-  function paintCommunitySearch(loading) {
+  async function paintCommunitySearch(loading) {
     const list = $("#communitySearchList");
     if (!list) return;
     if (loading || communityDirState.searchLoading) {
@@ -13474,9 +13651,12 @@ let CS77_FILTER_LOW_REP = 20;
       list.innerHTML = `<p class="feed-hint tags-empty">No communities matched that search.</p>`;
       return;
     }
+    await prepareAvatars(communityDirState.search.map((row) => row.name));
+    if (!list.isConnected) return;
     list.innerHTML = communityDirState.search
       .map((row) => communityDirRowHtml(row, "toggle"))
       .join("");
+    stampAvatars(list);
   }
 
   function refreshCommunityDirectory() {
@@ -13810,9 +13990,12 @@ let CS77_FILTER_LOW_REP = 20;
       host.innerHTML = `<p class="feed-hint tags-empty">No subspaces yet.</p>`;
       return;
     }
+    await prepareAvatars(added.map((row) => row.name));
+    if (!host.isConnected) return;
     const html = added.map((row) => communityDirRowHtml(row, mode)).join("");
     if (!host.querySelector(".community-row")) host.innerHTML = html;
     else if (html) host.insertAdjacentHTML("beforeend", html);
+    stampAvatars(host);
     maybeLoadMoreBrowse();
   }
 
@@ -14567,9 +14750,9 @@ let CS77_FILTER_LOW_REP = 20;
       mode === "favorite"
         ? `<button type="button" class="fav-tag-remove" data-toggle-user="${safe}" aria-label="Remove @${safe}">×</button>`
         : `<button type="button" class="community-fav-btn${fav ? " is-saved" : ""}" data-toggle-user="${safe}" aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Remove @" + safe + " from favorites" : "Add @" + safe + " to favorites"}">${fav ? "Favorite" : "Add"}</button>`;
-    return `<div class="community-row search-user-row">
+    return `<div class="community-row search-user-row" data-account="${safe}">
         <a class="community-row-main" href="${HiveMd.escapeHtml(profileHref(name))}">
-          ${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"))}
+          ${avatarImgHtml(name, "small")}
           <span class="community-row-text">
             <span class="community-row-title">@${safe}</span>
           </span>
@@ -14590,7 +14773,7 @@ let CS77_FILTER_LOW_REP = 20;
       </span>`;
   }
 
-  function paintSearchFavorites(list, page) {
+  async function paintSearchFavorites(list, page) {
     if (page === "spaces") {
       const tags = readFavoriteTags();
       if (!tags.length) {
@@ -14604,24 +14787,35 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (page === "users") {
       const users = readFavoriteUsers();
+      const gen = searchPaintGen;
       list.className = "community-list";
       if (!users.length) {
         list.innerHTML = `<p class="feed-hint tags-empty">No favorite users yet.</p>`;
         return;
       }
+      await prepareAvatars(users);
+      if (gen !== searchPaintGen || !list.isConnected) return;
       list.innerHTML = users.map((name) => searchUserRowHtml(name, "favorite")).join("");
+      stampAvatars(list);
       return;
     }
     const rows = readFavoriteCommunities();
+    const gen = searchPaintGen;
     list.className = "community-list";
     if (!rows.length) {
       list.innerHTML = `<p class="feed-hint tags-empty">No favorite communities yet.</p>`;
       return;
     }
+    await prepareAvatars(rows.map((row) => row.name));
+    if (gen !== searchPaintGen || !list.isConnected) return;
     list.innerHTML = rows.map((row) => communityDirRowHtml(row, "favorite")).join("");
+    stampAvatars(list);
   }
 
-  function paintSearchResults() {
+  let searchPaintGen = 0;
+
+  async function paintSearchResults() {
+    const gen = ++searchPaintGen;
     const list = $("#searchResults");
     const page = searchPageName();
     if (!list || !page) return;
@@ -14645,7 +14839,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (!state.looked) {
-      paintSearchFavorites(list, page);
+      await paintSearchFavorites(list, page);
       return;
     }
     if (state.error && !state.results.length) {
@@ -14668,11 +14862,16 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     list.className = "community-list";
+    const names = page === "users" ? state.results : state.results.map((row) => row && row.name);
+    await prepareAvatars(names);
+    if (gen !== searchPaintGen || !list.isConnected) return;
     if (page === "users") {
       list.innerHTML = state.results.map((name) => searchUserRowHtml(name)).join("");
+      stampAvatars(list);
       return;
     }
     list.innerHTML = state.results.map((row) => communityDirRowHtml(row, "toggle")).join("");
+    stampAvatars(list);
   }
 
   function resetSearchPageState(state) {
@@ -14692,14 +14891,19 @@ let CS77_FILTER_LOW_REP = 20;
     return communityDirRowHtml(item, "toggle");
   }
 
-  function appendSearchResults(page, items) {
+  async function appendSearchResults(page, items) {
     const list = $("#searchResults");
     if (!list || !items || !items.length) return;
+    const gen = searchGen;
+    const names = page === "users" ? items : items.map((item) => item && item.name);
+    await prepareAvatars(names);
+    if (gen !== searchGen || !list.isConnected || searchPageName() !== page) return;
     list.className = "community-list";
     const html = items.map((item) => searchResultHtml(page, item)).join("");
     const hasRows = list.querySelector(".community-row, .fav-tag-chip");
     if (!hasRows) list.innerHTML = html;
     else list.insertAdjacentHTML("beforeend", html);
+    stampAvatars(list);
   }
 
   function searchLoadingRowHtml() {
@@ -15248,8 +15452,8 @@ let CS77_FILTER_LOW_REP = 20;
       state.loadingMore = false;
       setSearchMore(false);
       if (searchPageName() !== page) return;
-      if (!hadRows || !fresh.length) paintSearchResults();
-      else appendSearchResults(page, fresh);
+      if (!hadRows || !fresh.length) await paintSearchResults();
+      else await appendSearchResults(page, fresh);
       maybeLoadMoreSearch();
     } catch (err) {
       if (gen !== searchGen) return;
@@ -15786,6 +15990,13 @@ let CS77_FILTER_LOW_REP = 20;
         <p class="composer-status" hidden></p>
       </div>
     `;
+  }
+
+  function collectPostAuthors(node, names) {
+    if (!node) return;
+    if (node.author) names.push(node.author);
+    const replies = node._replies || [];
+    for (let i = 0; i < replies.length; i++) collectPostAuthors(replies[i], names);
   }
 
   function renderComment(node) {
@@ -16658,7 +16869,9 @@ let CS77_FILTER_LOW_REP = 20;
         _replies: [],
       };
       rememberPostedComment(node);
+      await prepareAvatars([user]);
       appendPostedComment(parentAuthor, parentPermlink, renderComment(node));
+      stampAvatars(document.getElementById("comments"));
       bumpCommentCount(1);
       noteReplayCommentCount();
       composerStatus(composer, "");
@@ -18044,14 +18257,16 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (gen !== pollVotes.gen || choice !== pollVotes.choice || !pollVotes.open) return;
     const list = document.getElementById("pollVotesList");
-    const html = rows
+    const voteNames = rows
       .map((row) => String((row && row.account) || "").trim())
-      .filter(Boolean)
-      .map(followAccountHtml)
-      .join("");
+      .filter(Boolean);
+    await prepareAvatars(voteNames);
+    if (gen !== pollVotes.gen || choice !== pollVotes.choice || !pollVotes.open) return;
+    const html = voteNames.map(followAccountHtml).join("");
     if (list && html) {
       list.className = "follow-list";
       list.insertAdjacentHTML("beforeend", html);
+      stampAvatars(list);
     }
     pollVotes.offset += rows.length;
     pollVotes.done = rows.length < 48;
@@ -18121,7 +18336,7 @@ let CS77_FILTER_LOW_REP = 20;
         ? options.commentsHtml
         : commentsPendingHtml();
     return `
-      <article class="article">
+      <article class="article" data-author="${HiveMd.escapeHtml(root.author || "")}">
         ${community}
         <h1>${articleTitleHtml(root)}</h1>
         <div class="article-byline">
@@ -18549,6 +18764,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (list) {
       list.innerHTML = html;
       mountCommentPolls(list);
+      stampAvatars(list);
     }
     restoreCommentDraft();
   }
@@ -18627,6 +18843,7 @@ let CS77_FILTER_LOW_REP = 20;
     pv.innerHTML = articleHtml(root, options);
     mountHivePoll(pv.querySelector("article.article"));
     mountCommentPolls(pv);
+    stampAvatars(pv);
     setPostTitle(root);
     restoreCommentDraft();
     return true;
@@ -18888,12 +19105,14 @@ let CS77_FILTER_LOW_REP = 20;
           );
         }
         mountFeedPolls(list);
+        stampAvatars(list);
         queueFeedVideoSync();
         return;
       }
     }
     list.innerHTML = visible.map((post, index) => mapFn(post, index)).join("");
     mountFeedPolls(list);
+    stampAvatars(list);
     queueFeedVideoSync();
   }
 
@@ -19056,6 +19275,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (next && root) {
       root.replaceWith(next);
       mountFeedPolls(next);
+      stampAvatars(next);
     }
   }
 
@@ -19271,6 +19491,8 @@ let CS77_FILTER_LOW_REP = 20;
       showPostSnap(snap);
       if (keepPlace || (!options.jumpComments && !options.anchor)) restoreScroll = Number(snap.scroll) || 0;
     } else if (known && (known.title || known.body) && (gated || HiveMd.markdownReady())) {
+      await prepareAvatars([known.author]);
+      if (!postStill(gen, a, p)) return;
       paintArticle(known, {
         commentCount: Number(known.children) || 0,
         commentsHtml: gated ? "" : commentsPendingHtml(),
@@ -19316,6 +19538,8 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (preview && postNsfwGated(preview)) {
         if (!activeArticle()) {
+          await prepareAvatars([preview.author]);
+          if (!postStill(gen, a, p)) return;
           paintArticle(preview, {
             commentCount: Number(preview.children) || 0,
             commentsHtml: "",
@@ -19331,7 +19555,9 @@ let CS77_FILTER_LOW_REP = 20;
       if (!useSnap && !activeArticle()) {
         const cachedNow = findLoadedPost(a, p);
         if (cachedNow && !postNsfwGated(cachedNow) && (cachedNow.title || cachedNow.body)) {
-          markdownReady.then(() => {
+          markdownReady.then(async () => {
+            if (!postStill(gen, a, p) || activeArticle()) return;
+            await prepareAvatars([cachedNow.author]);
             if (!postStill(gen, a, p) || activeArticle()) return;
             paintArticle(cachedNow, {
               commentCount: Number(cachedNow.children) || 0,
@@ -19345,6 +19571,8 @@ let CS77_FILTER_LOW_REP = 20;
       setNodeLabel();
       const root = buildCommentTree(discussion, a, p);
       if (root && postNsfwGated(root)) {
+        await prepareAvatars([root.author]);
+        if (!postStill(gen, a, p)) return;
         paintArticle(root, {
           commentCount: discussionCommentCount(discussion, root),
           commentsHtml: "",
@@ -19372,6 +19600,10 @@ let CS77_FILTER_LOW_REP = 20;
       } catch {
         // renderMarkdown escapes the source when the CDN scripts fail.
       }
+      if (!postStill(gen, a, p)) return;
+      const names = [];
+      collectPostAuthors(root, names);
+      await prepareAvatars(names);
       if (!postStill(gen, a, p)) return;
       const commentsHtml = renderedCommentsHtml(root);
       const article = activeArticle();
@@ -22172,7 +22404,7 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  function showZapReceiptComment(node) {
+  async function showZapReceiptComment(node) {
     const section = document.getElementById("comments");
     if (!section || !node) return;
     const rootAuthor = section.getAttribute("data-root-author") || "";
@@ -22180,7 +22412,9 @@ let CS77_FILTER_LOW_REP = 20;
     const onRoot = node.parent_author === rootAuthor && node.parent_permlink === rootPermlink;
     if (!onRoot && !findCommentEl(node.parent_author, node.parent_permlink)) return;
     rememberPostedComment(node);
+    await prepareAvatars([node.author]);
     appendPostedComment(node.parent_author, node.parent_permlink, renderComment(node));
+    stampAvatars(document.getElementById("comments"));
     if (onRoot) bumpCommentCount(1);
   }
 
@@ -22243,7 +22477,7 @@ let CS77_FILTER_LOW_REP = 20;
         children: 0,
         _replies: [],
       };
-      showZapReceiptComment(node);
+      await showZapReceiptComment(node);
       rememberLocalZapTip(zapState.author, zapState.permlink, {
         who: user,
         label: formatGroupedNumber(zapState.sentSats, 0) + " sats",
@@ -27957,10 +28191,14 @@ let CS77_FILTER_LOW_REP = 20;
           }
           await resolveCrossPosts(incoming);
           if (!feedStill(gen)) return;
+          const pushed = [];
           for (let i = 0; i < incoming.length; i++) {
             if (!keepHydratedPost(incoming[i])) continue;
             feedState.items.push(incoming[i]);
+            pushed.push(incoming[i]);
           }
+          await rememberFeedAccounts(pushed);
+          if (!feedStill(gen)) return;
           const last = batch[batch.length - 1];
           if (
             !last ||
@@ -28133,7 +28371,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function followAccountHtml(name) {
     const safe = HiveMd.escapeHtml(name);
-    return `<a class="follow-account" href="${HiveMd.escapeHtml(profileHref(name))}">${HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"))}<span>@${safe}</span></a>`;
+    return `<a class="follow-account" data-account="${safe}" href="${HiveMd.escapeHtml(profileHref(name))}">${avatarImgHtml(name, "small")}<span>@${safe}</span></a>`;
   }
 
   function peopleTitle(kind) {
@@ -28272,7 +28510,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (more) more.hidden = !(state.holdAuto && state.query && !state.done);
   }
 
-  function appendPeopleAccounts(names) {
+  async function appendPeopleAccounts(names) {
+    const state = peopleList;
+    const gen = state.gen;
+    await prepareAvatars(names);
+    if (state.gen !== gen || !state.open) return;
     const list = document.getElementById("peopleList");
     if (!list || !names.length) return;
     if (list.className !== "follow-list") {
@@ -28280,6 +28522,7 @@ let CS77_FILTER_LOW_REP = 20;
       list.innerHTML = "";
     }
     list.insertAdjacentHTML("beforeend", names.map(followAccountHtml).join(""));
+    stampAvatars(list);
   }
 
   function peopleTailNearView() {
@@ -28335,7 +28578,7 @@ let CS77_FILTER_LOW_REP = 20;
             state.done = true;
           }
           if (picked.kept.length) {
-            appendPeopleAccounts(picked.kept);
+            await appendPeopleAccounts(picked.kept);
             break;
           }
         }
@@ -28352,7 +28595,7 @@ let CS77_FILTER_LOW_REP = 20;
         for (let i = 0; i < picked.kept.length; i++) state.names.push(picked.kept[i]);
         if (names.length) state.cursor = names[names.length - 1];
         if (picked.past || !rows.length || rows.length < followLimit || !names.length) state.done = true;
-        appendPeopleAccounts(picked.kept);
+        await appendPeopleAccounts(picked.kept);
       }
     } catch (err) {
       if (state.gen !== gen || !state.open) return false;
@@ -32021,6 +32264,13 @@ let CS77_FILTER_LOW_REP = 20;
     };
     communityMemberContext = ctx;
     const team = communityTeamRows(info);
+    const teamNames = [];
+    team.forEach((row) => {
+      const account = normalizeLoginUser(row && row.name);
+      if (account) teamNames.push(account);
+    });
+    await prepareAvatars(teamNames);
+    if (!view.querySelector("#communityMembers")) return;
     const groups = { owner: [], admin: [], mod: [], member: [], subscriber: [], muted: [] };
     team.forEach((row) => {
       const account = normalizeLoginUser(row.name);
@@ -32044,6 +32294,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div id="communityMemberStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
       </div>
     `;
+    stampAvatars(host);
     const status = $("#communityMemberStatus");
     let roleLast = "";
     let roleMore = "";
@@ -32062,7 +32313,14 @@ let CS77_FILTER_LOW_REP = 20;
       return Boolean(selector && list.querySelector(selector));
     }
 
-    function placeMemberBatch(batch, room, listKind) {
+    async function placeMemberBatch(batch, room, listKind) {
+      const names = [];
+      for (let i = 0; i < batch.length; i++) {
+        const key = normalizeLoginUser(batch[i] && batch[i].name);
+        if (key) names.push(key);
+      }
+      await prepareAvatars(names);
+      if (communityMemberContext !== ctx) return { placed: 0, scanned: 0, lastName: "", lastRole: "" };
       const buckets = {};
       const cap = room > 0 ? room : 0;
       const subscribers = listKind === "subscribers";
@@ -32095,7 +32353,10 @@ let CS77_FILTER_LOW_REP = 20;
         const list = $("#" + communitySectionListId(section));
         if (list) list.insertAdjacentHTML("beforeend", parts.join(""));
       });
-      if (placed) communitySyncPeopleSections();
+      if (placed) {
+        stampAvatars(host);
+        communitySyncPeopleSections();
+      }
       return { placed, scanned, lastName, lastRole };
     }
 
@@ -32152,7 +32413,7 @@ let CS77_FILTER_LOW_REP = 20;
         const roles = await HiveApi.listCommunityRoles(name, roleLast, 100);
         if (communityMemberContext !== ctx) return;
         const room = goal > 1 ? goal - gained : 0;
-        const step = placeMemberBatch(roles, room, "roles");
+        const step = await placeMemberBatch(roles, room, "roles");
         gained += step.placed;
         if (room && step.scanned < roles.length) {
           if (step.lastName) roleLast = step.lastName;
@@ -32175,8 +32436,8 @@ let CS77_FILTER_LOW_REP = 20;
       roleMore = frontier || "";
     }
 
-    function takeSubsPage(batch, room) {
-      const step = placeMemberBatch(batch, room, "subscribers");
+    async function takeSubsPage(batch, room) {
+      const step = await placeMemberBatch(batch, room, "subscribers");
       if (room > 0 && step.scanned < batch.length) {
         if (step.lastName) subLast = step.lastName;
         subMore = true;
@@ -32203,7 +32464,7 @@ let CS77_FILTER_LOW_REP = 20;
         const batch = await HiveApi.listSubscribers(name, subLast, 100);
         if (communityMemberContext !== ctx) return;
         const room = goal > 1 ? goal - gained : 0;
-        const step = takeSubsPage(batch, room);
+        const step = await takeSubsPage(batch, room);
         gained += step.placed;
         if (step.status === "done" || (goal > 1 ? gained >= goal : step.status !== "skip")) return;
       }
@@ -32271,7 +32532,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     const subsResult = await subsTask;
     if (communityMemberContext !== ctx) return;
-    if (subsResult.ok && takeSubsPage(subsResult.batch).status === "skip") await pullSubs();
+    if (subsResult.ok && (await takeSubsPage(subsResult.batch)).status === "skip") await pullSubs();
     if (communityMemberContext !== ctx) return;
     if (rolesError || !subsResult.ok) {
       const err = rolesError || subsResult.err;
@@ -35562,7 +35823,7 @@ let CS77_FILTER_LOW_REP = 20;
   function embedMetaHtml(post) {
     const name = String(post.author || "").replace(/^@/, "");
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
-    const avatar = HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, "small"));
+    const avatar = avatarImgHtml(name, "small");
     const community = embedCommunityHtml(post);
     return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span><span>${rep}</span>${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
   }
@@ -35701,7 +35962,10 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     setPageMeta(embedTitleText(post) + " — CyberSpace77");
+    await prepareAvatars([post.author]);
+    if (gen !== embedGen) return;
     view.innerHTML = embedCardHtml(post);
+    stampAvatars(view);
     watchEmbedSize();
   }
 
@@ -35725,7 +35989,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.1";
+      script.src = "/js/dao.js?v=0.21.2";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);

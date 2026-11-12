@@ -149,12 +149,17 @@
   const AVATAR_BLANK =
     "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
-  // loading=lazy holds the images.hive.blog redirect until the row is near
-  // the screen.
-  function lazyAvatarHtml(url, className) {
+  // loading=lazy holds the file until the row is near the screen.
+  // A fallback swaps a broken file for the Satoshi mark (or the blank pixel
+  // when the caller has not chosen one).
+  function lazyAvatarHtml(url, className, fallback) {
     const src = String(url || "");
     if (!src) return "";
     const cls = className || "avatar";
+    if (fallback) {
+      const fb = String(fallback);
+      return `<img class="${cls}" src="${escapeHtml(src)}" alt="" loading="lazy" data-avatar-fallback="${escapeHtml(fb)}" onerror="this.onerror=null;this.src=this.dataset.avatarFallback">`;
+    }
     return `<img class="${cls}" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${AVATAR_BLANK}'">`;
   }
 
