@@ -19556,6 +19556,21 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
+  // The avatar fetch in presentPost runs before revealPostLayer. postStill
+  // also requires the layer to be open, so it would cancel that open and
+  // leave the new address on the feed. A later route still drops this call.
+  function postTargetStill(gen, author, permlink) {
+    if (postLayer.gen !== gen || postLayer.author !== author || postLayer.permlink !== permlink) {
+      return false;
+    }
+    const here = parseRoute();
+    return (
+      here.name === "post" &&
+      here.author === author &&
+      String(here.permlink || "") === String(permlink || "")
+    );
+  }
+
   function stopCommentJump() {
     if (postLayer.jumpCleanup) {
       postLayer.jumpCleanup();
@@ -19690,7 +19705,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (keepPlace || (!options.jumpComments && !options.anchor)) restoreScroll = Number(snap.scroll) || 0;
     } else if (known && (known.title || known.body) && (gated || HiveMd.markdownReady())) {
       await prepareAvatars([known.author]);
-      if (!postStill(gen, a, p)) return;
+      if (!postTargetStill(gen, a, p)) return;
       paintArticle(known, {
         commentCount: Number(known.children) || 0,
         commentsHtml: gated ? "" : commentsPendingHtml(),
