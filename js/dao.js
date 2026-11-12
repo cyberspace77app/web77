@@ -653,13 +653,13 @@
   }
 
   function prepareNames(names) {
-    if (!window.HiveAvatars) return Promise.resolve();
-    return window.HiveAvatars.prepare(names);
+    if (!window.Avatars) return Promise.resolve();
+    return window.Avatars.prepare(names);
   }
 
   function avatarImg(name, size) {
     var dim = size || "small";
-    if (window.HiveAvatars) return window.HiveAvatars.html(name, dim);
+    if (window.Avatars) return window.Avatars.html(name, dim);
     return md().lazyAvatarHtml(md().avatarUrl(name, dim));
   }
 
@@ -853,7 +853,7 @@
       return;
     }
     list.innerHTML = rowsHtml(state.votedRows, "voted");
-    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
+    if (window.Avatars) window.Avatars.stamp(list);
     paintVoteButtons();
   }
 
@@ -905,7 +905,7 @@
       return;
     }
     list.innerHTML = html;
-    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
+    if (window.Avatars) window.Avatars.stamp(list);
     paintVoteButtons();
   }
 
@@ -2424,7 +2424,7 @@
       return;
     }
     list.innerHTML = proposalRowsHtml(groups, chainNow(), proposalFilter(), returnVotes());
-    if (window.HiveAvatars) window.HiveAvatars.stamp(list);
+    if (window.Avatars) window.Avatars.stamp(list);
   }
 
   function paintProposalActions() {

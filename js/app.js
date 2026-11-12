@@ -75,6 +75,206 @@ let CS77_FILTER_LOW_REP = 20;
   const SETTINGS_METADATA_MAX = 16384;
   const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
   const AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
+
+  // Avatar cache for every surface. One get_accounts batch (up to 20 names)
+  // supplies profile_image, then the img src is the /p/ file images.hive.blog
+  // would redirect /u/<name>/avatar/<size> to. No picture uses the Satoshi mark.
+  // dao.js reaches the same object through window.Avatars.
+  const Avatars = (function () {
+    const BATCH = 20;
+    const NAME_RE = /^[a-z0-9.\-]{3,16}$/;
+    const cache = new Map();
+    const pending = new Map();
+
+    function normalize(name) {
+      const n = String(name || "")
+        .replace(/^@/, "")
+        .trim()
+        .toLowerCase();
+      return NAME_RE.test(n) ? n : "";
+    }
+
+    function isProfile(value) {
+      return Boolean(value && typeof value === "object" && !Array.isArray(value));
+    }
+
+    // posting_json_metadata wins. A posting profile that omits profile_image
+    // stays empty instead of falling back to the older json_metadata copy.
+    function profileImageOf(account) {
+      if (!account || !window.HiveMd) return "";
+      const posting = HiveMd.parseJsonMetadata(account.posting_json_metadata);
+      const legacy = HiveMd.parseJsonMetadata(account.json_metadata);
+      const postingProfile = isProfile(posting && posting.profile) ? posting.profile : null;
+      const legacyProfile = isProfile(legacy && legacy.profile) ? legacy.profile : null;
+      let image = "";
+      if (postingProfile) {
+        if (Object.prototype.hasOwnProperty.call(postingProfile, "profile_image")) {
+          image = String(postingProfile.profile_image || "").trim();
+        }
+      } else if (legacyProfile) {
+        image = String(legacyProfile.profile_image || "").trim();
+      }
+      return /^https?:\/\//i.test(image) ? image : "";
+    }
+
+    function sizeName(size) {
+      if (size === "large") return "large";
+      if (size === "medium") return "medium";
+      return "small";
+    }
+
+    function fallback(size) {
+      return sizeName(size) === "small" ? AVATAR_DEFAULT_SMALL : AVATAR_DEFAULT_LARGE;
+    }
+
+    function has(name) {
+      const key = normalize(name);
+      return Boolean(key && cache.has(key));
+    }
+
+    // A page that already knows this picture can build the URL before
+    // get_accounts. A later prepare still replaces the stub with the account.
+    function rememberImage(name, image) {
+      const key = normalize(name);
+      if (!key) return false;
+      const existing = cache.get(key);
+      if (existing && !existing._avatarOnly) return false;
+      const raw = String(image || "").trim();
+      const picture = /^https?:\/\//i.test(raw) ? raw : "";
+      cache.set(key, {
+        name: key,
+        posting_json_metadata: JSON.stringify({ profile: { profile_image: picture } }),
+        _avatarOnly: true,
+      });
+      return true;
+    }
+
+    function account(name) {
+      const key = normalize(name);
+      if (!key || !cache.has(key)) return null;
+      return cache.get(key);
+    }
+
+    function src(name, size) {
+      const key = normalize(name);
+      const dim = sizeName(size);
+      if (key && cache.has(key)) {
+        const image = profileImageOf(cache.get(key));
+        if (image && window.HiveMd) {
+          const direct = HiveMd.directAvatarUrl(image, dim);
+          if (direct) return direct;
+        }
+      }
+      return fallback(dim);
+    }
+
+    function html(name, size, className) {
+      const dim = sizeName(size);
+      const url = src(name, dim);
+      if (!window.HiveMd) return "";
+      return HiveMd.lazyAvatarHtml(url, className || "avatar", fallback(dim));
+    }
+
+    async function fetchChunk(chunk) {
+      const rows = await HiveApi.getAccounts(chunk);
+      const got = new Set();
+      const list = Array.isArray(rows) ? rows : [];
+      for (let i = 0; i < list.length; i++) {
+        const row = list[i];
+        const name = normalize(row && row.name);
+        if (!name) continue;
+        cache.set(name, row);
+        got.add(name);
+      }
+      for (let i = 0; i < chunk.length; i++) {
+        if (!got.has(chunk[i])) cache.set(chunk[i], null);
+      }
+    }
+
+    async function fetchNames(names) {
+      for (let i = 0; i < names.length; i += BATCH) {
+        const chunk = names.slice(i, i + BATCH);
+        try {
+          await fetchChunk(chunk);
+        } catch (err) {
+          // Leave the chunk uncached so a later prepare can retry.
+        }
+      }
+    }
+
+    async function prepare(names) {
+      const list = Array.isArray(names) ? names : [names];
+      const need = [];
+      const waits = [];
+      const seen = new Set();
+      for (let i = 0; i < list.length; i++) {
+        const name = normalize(list[i]);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        if (cache.has(name)) {
+          const row = cache.get(name);
+          if (!row || !row._avatarOnly) continue;
+        }
+        if (pending.has(name)) {
+          waits.push(pending.get(name));
+          continue;
+        }
+        need.push(name);
+      }
+      let job = null;
+      if (need.length) {
+        job = fetchNames(need);
+        for (let i = 0; i < need.length; i++) pending.set(need[i], job);
+        waits.push(job);
+      }
+      try {
+        await Promise.all(waits);
+      } finally {
+        if (job) {
+          for (let i = 0; i < need.length; i++) {
+            if (pending.get(need[i]) === job) pending.delete(need[i]);
+          }
+        }
+      }
+    }
+
+    const STAMP_SELECTOR =
+      ".post-card, .comment, article.article, .follow-account, .community-member, .search-user-row, .community-row, .session-notif, .witness-row, .proposal-row";
+
+    function stamp(root) {
+      if (!root || !root.querySelectorAll) return;
+      const nodes = [];
+      if (root.matches && root.matches(STAMP_SELECTOR)) nodes.push(root);
+      const found = root.querySelectorAll(STAMP_SELECTOR);
+      for (let i = 0; i < found.length; i++) nodes.push(found[i]);
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i];
+        const name =
+          el.getAttribute("data-account") ||
+          el.getAttribute("data-author") ||
+          el.getAttribute("data-witness") ||
+          "";
+        const key = normalize(name);
+        if (!key || !cache.has(key)) continue;
+        el._hiveAccount = cache.get(key);
+      }
+    }
+
+    return {
+      prepare,
+      rememberImage,
+      has,
+      account,
+      src,
+      html,
+      stamp,
+      fallback,
+      profileImage: function (name) {
+        return profileImageOf(account(name));
+      },
+    };
+  })();
+  window.Avatars = Avatars;
   const MAX_FAVORITE_COMMUNITIES = 40;
   const COMMUNITY_BROWSE_LIMIT = 100;
   const COMMUNITY_BROWSE_SCROLL_PX = 280;
@@ -6170,22 +6370,20 @@ let CS77_FILTER_LOW_REP = 20;
     const raw = image == null ? null : String(image).trim();
     if (raw === "") return fallback;
     if (raw && /^https?:\/\//i.test(raw)) return HiveMd.directAvatarUrl(raw, size) || fallback;
-    if (window.HiveAvatars && HiveAvatars.has(user)) return HiveAvatars.src(user, size);
+    if (Avatars.has(user)) return Avatars.src(user, size);
     return fallback;
   }
 
   function prepareAvatars(names) {
-    if (!window.HiveAvatars) return Promise.resolve();
-    return HiveAvatars.prepare(names);
+    return Avatars.prepare(names);
   }
 
   function stampAvatars(root) {
-    if (window.HiveAvatars && root) HiveAvatars.stamp(root);
+    if (root) Avatars.stamp(root);
   }
 
   function avatarImgHtml(name, size, className) {
-    if (window.HiveAvatars) return HiveAvatars.html(name, size, className);
-    return HiveMd.lazyAvatarHtml(HiveMd.avatarUrl(name, size), className, AVATAR_DEFAULT_SMALL);
+    return Avatars.html(name, size, className);
   }
 
   // Profile and subspace banners already have the picture URL from Hive.
@@ -6199,7 +6397,7 @@ let CS77_FILTER_LOW_REP = 20;
   // wait on another get_accounts.
   function noteLoggedInAvatar() {
     const user = authorImageKey(observer());
-    if (!user || !window.HiveAvatars) return "";
+    if (!user) return "";
     let image = null;
     if (accountState.loaded && authorImageKey(accountState.user) === user) {
       image = accountState.profileImage || "";
@@ -6207,8 +6405,8 @@ let CS77_FILTER_LOW_REP = 20;
       image = readStoredProfileImage(user);
     }
     if (image == null) return "";
-    HiveAvatars.rememberImage(user, image);
-    return HiveAvatars.has(user) ? user : "";
+    Avatars.rememberImage(user, image);
+    return Avatars.has(user) ? user : "";
   }
 
   function sessionAvatarSrc(user) {
@@ -8134,7 +8332,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!img || !nameEl) return;
     const open = publishOverlayOpen();
     if (publishDest.type === "community" && publishDest.name) {
-      if (open) img.src = window.HiveAvatars ? HiveAvatars.src(publishDest.name, "small") : AVATAR_DEFAULT_SMALL;
+      if (open) img.src = Avatars.src(publishDest.name, "small");
       nameEl.textContent = publishDest.title || publishDest.name;
     } else {
       if (open) img.src = blogDestAvatarSrc();
@@ -8209,14 +8407,14 @@ let CS77_FILTER_LOW_REP = 20;
       const id = normalizeCommunityName(c.name);
       if (id) seen.add(id);
       const selected = Boolean(selectedName) && id === selectedName;
-      parts.push(destOptionHtml(c.name, c.title || c.name, window.HiveAvatars ? HiveAvatars.src(c.name, "small") : AVATAR_DEFAULT_SMALL, selected));
+      parts.push(destOptionHtml(c.name, c.title || c.name, Avatars.src(c.name, "small"), selected));
     });
     const extras = [];
     function pushExtra(name, title) {
       const id = normalizeCommunityName(name);
       if (!id || seen.has(id)) return;
       seen.add(id);
-      extras.push(destOptionHtml(id, title || id, window.HiveAvatars ? HiveAvatars.src(id, "small") : AVATAR_DEFAULT_SMALL, selectedName === id));
+      extras.push(destOptionHtml(id, title || id, Avatars.src(id, "small"), selectedName === id));
     }
     if (publishPinnedCommunity) {
       pushExtra(publishPinnedCommunity.name, publishPinnedCommunity.title);
@@ -11324,7 +11522,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (crossPostDest && crossPostDest.name) {
       if (img) {
         img.hidden = false;
-        img.src = window.HiveAvatars ? HiveAvatars.src(crossPostDest.name, "small") : AVATAR_DEFAULT_SMALL;
+        img.src = Avatars.src(crossPostDest.name, "small");
       }
       nameEl.textContent = crossPostDest.title || crossPostDest.name;
       btn.classList.remove("is-empty");
@@ -11400,7 +11598,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!id || seen.has(id)) return;
       seen.add(id);
       parts.push(
-        destOptionHtml(id, row.title || id, window.HiveAvatars ? HiveAvatars.src(id, "small") : AVATAR_DEFAULT_SMALL, id === selected)
+        destOptionHtml(id, row.title || id, Avatars.src(id, "small"), id === selected)
       );
     });
     if (selected && !seen.has(selected)) {
@@ -11408,7 +11606,7 @@ let CS77_FILTER_LOW_REP = 20;
         destOptionHtml(
           selected,
           crossPostDest.title || selected,
-          window.HiveAvatars ? HiveAvatars.src(selected, "small") : AVATAR_DEFAULT_SMALL,
+          Avatars.src(selected, "small"),
           true
         )
       );
@@ -11892,11 +12090,11 @@ let CS77_FILTER_LOW_REP = 20;
   function noteProfileFeedAvatar() {
     if (feedState.kind !== "profile") return "";
     if (feedState.sort !== "posts" && feedState.sort !== "comments") return "";
-    if (!profileState.profile || !window.HiveAvatars) return "";
+    if (!profileState.profile) return "";
     const name = authorImageKey(profileState.author);
     if (!name || authorImageKey(feedState.scope) !== name) return "";
-    HiveAvatars.rememberImage(name, profileImageOf(profileState.profile));
-    return HiveAvatars.has(name) ? name : "";
+    Avatars.rememberImage(name, profileImageOf(profileState.profile));
+    return Avatars.has(name) ? name : "";
   }
 
   // After a page of posts arrives, load those authors and keep the account
@@ -11915,8 +12113,8 @@ let CS77_FILTER_LOW_REP = 20;
     for (let i = 0; i < list.length; i++) {
       const post = list[i];
       const shown = cardDisplayPost(post) || post;
-      if (!shown || !window.HiveAvatars || !HiveAvatars.has(shown.author)) continue;
-      const record = HiveAvatars.account(shown.author);
+      if (!shown || !Avatars.has(shown.author)) continue;
+      const record = Avatars.account(shown.author);
       post._hiveAccount = record;
       if (shown !== post) shown._hiveAccount = record;
     }
@@ -35989,7 +36187,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.2";
+      script.src = "/js/dao.js?v=0.21.3";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
