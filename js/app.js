@@ -8034,7 +8034,7 @@ let CS77_FILTER_LOW_REP = 20;
     const menu = $("#publishDestMenu");
     if (!menu) return;
     const opt = menu.querySelector('.publish-dest-option[data-dest-type="blog"] .avatar');
-    if (opt) HiveMd.paintLazyAvatar(opt, src);
+    if (opt && opt.getAttribute("src") !== src) opt.src = src;
   }
 
   function paintPublishDest() {

@@ -1056,11 +1056,13 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 }
 
 .session-notif-avatar {
+  display: block;
   width: 22px;
   height: 22px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
+  background: var(--bg-avatar);
 }
 
 .session-notif-user,
@@ -2303,20 +2305,13 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 }
 
 .avatar {
+  display: block;
+  flex-shrink: 0;
   width: 28px;
   height: 28px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--bg-avatar);
-}
-
-.avatar.is-lazy,
-.session-notif-avatar.is-lazy {
-  display: block;
-  flex-shrink: 0;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: cover;
 }
 
 .author-link {
@@ -2327,10 +2322,6 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   min-width: 0;
   color: var(--gray);
   text-shadow: none;
-}
-
-.author-link .avatar {
-  display: block;
 }
 
 .author-link:hover,
