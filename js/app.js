@@ -21321,41 +21321,114 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function cachedZapWallet(author) {
-    const hit = zapWalletCache.get(author);
-    if (!hit || !hit.loaded) return null;
-    return hit;
+  function zapWalletRecord(wallet) {
+    const raw = lightningAddressFromWallet(wallet);
+    const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
+    return {
+      loaded: true,
+      wallet: wallet || null,
+      accepts: Boolean(parsed.address) && !parsed.error,
+    };
   }
 
-  function ensureZapWallet(author) {
-    const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
-    if (!name) return Promise.resolve({ loaded: true, wallet: null, accepts: false });
+  // Avatar prepare already stored this get_accounts row on the card.
+  // A picture-only stub has no wallet, so it does not count.
+  function hiveAccountForZap(name, root) {
+    if (root && root.closest) {
+      const card = root.closest(
+        ".post-card, .comment, article.article, .follow-account, .community-member, .search-user-row, .community-row, .session-notif, .witness-row, .proposal-row"
+      );
+      const stamped = card && card._hiveAccount;
+      if (stamped && !stamped._avatarOnly && walletHiveName(stamped.name) === name) return stamped;
+    }
+    if (!Avatars.has(name)) return undefined;
+    const account = Avatars.account(name);
+    if (account && account._avatarOnly) return undefined;
+    return account || null;
+  }
+
+  // The open profile already copied posting profile.wallet off the chain account.
+  function profileZapWallet(name) {
+    const here = String(profileState.author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    const profile = profileState.profile;
+    if (!here || here !== name || !profile || !profile.walletLoaded) return null;
+    return zapWalletRecord(profileReceiveWallet(profile));
+  }
+
+  // A record when the wallet is already known. Null when it still has to be read.
+  function zapWalletFromKnown(name, root) {
+    const account = hiveAccountForZap(name, root);
+    if (account) {
+      if (walletHiveName(account.name) !== name) return null;
+      return zapWalletRecord(receiveWalletFromAccount(account));
+    }
+    if (account === null) return zapWalletRecord(null);
+    return profileZapWallet(name);
+  }
+
+  function cachedZapWallet(author, root) {
+    const name = String(author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    if (!name) return null;
+    const hit = zapWalletCache.get(name);
+    if (hit && hit.loaded) return hit;
+    const known = zapWalletFromKnown(name, root);
+    if (!known) return null;
+    // Leave an in-flight read in the slot. Callers can use the known wallet now.
+    if (!(hit && hit.pending)) zapWalletCache.set(name, known);
+    return known;
+  }
+
+  function ensureZapWallet(author, root) {
+    const name = String(author || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+    if (!name) return Promise.resolve(zapWalletRecord(null));
     const hit = zapWalletCache.get(name);
     if (hit && hit.loaded) return Promise.resolve(hit);
+    const known = zapWalletFromKnown(name, root);
+    if (known) {
+      if (!(hit && hit.pending)) zapWalletCache.set(name, known);
+      return Promise.resolve(known);
+    }
     if (hit && hit.pending) return hit.pending;
-    const pending = HiveApi.getAccounts([name])
-      .then((rows) => {
+    let pending = null;
+    pending = (async () => {
+      try {
+        // Join the avatar batch when that account is still loading.
+        await Avatars.prepare([name]);
+      } catch (err) {
+        /* prepare keeps a failed chunk uncached */
+      }
+      const ready = zapWalletFromKnown(name, root);
+      if (ready) {
+        const current = zapWalletCache.get(name);
+        if (current && current.loaded && current.pending !== pending) return current;
+        zapWalletCache.set(name, ready);
+        return ready;
+      }
+      try {
+        const rows = await HiveApi.getAccounts([name]);
         const account = rows && rows[0];
         const named = account && walletHiveName(account.name) === name;
-        const wallet = named ? receiveWalletFromAccount(account) : null;
-        const raw = lightningAddressFromWallet(wallet);
-        const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
-        const record = {
-          loaded: true,
-          wallet: wallet,
-          accepts: Boolean(parsed.address) && !parsed.error,
-        };
+        const record = zapWalletRecord(named ? receiveWalletFromAccount(account) : null);
         // A subspace save can replace this slot while the read is still in flight.
         const current = zapWalletCache.get(name);
         if (current && current.loaded && current.pending !== pending) return current;
         zapWalletCache.set(name, record);
         return record;
-      })
-      .catch((err) => {
+      } catch (err) {
         const current = zapWalletCache.get(name);
         if (current && current.pending === pending) zapWalletCache.delete(name);
         throw err;
-      });
+      }
+    })();
     zapWalletCache.set(name, { loaded: false, pending: pending });
     return pending;
   }
@@ -21855,7 +21928,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideReblogConfirm();
     const panel = zapTipsPanelEl();
     const gen = ++zapTipsGen;
-    const known = cachedZapWallet(author);
+    const known = cachedZapWallet(author, btn);
     openZapTips = {
       el: anchor,
       hold: hold,
@@ -21874,7 +21947,7 @@ let CS77_FILTER_LOW_REP = 20;
     panel.hidden = false;
     document.body.appendChild(panel);
     placeZapTips(anchor, panel);
-    ensureZapWallet(author)
+    ensureZapWallet(author, btn)
       .then((rec) => {
         if (!openZapTips || openZapTips.gen !== gen) return;
         openZapTips.accepts = Boolean(rec && rec.accepts);
@@ -21930,7 +22003,7 @@ let CS77_FILTER_LOW_REP = 20;
     const kind = btn.getAttribute("data-zap-kind") === "comment" ? "comment" : "post";
     if (!author || !permlink) return;
     hideZapTips();
-    const cached = cachedZapWallet(author);
+    const cached = cachedZapWallet(author, btn);
     openZapDialog(author, permlink, cached ? cached.wallet : null, !cached, {
       kind: kind,
       singleTap: zapSingleTapOn(),
