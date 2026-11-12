@@ -30409,7 +30409,7 @@ let CS77_FILTER_LOW_REP = 20;
           <p class="settings-note" id="communityOwnerNote">Posting key of ${account} required</p>
           <div class="settings-field">
             <label class="settings-label" for="communityAvatar">Subspace picture</label>
-            <p class="settings-note">Avatar updates may take several hours to appear due to caching.</p>
+            <p class="settings-note">Avatar updates may take a while to appear due to caching.</p>
             <div class="settings-media">
               <img id="communityAvatarPreview" class="settings-avatar-preview" src="${esc(avatarSrc)}" alt="" width="72" height="72">
               <div class="settings-media-main">
@@ -33550,7 +33550,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsAvatar">Avatar picture</label>
-          <p class="settings-note">Avatar updates may take several hours to appear due to caching.</p>
+          <p class="settings-note">Avatar updates may take a while to appear due to caching.</p>
           <div class="settings-media">
             <img id="settingsAvatarPreview" class="settings-avatar-preview" src="${esc(avatarSrc)}" alt="" width="72" height="72">
             <div class="settings-media-main">
