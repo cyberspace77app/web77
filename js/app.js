@@ -37032,6 +37032,7 @@ let CS77_FILTER_LOW_REP = 20;
   // j and k move through the feed. Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
+  // n opens the notification panel, and n again closes it.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -37302,13 +37303,52 @@ let CS77_FILTER_LOW_REP = 20;
     return openCardPost(card);
   }
 
+  // The panel lives in the header. A scrolled-away bar would open it off screen.
+  function revealHeaderForNotifications() {
+    const header = siteHeaderEl();
+    if (!header) return;
+    const chip = document.querySelector("#sessionMenu .session-avatar-btn");
+    const rect = (chip || header).getBoundingClientRect();
+    const inView = rect.top >= -4 && rect.bottom > 12;
+    const smart = header.classList.contains("is-smart");
+    const shown = header.classList.contains("is-shown");
+    if (!smart && inView) return;
+    if (smart && shown) return;
+    if (scrollYNow() <= 2 && inView) return;
+    smartHeaderUser = false;
+    if (smartHeaderUserTimer) {
+      clearTimeout(smartHeaderUserTimer);
+      smartHeaderUserTimer = 0;
+    }
+    pinSmartHeader(true);
+  }
+
+  function feedKeyNotifications() {
+    const menu = $("#sessionMenu");
+    if (!menu) return false;
+    const open = !menu.classList.contains("is-open");
+    if (open) {
+      if (openSlider) hideVoteSlider();
+      closeLogoMenu();
+      revealHeaderForNotifications();
+    }
+    setSessionMenuOpen(open);
+    return true;
+  }
+
   function onFeedKeyDown(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
     const key = String(e.key || "").toLowerCase();
-    if (key !== "j" && key !== "k" && key !== "l" && key !== "z" && key !== "enter") return;
-    if (e.repeat && (key === "l" || key === "z" || key === "enter")) return;
+    if (key !== "j" && key !== "k" && key !== "l" && key !== "z" && key !== "n" && key !== "enter") return;
+    if (e.repeat && (key === "l" || key === "z" || key === "n" || key === "enter")) return;
     if (feedKeyDialogOpen()) return;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
+    if (key === "n") {
+      if (!feedKeyNotifications()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (!feedKeyItems().length) return;
     if (key === "enter") {
       if (!feedKeyOpenCurrent()) return;
