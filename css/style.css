@@ -2668,6 +2668,9 @@ a.community:hover {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  /* loading=lazy skips an image whose content box is 0. The border is not
+     enough, so the file never starts and the card stays blank. */
+  min-height: 1px;
   height: auto;
   object-fit: contain;
   border-radius: 8px;
