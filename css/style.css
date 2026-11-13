@@ -11121,22 +11121,8 @@ span.witness-vote.is-voted::before {
     linear-gradient(90deg, var(--yellow) 50%, #101010 50%),
     linear-gradient(90deg, #101010 50%, var(--yellow) 50%);
   background-size: calc(var(--dao-check) * 2) var(--dao-check);
-  background-position-x: 0;
-  background-position-y: 0, var(--dao-check), calc(var(--dao-check) * 2);
+  background-position: 0 0, 0 var(--dao-check), 0 calc(var(--dao-check) * 2);
   background-repeat: repeat-x;
-  animation: dao-split-shift 1s linear infinite;
-}
-
-@keyframes dao-split-shift {
-  to {
-    background-position-x: calc(var(--dao-check) * -2);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dao-split::before {
-    animation: none;
-  }
 }
 
 .dao-split span {
