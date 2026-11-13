@@ -1768,6 +1768,7 @@ let CS77_FILTER_LOW_REP = 20;
     openPayout = null;
     const panel = payoutPanelNode || document.getElementById("payoutPanel");
     if (!panel) return;
+    payoutPopup.restore(panel);
     panel.hidden = true;
     panel.innerHTML = "";
     panel.style.top = "";
@@ -1795,11 +1796,13 @@ let CS77_FILTER_LOW_REP = 20;
     hideReblogConfirm();
     hideZapTips();
     const panel = payoutPanelEl();
+    const wasHidden = panel.hidden;
     openPayout = { el, author, permlink };
     panel.innerHTML = payoutPanelHtml(author, permlink);
     panel.hidden = false;
     document.body.appendChild(panel);
     placePayoutPanel(el, panel);
+    if (wasHidden && !panel.hidden) payoutPopup.focus(panel);
   }
 
   function onPayoutEnter(el) {
@@ -2742,10 +2745,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (openSlider) {
       const { wrap, panel } = openSlider;
-      const active = document.activeElement;
-      if (active && panel.contains(active) && active.blur) active.blur();
       const liveSlider = panel.querySelector(".vote-slider");
       if (liveSlider) endTouchVoteSnap(liveSlider);
+      votePopup.restore(panel);
       panel.hidden = true;
       clearVoteSliderPos(panel);
       if (wrap && panel.parentNode !== wrap) wrap.appendChild(panel);
@@ -3507,44 +3509,71 @@ let CS77_FILTER_LOW_REP = 20;
     confirm.classList.toggle("is-undo", Boolean(undo));
   }
 
-  let reblogConfirmFocused = false;
-  let reblogConfirmReturn = null;
+  // One open popup remembers the element that had focus and puts it back
+  // when that popup closes while focus is still inside.
+  function makePopupFocus() {
+    let layer = null;
+    let saved = null;
+    return {
+      focus(panel) {
+        if (!panel || panel.hidden || !isDisplayed(panel)) return;
+        const active = document.activeElement;
+        if (active && holds(panel, active)) return;
+        if (panel.getAttribute("tabindex") !== "-1") panel.setAttribute("tabindex", "-1");
+        if (layer !== panel) {
+          saved = outsideEl(active, panel);
+          layer = panel;
+        }
+        try {
+          panel.focus({ preventScroll: true });
+        } catch (err) {
+          /* not focusable */
+        }
+      },
+      restore(panel) {
+        if (!layer || (panel && panel !== layer)) return;
+        const back = saved;
+        const current = layer;
+        saved = null;
+        layer = null;
+        const active = document.activeElement;
+        const inside = Boolean(
+          active &&
+            active !== document.body &&
+            active !== document.documentElement &&
+            holds(current, active)
+        );
+        if (!inside) return;
+        if (back && back.isConnected && typeof back.focus === "function") {
+          try {
+            back.focus({ preventScroll: true });
+          } catch (err) {
+            /* not focusable anymore */
+          }
+          if (document.activeElement === back) return;
+        }
+        if (active && active.blur) active.blur();
+      },
+      clear() {
+        saved = null;
+        layer = null;
+      },
+    };
+  }
+
+  const reblogPopup = makePopupFocus();
+  const zapPopup = makePopupFocus();
+  const morePopup = makePopupFocus();
+  const sessionPopup = makePopupFocus();
+  const votePopup = makePopupFocus();
+  const payoutPopup = makePopupFocus();
 
   function focusReblogConfirm(panel) {
-    if (!panel || panel.hidden || !isDisplayed(panel)) return;
-    const active = document.activeElement;
-    if (active && holds(panel, active)) return;
-    if (panel.getAttribute("tabindex") !== "-1") panel.setAttribute("tabindex", "-1");
-    if (!reblogConfirmFocused) {
-      reblogConfirmReturn = outsideEl(active, panel);
-      reblogConfirmFocused = true;
-    }
-    try {
-      panel.focus({ preventScroll: true });
-    } catch (err) {
-      /* not focusable */
-    }
+    reblogPopup.focus(panel);
   }
 
   function restoreReblogConfirmFocus(panel) {
-    if (!reblogConfirmFocused) return;
-    const saved = reblogConfirmReturn;
-    reblogConfirmReturn = null;
-    reblogConfirmFocused = false;
-    const active = document.activeElement;
-    const inside = Boolean(
-      panel && active && active !== document.body && active !== document.documentElement && holds(panel, active)
-    );
-    if (!inside) return;
-    if (saved && saved.isConnected && typeof saved.focus === "function") {
-      try {
-        saved.focus({ preventScroll: true });
-      } catch (err) {
-        /* not focusable anymore */
-      }
-      if (document.activeElement === saved) return;
-    }
-    if (active && active.blur) active.blur();
+    reblogPopup.restore(panel);
   }
 
   function hideReblogConfirm() {
@@ -3796,26 +3825,34 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(panel);
     panel.hidden = false;
     placeVoteSlider(btn, panel);
-    focusVoteSlider(panel);
+    votePopup.focus(panel);
   }
 
-  function focusVoteSlider(panel) {
-    const slider = panel && panel.querySelector(".vote-slider");
-    if (!slider) return;
-    try {
-      slider.focus({ preventScroll: true, focusVisible: false });
-    } catch {
-      slider.focus();
+  function nudgeOpenVoteSlider(e) {
+    if (!openSlider || !openSlider.panel || openSlider.panel.hidden) return false;
+    if (document.activeElement !== openSlider.panel) return false;
+    const slider = openSlider.panel.querySelector(".vote-slider");
+    if (!slider) return false;
+    const dir = e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 1;
+    const next = Math.max(0, Math.min(100, (Number(slider.value) || 0) + dir));
+    e.preventDefault();
+    e.stopPropagation();
+    if (String(next) !== String(slider.value)) {
+      slider.value = String(next);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
     }
+    return true;
   }
 
   function castVoteFromSliderKey(e) {
     if (e.repeat || e.isComposing) return;
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (!openSlider || !openSlider.panel || openSlider.panel.hidden) return;
+    const active = document.activeElement;
     const slider = e.target && e.target.closest && e.target.closest(".vote-slider");
-    if (!slider || !openSlider || openSlider.panel.hidden || !openSlider.panel.contains(slider)) {
-      return;
-    }
+    const onSlider = Boolean(slider && openSlider.panel.contains(slider));
+    const onPanel = active === openSlider.panel;
+    if (!onSlider && !onPanel) return;
     e.preventDefault();
     e.stopPropagation();
     if (openSlider.mode === "down") {
@@ -5034,127 +5071,34 @@ let CS77_FILTER_LOW_REP = 20;
     el.hidden = true;
   }
 
-  let sessionMenuReturn = null;
-  let sessionMenuReturnHeld = false;
-
   function focusNotificationsPanel() {
     const panel = notificationsPanelEl();
     if (!panel || !notifsPanelOpen() || !isDisplayed(panel)) return;
-    const active = document.activeElement;
-    if (active && holds(panel, active)) return;
-    if (!sessionMenuReturnHeld) {
-      sessionMenuReturn = outsideEl(active, panel);
-      sessionMenuReturnHeld = true;
-    }
-    try {
-      panel.focus({ preventScroll: true });
-    } catch (err) {
-      /* not focusable */
-    }
+    sessionPopup.focus(panel);
   }
 
   function restoreSessionMenuFocus() {
-    const panel = notificationsPanelEl();
-    const active = document.activeElement;
-    const inside = Boolean(panel && active && active !== document.body && holds(panel, active));
-    const saved = sessionMenuReturn;
-    sessionMenuReturn = null;
-    sessionMenuReturnHeld = false;
-    if (!inside) return;
-    if (saved && saved.isConnected && typeof saved.focus === "function") {
-      try {
-        saved.focus({ preventScroll: true });
-      } catch (err) {
-        /* not focusable anymore */
-      }
-      if (document.activeElement === saved) return;
-    }
-    if (active && active.blur) active.blur();
+    sessionPopup.restore(notificationsPanelEl());
   }
 
   function clearSessionMenuFocus() {
-    sessionMenuReturn = null;
-    sessionMenuReturnHeld = false;
+    sessionPopup.clear();
   }
 
-  // The ··· menu is focused when it opens, so Tab walks its items. The button
-  // that opened it is restored when that menu closes while it still has focus.
-  let moreMenuLayer = null;
-  let moreMenuReturn = null;
-
   function focusMoreMenu(menu) {
-    if (!menu || menu.hidden || !isDisplayed(menu)) return;
-    const active = document.activeElement;
-    if (active && holds(menu, active)) return;
-    if (menu.getAttribute("tabindex") !== "-1") menu.setAttribute("tabindex", "-1");
-    moreMenuLayer = menu;
-    moreMenuReturn = outsideEl(active, menu);
-    try {
-      menu.focus({ preventScroll: true });
-    } catch (err) {
-      /* not focusable */
-    }
+    morePopup.focus(menu);
   }
 
   function restoreMoreMenuFocus(menu) {
-    if (!menu || menu !== moreMenuLayer) return;
-    const saved = moreMenuReturn;
-    moreMenuReturn = null;
-    moreMenuLayer = null;
-    const active = document.activeElement;
-    const inside = Boolean(
-      active && active !== document.body && active !== document.documentElement && holds(menu, active)
-    );
-    if (!inside) return;
-    if (saved && saved.isConnected && typeof saved.focus === "function") {
-      try {
-        saved.focus({ preventScroll: true });
-      } catch (err) {
-        /* not focusable anymore */
-      }
-      if (document.activeElement === saved) return;
-    }
-    if (active && active.blur) active.blur();
+    morePopup.restore(menu);
   }
 
-  let zapTipsFocused = false;
-  let zapTipsReturn = null;
-
   function focusZapTips(panel) {
-    if (!panel || panel.hidden || !isDisplayed(panel)) return;
-    const active = document.activeElement;
-    if (active && holds(panel, active)) return;
-    if (panel.getAttribute("tabindex") !== "-1") panel.setAttribute("tabindex", "-1");
-    if (!zapTipsFocused) {
-      zapTipsReturn = outsideEl(active, panel);
-      zapTipsFocused = true;
-    }
-    try {
-      panel.focus({ preventScroll: true });
-    } catch (err) {
-      /* not focusable */
-    }
+    zapPopup.focus(panel);
   }
 
   function restoreZapTipsFocus(panel) {
-    if (!zapTipsFocused) return;
-    const saved = zapTipsReturn;
-    zapTipsReturn = null;
-    zapTipsFocused = false;
-    const active = document.activeElement;
-    const inside = Boolean(
-      panel && active && active !== document.body && active !== document.documentElement && holds(panel, active)
-    );
-    if (!inside) return;
-    if (saved && saved.isConnected && typeof saved.focus === "function") {
-      try {
-        saved.focus({ preventScroll: true });
-      } catch (err) {
-        /* not focusable anymore */
-      }
-      if (document.activeElement === saved) return;
-    }
-    if (active && active.blur) active.blur();
+    zapPopup.restore(panel);
   }
 
   // "hide" collapses the banner on mobile. "show" removes that collapse.
@@ -38051,6 +37995,14 @@ let CS77_FILTER_LOW_REP = 20;
     );
 
     document.addEventListener("keydown", (e) => {
+      if (
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key === "ArrowUp" ||
+        e.key === "ArrowDown"
+      ) {
+        if (nudgeOpenVoteSlider(e)) return;
+      }
       if (e.key === "Enter") {
         castVoteFromSliderKey(e);
         return;
