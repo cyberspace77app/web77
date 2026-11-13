@@ -31490,16 +31490,28 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // "posting" when the stored posting key can sign this account.
-  // "keychain" when this login is Keychain for this same account, including
-  // active, owner, and memo. A different account stays "" so the dialog
-  // opens, for example a subspace role change signed by the owner account
-  // while someone else is logged in.
+  // "posting" when the unlocked posting key can sign this account.
+  // "keychain" when Keychain should sign: this tab's Keychain login, or
+  // another account already on the multi-account list with a Keychain login.
+  // "roster-posting" when that other account logged in with a posting key
+  // and this operation is Posting. The key stays stored for that account
+  // and is not the one unlocked in this tab. Anything else stays "" so the
+  // dialog opens, including an active, owner, or memo operation for a
+  // posting-key account, and a signer who is not on the list.
   function signSessionKind(account, authority) {
     const name = normalizeLoginUser(account);
     if (!name) return "";
     if (keychainLoginActive() === name) return "keychain";
     if (authority === "Posting" && window.cs77Auth && cs77Auth.hasKey(name)) return "posting";
+    if (normalizeLoginUser(observer()) === name) return "";
+    const row = loggedInRow(name);
+    if (!row) return "";
+    if (row.via === "keychain") {
+      const kc = window.hive_keychain;
+      if (kc && typeof kc.requestBroadcast === "function") return "keychain";
+      return "";
+    }
+    if (authority === "Posting") return "roster-posting";
     return "";
   }
 
@@ -31555,12 +31567,14 @@ let CS77_FILTER_LOW_REP = 20;
   // memo. Pass the account, operations, authority, and the dialog copy. A stored posting
   // key signs Posting with no dialog. A Keychain login signs Posting,
   // Active, Owner, and Memo through Keychain with no dialog, when the
-  // account is the one that is logged in. A private-key login asked for
+  // account is the one that is logged in. Another account on the multi-account
+  // list signs the same way: Keychain when that login is Keychain, or its
+  // stored posting key when the operation is Posting. A private-key login asked for
   // an active, owner, or memo key opens the dialog. So does signing for
-  // a different account, such as a subspace owner who is not logged in.
-  // A stored posting key starts that dialog on Password when the account
-  // is the signed-in user. The password field accepts that role key or
-  // the master password. Decrypt mode resolves with the plaintext.
+  // an account that is not on the list, such as a subspace owner who was
+  // never logged in here. A stored posting key starts that dialog on Password
+  // when the account is the signed-in user. The password field accepts that
+  // role key or the master password. Decrypt mode resolves with the plaintext.
   // Encode mode resolves with the # base58 ciphertext.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
@@ -31595,6 +31609,15 @@ let CS77_FILTER_LOW_REP = 20;
           return Promise.reject(new Error(opts.failMessage || "Could not sign."));
         }
         return cs77Auth.broadcast(account, operations);
+      }
+      if (kind === "roster-posting") {
+        if (!window.cs77Auth || typeof cs77Auth.broadcastStored !== "function") {
+          return openOwnerSignDialog(name, operations, opts);
+        }
+        return cs77Auth.broadcastStored(account, operations).catch((err) => {
+          if (err && err.missingKey) return openOwnerSignDialog(name, operations, opts);
+          throw err;
+        });
       }
       if (kind === "keychain") {
         if (typeof opts.onKeychain === "function") opts.onKeychain();

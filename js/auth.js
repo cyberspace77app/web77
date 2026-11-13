@@ -739,6 +739,49 @@
     return broadcastKeyBytes(keyBytes, operations);
   }
 
+  // Sign with the posting key stored for this account, including an account
+  // that is not the one unlocked in this tab. The unlocked key stays put.
+  // A missing record throws with missingKey so the caller can ask instead.
+  async function broadcastStored(username, operations) {
+    const name = accountName(username);
+    if (sessionUser === name && sessionBytes && sessionBytes.length === 32) {
+      return broadcast(name, operations);
+    }
+    if (!validStoredName(name)) {
+      const err = new Error("Enter a valid Hive username.");
+      err.missingKey = true;
+      throw err;
+    }
+    let record = null;
+    try {
+      record = await idbGet(recordId("posting", name));
+    } catch {
+      record = null;
+    }
+    if (!recordWrapped(record)) {
+      const err = new Error("No posting key is stored for this account.");
+      err.missingKey = true;
+      throw err;
+    }
+    let bytes = null;
+    try {
+      bytes = await unwrapBytes(record);
+    } catch {
+      bytes = null;
+    }
+    if (!bytes || bytes.length !== 32) {
+      wipe(bytes);
+      const err = new Error("No posting key is stored for this account.");
+      err.missingKey = true;
+      throw err;
+    }
+    try {
+      return await broadcastKeyBytes(bytes, operations);
+    } finally {
+      wipe(bytes);
+    }
+  }
+
   // One role key, from a WIF or a master password. Checked, used, discarded.
   async function materializeRoleKey(username, secret, role) {
     const name = accountName(username);
@@ -963,6 +1006,7 @@
     },
     signBytes,
     broadcast,
+    broadcastStored,
     secretKind,
     deriveRoleKey,
     wifFromLogin,
