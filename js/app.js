@@ -37338,6 +37338,7 @@ let CS77_FILTER_LOW_REP = 20;
   // z opens the zap dialog for that same post, the way a click on its bolt does.
   // An open post has no feed list, so z uses the article stats-bar bolt instead.
   // n opens the notification panel and focuses it, and n again closes it.
+  // p opens the publish dialog. A second p does nothing while that dialog is open.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -37654,15 +37655,45 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  // Same path as the Publish button: push /publish so Back closes the dialog.
+  function feedKeyPublish() {
+    setSessionMenuOpen(false);
+    setAccountMenuOpen(false);
+    if (parseRoute().name === "publish") {
+      const pub = $("#publishOverlay");
+      if (!pub || !pub.hidden) return false;
+      openPublishOverlay();
+      return true;
+    }
+    navigate(appHref("/publish"));
+    return true;
+  }
+
   function onFeedKeyDown(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
     const key = String(e.key || "").toLowerCase();
-    if (key !== "j" && key !== "k" && key !== "l" && key !== "z" && key !== "n" && key !== "enter") return;
-    if (e.repeat && (key === "l" || key === "z" || key === "n" || key === "enter")) return;
+    if (
+      key !== "j" &&
+      key !== "k" &&
+      key !== "l" &&
+      key !== "z" &&
+      key !== "n" &&
+      key !== "p" &&
+      key !== "enter"
+    ) {
+      return;
+    }
+    if (e.repeat && (key === "l" || key === "z" || key === "n" || key === "p" || key === "enter")) return;
     if (feedKeyDialogOpen()) return;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
     if (key === "n") {
       if (!feedKeyNotifications()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (key === "p") {
+      if (!feedKeyPublish()) return;
       e.preventDefault();
       e.stopPropagation();
       return;
