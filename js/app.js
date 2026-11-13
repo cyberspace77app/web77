@@ -4918,6 +4918,104 @@ let CS77_FILTER_LOW_REP = 20;
     if (el && !isMobileViewport()) el.focus();
   }
 
+  function dialogFocusRoot(overlay) {
+    return overlay.querySelector("[role='dialog'], .overlay-card") || overlay;
+  }
+
+  // An opener that already focused a field wins. Otherwise the dialog itself
+  // takes focus so Tab walks its controls. A phone skips focusDesktop, so the
+  // dialog still receives focus there.
+  function focusOpenedDialog(overlay) {
+    if (!overlay || overlay.hidden) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && overlay.contains(active)) return;
+    const root = dialogFocusRoot(overlay);
+    if (root.getAttribute("tabindex") !== "-1") root.setAttribute("tabindex", "-1");
+    root.focus({ preventScroll: true });
+  }
+
+  function bindDialogFocus() {
+    const wait = new Set();
+    let queued = false;
+    let pendingDialogReturn = null;
+    const dialogFocusReturn = new WeakMap();
+
+    // People and polls blur the opener before the dialog takes focus, so the
+    // focusin that follows has no relatedTarget. Keep that opener here.
+    document.addEventListener(
+      "focusout",
+      (e) => {
+        const from = e.target;
+        if (!from || from === document.body || from === document.documentElement) return;
+        const host = from.closest && from.closest(".overlay");
+        if (host && !host.hidden) return;
+        pendingDialogReturn = from;
+      },
+      true
+    );
+    document.addEventListener(
+      "focusin",
+      (e) => {
+        const target = e.target;
+        if (!target || !target.closest) return;
+        const overlay = target.closest(".overlay");
+        if (!overlay || overlay.hidden) {
+          if (target !== document.body && target !== document.documentElement) pendingDialogReturn = null;
+          return;
+        }
+        if (!dialogFocusReturn.has(overlay)) {
+          let from = e.relatedTarget;
+          if (!from || from === document.body || from === document.documentElement) from = pendingDialogReturn;
+          if (!from || from === document.body || from === document.documentElement || overlay.contains(from)) {
+            from = null;
+          }
+          dialogFocusReturn.set(overlay, from);
+        }
+        pendingDialogReturn = null;
+      },
+      true
+    );
+
+    function restoreDialogFocus(overlay) {
+      if (!dialogFocusReturn.has(overlay)) return;
+      const saved = dialogFocusReturn.get(overlay);
+      dialogFocusReturn.delete(overlay);
+      const active = document.activeElement;
+      const inside = Boolean(active && active !== document.body && overlay.contains(active));
+      const nowhere = !active || active === document.body || active === document.documentElement;
+      if (!inside && !nowhere) return;
+      if (!saved || saved === overlay || overlay.contains(saved) || !saved.isConnected || !saved.focus) return;
+      if (saved.closest && saved.closest("[hidden]")) return;
+      try {
+        saved.focus({ preventScroll: true });
+      } catch (err) {
+        /* not focusable anymore */
+      }
+    }
+
+    const flush = () => {
+      queued = false;
+      wait.forEach((overlay) => focusOpenedDialog(overlay));
+      wait.clear();
+    };
+    const observer = new MutationObserver((records) => {
+      for (let i = 0; i < records.length; i++) {
+        const el = records[i].target;
+        if (!el.classList || !el.classList.contains("overlay")) continue;
+        if (el.hidden) restoreDialogFocus(el);
+        else wait.add(el);
+      }
+      if (!wait.size || queued) return;
+      queued = true;
+      queueMicrotask(flush);
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["hidden"],
+    });
+  }
+
   // "hide" collapses the banner on mobile. "show" removes that collapse.
   // "keep" leaves it, so profile-nav Posts stays collapsed.
   function syncAccountMenuBanner(mode) {
@@ -7360,7 +7458,7 @@ let CS77_FILTER_LOW_REP = 20;
             </div>
           </div>
           <div class="session-dropdown" id="sessionDropdown">
-            <div class="session-dropdown-panel">
+            <div class="session-dropdown-panel" id="sessionDropdownPanel" tabindex="-1">
               <div class="session-account-stats is-loading" id="sessionAccountStats" aria-label="Voting mana, downvote mana, vote value, and resource credits">
                 <span class="session-account-stats-main">
                   <span class="session-stat" tabindex="0"><span class="session-stat-label">▲</span><span class="session-stat-value" data-stat="mana">…</span><span class="session-stat-tip" role="tooltip">Voting Mana</span></span>
@@ -7445,16 +7543,95 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  function setSessionMenuOpen(open) {
+  let sessionMenuFocusReturn = null;
+
+  function notificationsPanelEl() {
+    return $("#sessionDropdownPanel");
+  }
+
+  function rememberSessionMenuFocus() {
+    const active = document.activeElement;
+    const panel = notificationsPanelEl();
+    if (!active || active === document.body || active === document.documentElement) {
+      sessionMenuFocusReturn = null;
+      return;
+    }
+    if (panel && panel.contains(active)) {
+      sessionMenuFocusReturn = null;
+      return;
+    }
+    sessionMenuFocusReturn = active;
+  }
+
+  // A just-pinned smart header stays visibility:hidden until it fades in.
+  // focus() on the panel is a no-op during that frame.
+  function headerHidesNotifications() {
+    const header = siteHeaderEl();
+    return Boolean(
+      header && header.classList.contains("is-smart") && !header.classList.contains("is-shown")
+    );
+  }
+
+  // Focus the panel so the next Tab walks its controls.
+  function focusNotificationsPanel() {
+    const panel = notificationsPanelEl();
+    if (!panel) return false;
+    const active = document.activeElement;
+    if (active && panel.contains(active)) return true;
+    if (headerHidesNotifications()) return false;
+    panel.focus({ preventScroll: true });
+    const next = document.activeElement;
+    return next === panel || Boolean(next && panel.contains(next));
+  }
+
+  function focusNotificationsPanelSoon() {
+    if (focusNotificationsPanel()) return;
+    let frames = 0;
+    const attempt = () => {
+      if (!notifsPanelOpen()) return;
+      if (focusNotificationsPanel()) return;
+      if (frames++ < 12) requestAnimationFrame(attempt);
+    };
+    requestAnimationFrame(attempt);
+  }
+
+  // Keyboard close only. A click already moved focus on its own.
+  function restoreSessionMenuFocus() {
+    const panel = notificationsPanelEl();
+    const active = document.activeElement;
+    const inside = Boolean(panel && active && active !== document.body && panel.contains(active));
+    const saved = sessionMenuFocusReturn;
+    sessionMenuFocusReturn = null;
+    if (!inside) return;
+    if (saved && saved.isConnected && saved.focus) {
+      try {
+        saved.focus({ preventScroll: true });
+      } catch (err) {
+        /* not focusable anymore */
+      }
+      if (document.activeElement === saved) return;
+    }
+    if (active && active.blur) active.blur();
+  }
+
+  function setSessionMenuOpen(open, opts) {
     const menu = $("#sessionMenu");
     if (!menu) return;
-    menu.classList.toggle("is-open", Boolean(open));
+    const next = Boolean(open);
+    const wasOpen = menu.classList.contains("is-open");
+    if (!next && wasOpen) {
+      if (opts && opts.restoreFocus) restoreSessionMenuFocus();
+      else sessionMenuFocusReturn = null;
+    }
+    menu.classList.toggle("is-open", next);
     const btn = menu.querySelector(".session-avatar-btn");
-    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) {
+    if (btn) btn.setAttribute("aria-expanded", next ? "true" : "false");
+    if (next) {
+      if (!wasOpen) rememberSessionMenuFocus();
       setAccountMenuOpen(false);
       loadAccountResources();
       maybeLoadMoreNotifs();
+      if (!wasOpen) focusNotificationsPanelSoon();
     }
   }
 
@@ -7636,7 +7813,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeCommentSort();
       return;
     }
-    setSessionMenuOpen(false);
+    setSessionMenuOpen(false, { restoreFocus: true });
     closeProfileMore();
     closeContentMore();
     closeWalletMore();
@@ -37094,7 +37271,7 @@ let CS77_FILTER_LOW_REP = 20;
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
   // An open post has no feed list, so z uses the article stats-bar bolt instead.
-  // n opens the notification panel, and n again closes it.
+  // n opens the notification panel and focuses it, and n again closes it.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -37407,7 +37584,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeLogoMenu();
       revealHeaderForNotifications();
     }
-    setSessionMenuOpen(open);
+    setSessionMenuOpen(open, open ? null : { restoreFocus: true });
     return true;
   }
 
@@ -37499,6 +37676,7 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
     bindFeedKeys();
+    bindDialogFocus();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");
     if (versionEl) versionEl.textContent = "version " + APP_VERSION;
