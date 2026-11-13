@@ -66,6 +66,8 @@ let CS77_FILTER_LOW_REP = 20;
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
   // Logged-in accounts, in login order. Posting-key and Keychain accounts share this list.
   const LOGGED_IN_KEY = "cs77_logged_in";
+  // Account a new tab or a fresh visit opens. Login and switching write it.
+  const LAST_USER_KEY = "cs77_last_user";
   // One settings object per account. Guests keep the original keys below.
   const ACCOUNT_BAG_PREFIX = "cs77_account:";
   const PROFILE_FIELDS = ["name", "about", "location", "website", "profile_image", "cover_image"];
@@ -778,6 +780,29 @@ let CS77_FILTER_LOW_REP = 20;
     if (idx >= 0) list[idx].via = method;
     else list.push({ user: name, via: method });
     writeLoggedIn(list);
+    noteLastLoggedIn(name);
+  }
+
+  function noteLastLoggedIn(username) {
+    const name = normalizeLoginUser(username);
+    try {
+      if (validLoginUser(name)) localStorage.setItem(LAST_USER_KEY, name);
+      else localStorage.removeItem(LAST_USER_KEY);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function lastLoggedInUser() {
+    let name = "";
+    try {
+      name = normalizeLoginUser(localStorage.getItem(LAST_USER_KEY));
+    } catch {
+      name = "";
+    }
+    if (validLoginUser(name) && isLoggedIn(name)) return name;
+    const list = readLoggedIn();
+    return list.length ? list[list.length - 1].user : "";
   }
 
   function forgetLoggedIn(username) {
@@ -818,10 +843,7 @@ let CS77_FILTER_LOW_REP = 20;
   function restoreRememberedSession() {
     let sessionUser = normalizeLoginUser(sessionStorage.getItem(SESSION_KEY));
     if (!validLoginUser(sessionUser) || !isLoggedIn(sessionUser)) sessionUser = "";
-    if (!sessionUser) {
-      const list = readLoggedIn();
-      sessionUser = list.length ? list[0].user : "";
-    }
+    if (!sessionUser) sessionUser = lastLoggedInUser();
     if (sessionUser) sessionStorage.setItem(SESSION_KEY, sessionUser);
     else {
       try {
@@ -7334,6 +7356,7 @@ let CS77_FILTER_LOW_REP = 20;
     const name = normalizeLoginUser(username);
     const row = name ? loggedInRow(name) : null;
     forgetActiveBagCache();
+    noteLastLoggedIn(name);
     if (validLoginUser(name)) sessionStorage.setItem(SESSION_KEY, name);
     else {
       try {
