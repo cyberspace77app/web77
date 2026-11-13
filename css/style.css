@@ -1876,6 +1876,10 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   text-shadow: var(--glow-red);
 }
 
+.zap-tips-panel:focus {
+  outline: none;
+}
+
 .zap-tips-panel {
   min-width: 14rem;
   max-width: 20rem;
@@ -4544,6 +4548,13 @@ a.tag:hover {
 .content-more-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
+}
+
+.profile-more-menu:focus,
+.content-more-menu:focus,
+.wallet-more-menu:focus,
+.dao-more-menu:focus {
+  outline: none;
 }
 
 .profile-more-menu,

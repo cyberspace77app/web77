@@ -3044,6 +3044,16 @@
     }
   }
 
+  function hideHostDialog(ov) {
+    if (!ov) return;
+    var host = state.host;
+    if (host && typeof host.hideDialog === "function") {
+      host.hideDialog(ov);
+      return;
+    }
+    ov.hidden = true;
+  }
+
   function closeCreateProposal() {
     var sign = document.getElementById("ownerSignOverlay");
     if (sign && !sign.hidden) return;
@@ -3053,8 +3063,7 @@
     applyProposalFormMode();
     var endEl = document.getElementById("proposalCreateEnd");
     if (endEl) endEl.removeAttribute("max");
-    var ov = document.getElementById("proposalOverlay");
-    if (ov) ov.hidden = true;
+    hideHostDialog(document.getElementById("proposalOverlay"));
     setProposalCreateStatus("");
   }
 
@@ -3627,8 +3636,7 @@
     state.proposalCancelTicket += 1;
     state.proposalCancelId = null;
     setProposalCancelLocked(false);
-    var ov = document.getElementById("proposalCancelOverlay");
-    if (ov) ov.hidden = true;
+    hideHostDialog(document.getElementById("proposalCancelOverlay"));
     setProposalCancelStatus("");
   }
 
@@ -3915,10 +3923,11 @@
   function closeProxyMenu() {
     var roots = document.querySelectorAll(".dao-more.is-open");
     roots.forEach(function (root) {
+      var menu = root.querySelector(".dao-more-menu");
+      if (menu && state.host && typeof state.host.restoreMenu === "function") state.host.restoreMenu(menu);
       root.classList.remove("is-open");
       var btn = root.querySelector(".dao-more-btn");
       if (btn) btn.setAttribute("aria-expanded", "false");
-      var menu = root.querySelector(".dao-more-menu");
       if (menu) menu.hidden = true;
     });
   }
@@ -3933,7 +3942,9 @@
     root.classList.add("is-open");
     btn.setAttribute("aria-expanded", "true");
     var menu = root.querySelector(".dao-more-menu");
-    if (menu) menu.hidden = false;
+    if (!menu) return;
+    menu.hidden = false;
+    if (state.host && typeof state.host.focusMenu === "function") state.host.focusMenu(menu);
   }
 
   function setProxyStatus(message, isError) {
@@ -3963,8 +3974,7 @@
     if (sign && !sign.hidden) return;
     state.proxyTicket += 1;
     setProxyLocked(false);
-    var ov = document.getElementById("proxyOverlay");
-    if (ov) ov.hidden = true;
+    hideHostDialog(document.getElementById("proxyOverlay"));
     setProxyStatus("");
     var input = document.getElementById("proxyUser");
     if (input) input.value = "";

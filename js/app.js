@@ -1061,7 +1061,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideNodeOverlay() {
     const el = $("#nodeOverlay");
-    if (el) el.hidden = true;
+    hideDialog(el);
     resetNodeForm();
   }
 
@@ -1075,6 +1075,7 @@ let CS77_FILTER_LOW_REP = 20;
     const el = $("#nodeOverlay");
     if (!el) return;
     closeLogoMenu();
+    const focusFrom = document.activeElement;
     el.hidden = false;
     setNodeStatus("");
     resetNodeForm();
@@ -1083,6 +1084,7 @@ let CS77_FILTER_LOW_REP = 20;
       input.focus();
       input.select();
     }
+    focusDialog(el, focusFrom);
   }
 
   async function submitCustomNode() {
@@ -4922,98 +4924,194 @@ let CS77_FILTER_LOW_REP = 20;
     return overlay.querySelector("[role='dialog'], .overlay-card") || overlay;
   }
 
-  // An opener that already focused a field wins. Otherwise the dialog itself
-  // takes focus so Tab walks its controls. A phone skips focusDesktop, so the
-  // dialog still receives focus there.
-  function focusOpenedDialog(overlay) {
-    if (!overlay || overlay.hidden) return;
-    const active = document.activeElement;
-    if (active && active !== document.body && overlay.contains(active)) return;
-    const root = dialogFocusRoot(overlay);
-    if (root.getAttribute("tabindex") !== "-1") root.setAttribute("tabindex", "-1");
-    root.focus({ preventScroll: true });
+  function holds(layer, node) {
+    return Boolean(layer && node && (node === layer || layer.contains(node)));
   }
 
-  function bindDialogFocus() {
-    const wait = new Set();
-    let queued = false;
-    let pendingDialogReturn = null;
-    const dialogFocusReturn = new WeakMap();
+  // display:none and visibility:hidden both refuse focus. A pinned smart
+  // header stays visibility:hidden until is-shown.
+  function isDisplayed(el) {
+    if (!el || !el.isConnected) return false;
+    for (let node = el; node; node = node.parentElement) {
+      if (node.hidden) return false;
+      const style = getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    }
+    return true;
+  }
 
-    // People and polls blur the opener before the dialog takes focus, so the
-    // focusin that follows has no relatedTarget. Keep that opener here.
-    document.addEventListener(
-      "focusout",
-      (e) => {
-        const from = e.target;
-        if (!from || from === document.body || from === document.documentElement) return;
-        const host = from.closest && from.closest(".overlay");
-        if (host && !host.hidden) return;
-        pendingDialogReturn = from;
-      },
-      true
-    );
-    document.addEventListener(
-      "focusin",
-      (e) => {
-        const target = e.target;
-        if (!target || !target.closest) return;
-        const overlay = target.closest(".overlay");
-        if (!overlay || overlay.hidden) {
-          if (target !== document.body && target !== document.documentElement) pendingDialogReturn = null;
-          return;
-        }
-        if (!dialogFocusReturn.has(overlay)) {
-          let from = e.relatedTarget;
-          if (!from || from === document.body || from === document.documentElement) from = pendingDialogReturn;
-          if (!from || from === document.body || from === document.documentElement || overlay.contains(from)) {
-            from = null;
-          }
-          dialogFocusReturn.set(overlay, from);
-        }
-        pendingDialogReturn = null;
-      },
-      true
-    );
+  function outsideEl(from, layer) {
+    if (!from || from === document.body || from === document.documentElement) return null;
+    if (!from.isConnected || holds(layer, from)) return null;
+    return from;
+  }
 
-    function restoreDialogFocus(overlay) {
-      if (!dialogFocusReturn.has(overlay)) return;
-      const saved = dialogFocusReturn.get(overlay);
-      dialogFocusReturn.delete(overlay);
-      const active = document.activeElement;
-      const inside = Boolean(active && active !== document.body && overlay.contains(active));
-      const nowhere = !active || active === document.body || active === document.documentElement;
-      if (!inside && !nowhere) return;
-      if (!saved || saved === overlay || overlay.contains(saved) || !saved.isConnected || !saved.focus) return;
-      if (saved.closest && saved.closest("[hidden]")) return;
+  // The opener focuses a field, or this focuses the dialog when it did not.
+  // `from` is the element that had focus before that move.
+  const dialogReturn = new WeakMap();
+
+  function focusDialog(overlay, from) {
+    if (!overlay || overlay.hidden) return;
+    if (!dialogReturn.has(overlay)) dialogReturn.set(overlay, outsideEl(from, overlay));
+    const active = document.activeElement;
+    if (active && active !== document.body && holds(overlay, active)) return;
+    const root = dialogFocusRoot(overlay);
+    if (root.getAttribute("tabindex") !== "-1") root.setAttribute("tabindex", "-1");
+    try {
+      root.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  // The close calls this before hidden. Focus is still inside, or a backdrop
+  // click has already moved it to the body without choosing another control.
+  function restoreDialog(overlay) {
+    if (!overlay || !dialogReturn.has(overlay)) return;
+    const saved = dialogReturn.get(overlay);
+    dialogReturn.delete(overlay);
+    const active = document.activeElement;
+    const inside = Boolean(
+      active && active !== document.body && active !== document.documentElement && holds(overlay, active)
+    );
+    const nowhere = !active || active === document.body || active === document.documentElement;
+    if (!inside && !nowhere) return;
+    if (!saved || !saved.isConnected || typeof saved.focus !== "function") return;
+    if (saved.closest && saved.closest("[hidden]")) return;
+    try {
+      saved.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable anymore */
+    }
+  }
+
+  function hideDialog(el) {
+    if (!el) return;
+    restoreDialog(el);
+    el.hidden = true;
+  }
+
+  let sessionMenuReturn = null;
+  let sessionMenuReturnHeld = false;
+
+  function focusNotificationsPanel() {
+    const panel = notificationsPanelEl();
+    if (!panel || !notifsPanelOpen() || !isDisplayed(panel)) return;
+    const active = document.activeElement;
+    if (active && holds(panel, active)) return;
+    if (!sessionMenuReturnHeld) {
+      sessionMenuReturn = outsideEl(active, panel);
+      sessionMenuReturnHeld = true;
+    }
+    try {
+      panel.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  function restoreSessionMenuFocus() {
+    const panel = notificationsPanelEl();
+    const active = document.activeElement;
+    const inside = Boolean(panel && active && active !== document.body && holds(panel, active));
+    const saved = sessionMenuReturn;
+    sessionMenuReturn = null;
+    sessionMenuReturnHeld = false;
+    if (!inside) return;
+    if (saved && saved.isConnected && typeof saved.focus === "function") {
       try {
         saved.focus({ preventScroll: true });
       } catch (err) {
         /* not focusable anymore */
       }
+      if (document.activeElement === saved) return;
     }
+    if (active && active.blur) active.blur();
+  }
 
-    const flush = () => {
-      queued = false;
-      wait.forEach((overlay) => focusOpenedDialog(overlay));
-      wait.clear();
-    };
-    const observer = new MutationObserver((records) => {
-      for (let i = 0; i < records.length; i++) {
-        const el = records[i].target;
-        if (!el.classList || !el.classList.contains("overlay")) continue;
-        if (el.hidden) restoreDialogFocus(el);
-        else wait.add(el);
+  function clearSessionMenuFocus() {
+    sessionMenuReturn = null;
+    sessionMenuReturnHeld = false;
+  }
+
+  // The ··· menu is focused when it opens, so Tab walks its items. The button
+  // that opened it is restored when that menu closes while it still has focus.
+  let moreMenuLayer = null;
+  let moreMenuReturn = null;
+
+  function focusMoreMenu(menu) {
+    if (!menu || menu.hidden || !isDisplayed(menu)) return;
+    const active = document.activeElement;
+    if (active && holds(menu, active)) return;
+    if (menu.getAttribute("tabindex") !== "-1") menu.setAttribute("tabindex", "-1");
+    moreMenuLayer = menu;
+    moreMenuReturn = outsideEl(active, menu);
+    try {
+      menu.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  function restoreMoreMenuFocus(menu) {
+    if (!menu || menu !== moreMenuLayer) return;
+    const saved = moreMenuReturn;
+    moreMenuReturn = null;
+    moreMenuLayer = null;
+    const active = document.activeElement;
+    const inside = Boolean(
+      active && active !== document.body && active !== document.documentElement && holds(menu, active)
+    );
+    if (!inside) return;
+    if (saved && saved.isConnected && typeof saved.focus === "function") {
+      try {
+        saved.focus({ preventScroll: true });
+      } catch (err) {
+        /* not focusable anymore */
       }
-      if (!wait.size || queued) return;
-      queued = true;
-      queueMicrotask(flush);
-    });
-    observer.observe(document.body, {
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["hidden"],
-    });
+      if (document.activeElement === saved) return;
+    }
+    if (active && active.blur) active.blur();
+  }
+
+  let zapTipsFocused = false;
+  let zapTipsReturn = null;
+
+  function focusZapTips(panel) {
+    if (!panel || panel.hidden || !isDisplayed(panel)) return;
+    const active = document.activeElement;
+    if (active && holds(panel, active)) return;
+    if (panel.getAttribute("tabindex") !== "-1") panel.setAttribute("tabindex", "-1");
+    if (!zapTipsFocused) {
+      zapTipsReturn = outsideEl(active, panel);
+      zapTipsFocused = true;
+    }
+    try {
+      panel.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  function restoreZapTipsFocus(panel) {
+    if (!zapTipsFocused) return;
+    const saved = zapTipsReturn;
+    zapTipsReturn = null;
+    zapTipsFocused = false;
+    const active = document.activeElement;
+    const inside = Boolean(
+      panel && active && active !== document.body && active !== document.documentElement && holds(panel, active)
+    );
+    if (!inside) return;
+    if (saved && saved.isConnected && typeof saved.focus === "function") {
+      try {
+        saved.focus({ preventScroll: true });
+      } catch (err) {
+        /* not focusable anymore */
+      }
+      if (document.activeElement === saved) return;
+    }
+    if (active && active.blur) active.blur();
   }
 
   // "hide" collapses the banner on mobile. "show" removes that collapse.
@@ -7543,75 +7641,8 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  let sessionMenuFocusReturn = null;
-
   function notificationsPanelEl() {
     return $("#sessionDropdownPanel");
-  }
-
-  function rememberSessionMenuFocus() {
-    const active = document.activeElement;
-    const panel = notificationsPanelEl();
-    if (!active || active === document.body || active === document.documentElement) {
-      sessionMenuFocusReturn = null;
-      return;
-    }
-    if (panel && panel.contains(active)) {
-      sessionMenuFocusReturn = null;
-      return;
-    }
-    sessionMenuFocusReturn = active;
-  }
-
-  // A just-pinned smart header stays visibility:hidden until it fades in.
-  // focus() on the panel is a no-op during that frame.
-  function headerHidesNotifications() {
-    const header = siteHeaderEl();
-    return Boolean(
-      header && header.classList.contains("is-smart") && !header.classList.contains("is-shown")
-    );
-  }
-
-  // Focus the panel so the next Tab walks its controls.
-  function focusNotificationsPanel() {
-    const panel = notificationsPanelEl();
-    if (!panel) return false;
-    const active = document.activeElement;
-    if (active && panel.contains(active)) return true;
-    if (headerHidesNotifications()) return false;
-    panel.focus({ preventScroll: true });
-    const next = document.activeElement;
-    return next === panel || Boolean(next && panel.contains(next));
-  }
-
-  function focusNotificationsPanelSoon() {
-    if (focusNotificationsPanel()) return;
-    let frames = 0;
-    const attempt = () => {
-      if (!notifsPanelOpen()) return;
-      if (focusNotificationsPanel()) return;
-      if (frames++ < 12) requestAnimationFrame(attempt);
-    };
-    requestAnimationFrame(attempt);
-  }
-
-  // Keyboard close only. A click already moved focus on its own.
-  function restoreSessionMenuFocus() {
-    const panel = notificationsPanelEl();
-    const active = document.activeElement;
-    const inside = Boolean(panel && active && active !== document.body && panel.contains(active));
-    const saved = sessionMenuFocusReturn;
-    sessionMenuFocusReturn = null;
-    if (!inside) return;
-    if (saved && saved.isConnected && saved.focus) {
-      try {
-        saved.focus({ preventScroll: true });
-      } catch (err) {
-        /* not focusable anymore */
-      }
-      if (document.activeElement === saved) return;
-    }
-    if (active && active.blur) active.blur();
   }
 
   function setSessionMenuOpen(open, opts) {
@@ -7621,17 +7652,16 @@ let CS77_FILTER_LOW_REP = 20;
     const wasOpen = menu.classList.contains("is-open");
     if (!next && wasOpen) {
       if (opts && opts.restoreFocus) restoreSessionMenuFocus();
-      else sessionMenuFocusReturn = null;
+      else clearSessionMenuFocus();
     }
     menu.classList.toggle("is-open", next);
     const btn = menu.querySelector(".session-avatar-btn");
     if (btn) btn.setAttribute("aria-expanded", next ? "true" : "false");
     if (next) {
-      if (!wasOpen) rememberSessionMenuFocus();
       setAccountMenuOpen(false);
       loadAccountResources();
       maybeLoadMoreNotifs();
-      if (!wasOpen) focusNotificationsPanelSoon();
+      if (!wasOpen) focusNotificationsPanel();
     }
   }
 
@@ -7893,15 +7923,17 @@ let CS77_FILTER_LOW_REP = 20;
     if (status) status.textContent = "";
     resetLoginMasterPrompt();
     setAuthMethod($("#loginMethod"), defaultAuthMethod());
+    const focusFrom = document.activeElement;
     overlay.hidden = false;
     const input = $("#loginUser");
     if (input) input.focus();
+    focusDialog(overlay, focusFrom);
   }
 
   let loginBusy = false;
 
   function closeLogin() {
-    overlay.hidden = true;
+    hideDialog(overlay);
     pendingPublish = false;
     pendingCrossPost = null;
     loginBusy = false;
@@ -9933,8 +9965,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function hidePublishDiscard() {
-    const el = $("#publishDiscard");
-    if (el) el.hidden = true;
+    hideDialog($("#publishDiscard"));
   }
 
   function showPublishDiscard() {
@@ -9948,9 +9979,11 @@ let CS77_FILTER_LOW_REP = 20;
         ? "Your edits will be discarded."
         : "This unpublished post will be deleted.";
     }
+    const focusFrom = document.activeElement;
     el.hidden = false;
     const keep = $("#publishDiscardKeep");
     if (keep) keep.focus();
+    focusDialog(el, focusFrom);
   }
 
   function cancelPublish() {
@@ -10088,8 +10121,7 @@ let CS77_FILTER_LOW_REP = 20;
       locSearchAbort.abort();
       locSearchAbort = null;
     }
-    const ov = $("#locationOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#locationOverlay"));
   }
 
   function closeLocationDialog() {
@@ -10578,7 +10610,9 @@ let CS77_FILTER_LOW_REP = 20;
     const session = locSession;
     showLocationMap(session);
     if (locPicked && locDescAuto) fillDescriptionFor(locCenter.lat, locCenter.lng);
+    const focusFrom = document.activeElement;
     focusDesktop(search);
+    focusDialog(ov, focusFrom);
   }
 
   function saveLocationFromDialog() {
@@ -10801,8 +10835,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideLocationDialog();
     const persist = !opts || opts.persist !== false;
     if (persist && !publishEdit) persistPublishDraftNow();
-    const ov = $("#publishOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#publishOverlay"));
     closeDestMenu();
     closeMdMenu();
     setPublishFabHidden(false);
@@ -10871,7 +10904,9 @@ let CS77_FILTER_LOW_REP = 20;
     updatePublishPreview();
     loadPublishSubs();
     startPublishDraftAutosave();
+    const focusFrom = document.activeElement;
     focusPublishField();
+    focusDialog(ov, focusFrom);
     syncPublishCommunityAccess();
     if (fromCommunityWrite && publishDest.type === "community") {
       requestPublishCommunityBeneficiary(publishDest.name, { force: true });
@@ -11214,7 +11249,9 @@ let CS77_FILTER_LOW_REP = 20;
     paintPublishDest();
     fitPublishTitle();
     requestAnimationFrame(() => fitPublishTitle());
+    const focusFrom = document.activeElement;
     focusPublishField();
+    focusDialog(ov, focusFrom);
     rememberEditHistory(post, Boolean(opts && opts.fromHistory));
   }
 
@@ -11287,8 +11324,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideContentDelete(force) {
     if (contentDeleteBusy && !force) return;
-    const el = $("#contentDelete");
-    if (el) el.hidden = true;
+    hideDialog($("#contentDelete"));
     contentDeleteTarget = null;
     setContentDeleteStatus("");
     const confirmBtn = $("#contentDeleteConfirm");
@@ -11427,8 +11463,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (cancelBtn) cancelBtn.disabled = false;
     const ov = $("#contentDelete");
     if (!ov) return;
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     if (cancelBtn) cancelBtn.focus();
+    focusDialog(ov, focusFrom);
   }
 
   function dropReplyNode(node, author, permlink) {
@@ -11810,7 +11848,7 @@ let CS77_FILTER_LOW_REP = 20;
     crossPostAccessSeq += 1;
     const el = $("#crossPostOverlay");
     if (el) {
-      el.hidden = true;
+      hideDialog(el);
       el.classList.remove("is-busy");
     }
     closeCrossPostMenu();
@@ -12000,9 +12038,11 @@ let CS77_FILTER_LOW_REP = 20;
     paintCrossPostChrome();
     closeCrossPostMenu();
     ov.classList.remove("is-busy");
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     const btn = $("#crossPostDestBtn");
     if (btn) btn.focus();
+    focusDialog(ov, focusFrom);
     loadCrossPostSpaces(gen);
     resolveCrossPostTarget(name, link, gen);
   }
@@ -18606,8 +18646,7 @@ let CS77_FILTER_LOW_REP = 20;
     pollVotes.open = false;
     pollVotes.gen += 1;
     pollVotes.loading = false;
-    const overlay = $("#pollVotesOverlay");
-    if (overlay) overlay.hidden = true;
+    hideDialog($("#pollVotesOverlay"));
     const state = section && pollStates.get(section);
     if (state) paintPollFooter(section, state);
   }
@@ -18731,10 +18770,11 @@ let CS77_FILTER_LOW_REP = 20;
     paintPollVoteTabs(state);
     const scroller = document.getElementById("pollVotesScroll");
     if (scroller) scroller.scrollTop = 0;
+    const focusFrom = document.activeElement;
     overlay.hidden = false;
     paintPollFooter(section, state);
-    const opener = document.activeElement;
-    if (opener && opener.closest && opener.closest(".poll-count")) opener.blur();
+    if (focusFrom && focusFrom.closest && focusFrom.closest(".poll-count")) focusFrom.blur();
+    focusDialog(overlay, focusFrom);
     loadPollVotePage(section, true);
   }
 
@@ -20200,7 +20240,7 @@ let CS77_FILTER_LOW_REP = 20;
     const nwcInput = $("#zapNwc");
     lightningNwcEdited = false;
     if (nwcInput) nwcInput.value = "";
-    if (el) el.hidden = true;
+    hideDialog(el);
     lightningDialogValue = "";
     lightningDialogFocus = "";
     lightningNwcLook += 1;
@@ -20254,7 +20294,9 @@ let CS77_FILTER_LOW_REP = 20;
     document.querySelectorAll(".profile-bitcoin-btn, .settings-zap-gear").forEach((btn) => {
       btn.classList.add("is-open");
     });
+    const focusFrom = document.activeElement;
     focusDesktop(lightningDialogFocus === "nwc" ? nwcInput : input);
+    focusDialog(el, focusFrom);
     writePanelHistory(
       lightningHist,
       {
@@ -20991,7 +21033,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
-    ov.hidden = true;
+    hideDialog(ov);
     zapState.pending = false;
     const sentAuthor = zapState.author;
     const sentPermlink = zapState.permlink;
@@ -21300,8 +21342,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideZapFallback();
     setZapStatus("", false);
     setZapTriggerOpen(false);
-    const ov = $("#zapOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#zapOverlay"));
     if (confirmed) flashZapSuccess(author, permlink);
     else clearZapMotion();
   }
@@ -21314,10 +21355,12 @@ let CS77_FILTER_LOW_REP = 20;
     clearZapMotion();
     const ov = $("#zapOverlay");
     if (!ov) return;
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     setZapTriggerOpen(true);
     paintZapForm();
     if (!keepStatus) setZapStatus(message || "", Boolean(isError) && Boolean(message));
+    focusDialog(ov, focusFrom);
     writePanelHistory(zapHist, zapHistoryFields(), false);
   }
 
@@ -21427,15 +21470,17 @@ let CS77_FILTER_LOW_REP = 20;
     applyZapDefaults();
     if (zapState.singleTap) {
       armZapWebLn();
-      ov.hidden = true;
+      hideDialog(ov);
       paintZapForm();
       startZapBlink();
       runSingleTapZap(zapLookGen);
       return;
     }
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     setZapTriggerOpen(true);
     paintZapForm();
+    focusDialog(ov, focusFrom);
     if (fetchWallet) loadZapLightning(author, zapLookGen);
     writePanelHistory(zapHist, zapHistoryFields(), fromHistory);
   }
@@ -22083,6 +22128,7 @@ let CS77_FILTER_LOW_REP = 20;
     openZapTips = null;
     const panel = zapTipsPanelNode || document.getElementById("zapTipsPanel");
     if (!panel) return;
+    restoreZapTipsFocus(panel);
     panel.hidden = true;
     panel.innerHTML = "";
     clearZapTipsPos(panel);
@@ -22150,6 +22196,7 @@ let CS77_FILTER_LOW_REP = 20;
     hidePayoutPanel();
     hideReblogConfirm();
     const panel = zapTipsPanelEl();
+    const wasHidden = panel.hidden;
     const gen = ++zapTipsGen;
     const known = cachedZapWallet(author, btn);
     openZapTips = {
@@ -22170,6 +22217,7 @@ let CS77_FILTER_LOW_REP = 20;
     panel.hidden = false;
     document.body.appendChild(panel);
     placeZapTips(anchor, panel);
+    if (wasHidden) focusZapTips(panel);
     ensureZapWallet(author, btn)
       .then((rec) => {
         if (!openZapTips || openZapTips.gen !== gen) return;
@@ -22416,8 +22464,7 @@ let CS77_FILTER_LOW_REP = 20;
       clearTimeout(zapWalletGiveUpTimer);
       zapWalletGiveUpTimer = 0;
     }
-    const ov = $("#zapPayOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#zapPayOverlay"));
     releaseZapPayPage();
   }
 
@@ -22578,6 +22625,7 @@ let CS77_FILTER_LOW_REP = 20;
       note.textContent = noteText;
       note.hidden = !noteText;
     }
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     zapPayOpenedAt = Date.now();
     zapPayReturnHref = location.href;
@@ -22585,12 +22633,13 @@ let CS77_FILTER_LOW_REP = 20;
     zapSwallowUntil = 0;
     holdZapPayPage(true);
     focusDesktop($("#zapPayYes"));
+    focusDialog(ov, focusFrom);
   }
 
   function declineZapWalletPaid() {
     const ov = $("#zapPayOverlay");
     if (!ov || ov.hidden) return;
-    ov.hidden = true;
+    hideDialog(ov);
     releaseZapPayPage();
     if (zapState.singleTap && !zapDialogOpen()) {
       finishSingleTap(false);
@@ -22604,7 +22653,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function acceptZapWalletPaid() {
     const ov = $("#zapPayOverlay");
     if (!ov || ov.hidden) return;
-    ov.hidden = true;
+    hideDialog(ov);
     releaseZapPayPage();
     if (zapState.sent || !zapState.invoice) return;
     const hidden = !zapDialogOpen();
@@ -23073,6 +23122,7 @@ let CS77_FILTER_LOW_REP = 20;
     const menu =
       document.querySelector("body > .profile-more-menu") ||
       (root && root.querySelector(".profile-more-menu"));
+    if (menu) restoreMoreMenuFocus(menu);
     if (root) {
       root.classList.remove("is-open");
       const btn = root.querySelector(".profile-more-btn");
@@ -23578,6 +23628,7 @@ let CS77_FILTER_LOW_REP = 20;
     const menu =
       document.querySelector("body > .content-more-menu") ||
       (root && root.querySelector(".content-more-menu"));
+    if (menu) restoreMoreMenuFocus(menu);
     if (root) {
       root.classList.remove("is-open");
       const btn = root.querySelector(".content-more-btn");
@@ -23614,6 +23665,7 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(menu);
     menu.hidden = false;
     placeAnchoredMenu(btn, menu, closeContentMore);
+    focusMoreMenu(menu);
   }
 
   function toggleProfileMore(btn) {
@@ -23631,6 +23683,7 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(menu);
     menu.hidden = false;
     placeProfileMore(btn, menu);
+    focusMoreMenu(menu);
   }
 
   // The wallet menu is portaled so the balance table cannot clip it. It opens
@@ -23677,6 +23730,7 @@ let CS77_FILTER_LOW_REP = 20;
     const menu =
       document.querySelector("body > .wallet-more-menu") ||
       (root && root.querySelector(".wallet-more-menu"));
+    if (menu) restoreMoreMenuFocus(menu);
     if (root) {
       root.classList.remove("is-open");
       const btn = root.querySelector(".wallet-more-btn");
@@ -23704,6 +23758,7 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(menu);
     menu.hidden = false;
     placeWalletMore(btn, menu);
+    focusMoreMenu(menu);
   }
 
   function profilePageTitle(author, page) {
@@ -26408,7 +26463,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (ownerSignSession && ownerSignSession.source === "wallet") return;
     const ov = $("#walletOverlay");
     if (ov) {
-      ov.hidden = true;
+      hideDialog(ov);
       ov.classList.remove("is-confirm-only");
     }
     walletOpState.kind = "";
@@ -26480,6 +26535,7 @@ let CS77_FILTER_LOW_REP = 20;
     const submit = $("#walletOpSubmit");
     if (submit) submit.disabled = false;
     const ov = $("#walletOverlay");
+    const focusFrom = document.activeElement;
     if (ov) {
       ov.classList.toggle("is-confirm-only", confirmOnly);
       ov.hidden = false;
@@ -26487,6 +26543,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (confirmOnly) {
       if (submit) submit.focus();
     } else if (input) input.focus();
+    if (ov) focusDialog(ov, focusFrom);
   }
 
   // withdraw_vesting of 0 stops the weekly payout. PeakD and Ecency do the same.
@@ -26786,8 +26843,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#sendOverlay");
       if (ov && !ov.hidden) return;
     }
-    const ov = $("#sendOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#sendOverlay"));
     sendState.asset = "hive";
     sendState.pending = false;
     const to = $("#sendTo");
@@ -26837,9 +26893,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     resetSendMemo();
     setSendAsset(asset);
+    const focusFrom = document.activeElement;
     const ov = $("#sendOverlay");
     if (ov) ov.hidden = false;
     focusDesktop(to);
+    if (ov) focusDialog(ov, focusFrom);
   }
 
   function fillSendMax() {
@@ -27155,8 +27213,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#convertOverlay");
       if (ov && !ov.hidden) return;
     }
-    const ov = $("#convertOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#convertOverlay"));
     convertState.asset = "hbd";
     convertState.pending = false;
     const amount = $("#convertAmount");
@@ -27200,9 +27257,11 @@ let CS77_FILTER_LOW_REP = 20;
       for (let i = 0; i < buttons.length; i++) buttons[i].disabled = false;
     }
     setConvertAsset(asset);
+    const focusFrom = document.activeElement;
     const ov = $("#convertOverlay");
     if (ov) ov.hidden = false;
     focusDesktop(amount);
+    if (ov) focusDialog(ov, focusFrom);
   }
 
   function fillConvertMax() {
@@ -27390,8 +27449,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#claimTokensOverlay");
       if (ov && !ov.hidden) return;
     }
-    const ov = $("#claimTokensOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#claimTokensOverlay"));
     claimState.loadGen += 1;
     claimState.pending = false;
     claimState.loading = false;
@@ -27469,9 +27527,11 @@ let CS77_FILTER_LOW_REP = 20;
     const maxBtn = $("#claimTokensMax");
     if (maxBtn) maxBtn.disabled = true;
     setClaimStatus("");
+    const focusFrom = document.activeElement;
     const ov = $("#claimTokensOverlay");
     if (ov) ov.hidden = false;
     focusDesktop(amount);
+    if (ov) focusDialog(ov, focusFrom);
     loadClaimQuote();
   }
 
@@ -27646,8 +27706,7 @@ let CS77_FILTER_LOW_REP = 20;
       window.DaoPage.closeProposalCancel();
       return;
     }
-    const ov = $("#proposalCancelOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#proposalCancelOverlay"));
   }
 
   function closeProposalOverlay() {
@@ -27655,8 +27714,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (window.DaoPage && typeof window.DaoPage.closeCreateProposal === "function") {
       window.DaoPage.closeCreateProposal();
     } else {
-      const ov = $("#proposalOverlay");
-      if (ov) ov.hidden = true;
+      hideDialog($("#proposalOverlay"));
     }
     closeProposalCancelOverlay();
   }
@@ -27667,8 +27725,7 @@ let CS77_FILTER_LOW_REP = 20;
       window.DaoPage.closeProxy();
       return;
     }
-    const ov = $("#proxyOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#proxyOverlay"));
   }
 
   function closeDaoProxyMenu() {
@@ -27682,8 +27739,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#createAccountOverlay");
       if (ov && !ov.hidden) return;
     }
-    const ov = $("#createAccountOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#createAccountOverlay"));
     createAccountState.session += 1;
     createAccountState.check += 1;
     createAccountState.feeGen += 1;
@@ -27820,9 +27876,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (nameCopy) nameCopy.textContent = "Copy";
     const keyCopy = $("#createAccountCopy");
     if (keyCopy) keyCopy.textContent = "Copy";
+    const focusFrom = document.activeElement;
     const ov = $("#createAccountOverlay");
     if (ov) ov.hidden = false;
     focusDesktop(name);
+    if (ov) focusDialog(ov, focusFrom);
     loadCreateAccountFee();
   }
 
@@ -27959,8 +28017,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#delegateOverlay");
       if (ov && !ov.hidden) return;
     }
-    const ov = $("#delegateOverlay");
-    if (ov) ov.hidden = true;
+    hideDialog($("#delegateOverlay"));
     delegateState.mode = "";
     delegateState.pending = false;
     delegateState.target = "";
@@ -28158,6 +28215,7 @@ let CS77_FILTER_LOW_REP = 20;
       submit.disabled = false;
       submit.textContent = "Confirm";
     }
+    const focusFrom = document.activeElement;
     const ov = $("#delegateOverlay");
     if (ov) ov.hidden = false;
     const focusEl = prefill ? amountInput : userInput;
@@ -28172,6 +28230,7 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     }
+    if (ov) focusDialog(ov, focusFrom);
     if (!delegationView.loaded || delegationView.hasError) loadDelegationLists(user);
   }
 
@@ -29204,7 +29263,7 @@ let CS77_FILTER_LOW_REP = 20;
     const skipHistory = !!(opts && opts.skipHistory);
     const overlayEl = $("#peopleOverlay");
     if (!peopleList.open) {
-      if (overlayEl) overlayEl.hidden = true;
+      hideDialog(overlayEl);
       return;
     }
     if (peopleSearchTimer) {
@@ -29226,7 +29285,7 @@ let CS77_FILTER_LOW_REP = 20;
     peopleList.error = "";
     const peopleSearch = document.getElementById("peopleSearch");
     if (peopleSearch) peopleSearch.value = "";
-    if (overlayEl) overlayEl.hidden = true;
+    hideDialog(overlayEl);
     paintPeopleCounts();
     releasePanelHistory(peopleHist, skipHistory);
   }
@@ -29276,10 +29335,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (more) more.hidden = true;
     const scroller = document.getElementById("peopleScroll");
     if (scroller) scroller.scrollTop = 0;
+    const focusFrom = document.activeElement;
     overlayEl.hidden = false;
     paintPeopleCounts();
-    const opener = document.activeElement;
-    if (opener && opener.closest && opener.closest("[data-people]")) opener.blur();
+    if (focusFrom && focusFrom.closest && focusFrom.closest("[data-people]")) focusFrom.blur();
+    focusDialog(overlayEl, focusFrom);
     writePanelHistory(
       peopleHist,
       { peoplePanel: true, peopleKind: kind, peopleId: id },
@@ -31407,8 +31467,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function hideOwnerSign() {
-    const el = $("#ownerSignOverlay");
-    if (el) el.hidden = true;
+    hideDialog($("#ownerSignOverlay"));
     const key = $("#ownerSignKey");
     if (key) key.value = "";
     setOwnerSignStatus("", false);
@@ -31465,6 +31524,7 @@ let CS77_FILTER_LOW_REP = 20;
       hideOwnerSign();
       user.value = name;
       applyOwnerSignChrome(opts);
+      const focusFrom = document.activeElement;
       el.hidden = false;
       // Desktop focus stays on the account, or on the key when Password is
       // the selected method. Mobile leaves the inputs unfocused so the
@@ -31474,6 +31534,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (authMethod($("#ownerSignMethod")) === "password" && key) key.focus();
         else user.focus();
       }
+      focusDialog(el, focusFrom);
       const mode = ownerSignMode(opts);
       ownerSignSession = {
         name,
@@ -32381,16 +32442,14 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function dismissCommunityRoleDialog() {
-    const el = $("#communityRoleOverlay");
-    if (el) el.hidden = true;
+    hideDialog($("#communityRoleOverlay"));
     communityRoleSession = null;
     setCommunityDialogStatus("#communityRoleStatus", "", false);
     setCommunityRoleDialogLocked(false);
   }
 
   function dismissCommunityTitleDialog() {
-    const el = $("#communityTitleOverlay");
-    if (el) el.hidden = true;
+    hideDialog($("#communityTitleOverlay"));
     communityTitleSession = null;
     setCommunityDialogStatus("#communityTitleStatus", "", false);
     setCommunityTitleDialogLocked(false);
@@ -32450,9 +32509,11 @@ let CS77_FILTER_LOW_REP = 20;
     select.value = roles.indexOf(role) !== -1 ? role : roles.indexOf("member") !== -1 ? "member" : roles[0];
     setCommunityDialogStatus("#communityRoleStatus", "", false);
     paintCommunityRoleHint();
+    const focusFrom = document.activeElement;
     el.hidden = false;
     if (mode === "add") user.focus();
     else select.focus();
+    focusDialog(el, focusFrom);
   }
 
   function openCommunityTitleDialog(opts) {
@@ -32472,9 +32533,11 @@ let CS77_FILTER_LOW_REP = 20;
     input.disabled = false;
     input.value = communityTitleSession.title;
     setCommunityDialogStatus("#communityTitleStatus", "", false);
+    const focusFrom = document.activeElement;
     el.hidden = false;
     input.focus();
     input.select();
+    focusDialog(el, focusFrom);
   }
 
   function communityCleanTitle(value) {
@@ -33406,8 +33469,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideLocalDataDialog(force) {
     if (localDataClearing && !force) return;
-    const el = $("#localDataOverlay");
-    if (el) el.hidden = true;
+    hideDialog($("#localDataOverlay"));
     setLocalDataStatus("");
     const confirmBtn = $("#localDataConfirm");
     const cancelBtn = $("#localDataCancel");
@@ -33424,8 +33486,10 @@ let CS77_FILTER_LOW_REP = 20;
     const cancelBtn = $("#localDataCancel");
     if (confirmBtn) confirmBtn.disabled = false;
     if (cancelBtn) cancelBtn.disabled = false;
+    const focusFrom = document.activeElement;
     el.hidden = false;
     if (cancelBtn) cancelBtn.focus();
+    focusDialog(el, focusFrom);
   }
 
   function deleteSiteDatabase(name) {
@@ -36169,8 +36233,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function hideEmbed() {
-    const el = $("#embedOverlay");
-    if (el) el.hidden = true;
+    hideDialog($("#embedOverlay"));
     resetEmbedCopyLabel();
   }
 
@@ -36184,12 +36247,14 @@ let CS77_FILTER_LOW_REP = 20;
     const post = embedKnownPost(name, link);
     resetEmbedCopyLabel();
     area.value = embedSnippet(name, link, post);
+    const focusFrom = document.activeElement;
     ov.hidden = false;
     // Focusing the field on a phone opens the keyboard. A tap still selects the snippet.
     if (!isMobileViewport()) {
       area.focus();
       area.select();
     }
+    focusDialog(ov, focusFrom);
     if (embedPostComplete(post)) return;
     HiveApi.getPost(name, link)
       .then((loaded) => {
@@ -36482,7 +36547,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.3";
+      script.src = "/js/dao.js?v=0.21.5";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
@@ -36511,7 +36576,15 @@ let CS77_FILTER_LOW_REP = 20;
       openLogin: openLogin,
       showError: showError,
       mobile: isMobileViewport,
-      focus: focusDesktop,
+      focus(el) {
+        const focusFrom = document.activeElement;
+        const overlay = el && el.closest ? el.closest(".overlay") : null;
+        focusDesktop(el);
+        if (overlay) focusDialog(overlay, focusFrom);
+      },
+      focusMenu: focusMoreMenu,
+      restoreMenu: restoreMoreMenuFocus,
+      hideDialog: hideDialog,
       signActive(name, operations, copy) {
         return signWithDialog(
           name,
@@ -37075,9 +37148,15 @@ let CS77_FILTER_LOW_REP = 20;
         if (gen !== smartHeaderShowGen) return;
         smartHeaderRevealPending = false;
         if (!header.classList.contains("is-smart")) return;
-        header.classList.add("is-shown");
+        revealSmartHeader(header);
       });
     });
+  }
+
+  function revealSmartHeader(header) {
+    if (!header || header.classList.contains("is-shown")) return;
+    header.classList.add("is-shown");
+    focusNotificationsPanel();
   }
 
   function pinSmartHeader(show) {
@@ -37095,7 +37174,7 @@ let CS77_FILTER_LOW_REP = 20;
       header.classList.remove("is-unhooking");
       if (show) scheduleSmartHeaderReveal(header);
     } else if (show && !smartHeaderRevealPending) {
-      header.classList.add("is-shown");
+      revealSmartHeader(header);
     }
     if (!show) {
       smartHeaderShowGen += 1;
@@ -37676,7 +37755,6 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener("resize", maybeLoadMoreSearch);
     bindSmartHeader();
     bindFeedKeys();
-    bindDialogFocus();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");
     if (versionEl) versionEl.textContent = "version " + APP_VERSION;
