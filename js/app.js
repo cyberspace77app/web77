@@ -3507,11 +3507,52 @@ let CS77_FILTER_LOW_REP = 20;
     confirm.classList.toggle("is-undo", Boolean(undo));
   }
 
+  let reblogConfirmFocused = false;
+  let reblogConfirmReturn = null;
+
+  function focusReblogConfirm(panel) {
+    if (!panel || panel.hidden || !isDisplayed(panel)) return;
+    const active = document.activeElement;
+    if (active && holds(panel, active)) return;
+    if (panel.getAttribute("tabindex") !== "-1") panel.setAttribute("tabindex", "-1");
+    if (!reblogConfirmFocused) {
+      reblogConfirmReturn = outsideEl(active, panel);
+      reblogConfirmFocused = true;
+    }
+    try {
+      panel.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  function restoreReblogConfirmFocus(panel) {
+    if (!reblogConfirmFocused) return;
+    const saved = reblogConfirmReturn;
+    reblogConfirmReturn = null;
+    reblogConfirmFocused = false;
+    const active = document.activeElement;
+    const inside = Boolean(
+      panel && active && active !== document.body && active !== document.documentElement && holds(panel, active)
+    );
+    if (!inside) return;
+    if (saved && saved.isConnected && typeof saved.focus === "function") {
+      try {
+        saved.focus({ preventScroll: true });
+      } catch (err) {
+        /* not focusable anymore */
+      }
+      if (document.activeElement === saved) return;
+    }
+    if (active && active.blur) active.blur();
+  }
+
   function hideReblogConfirm() {
     if (!openReblog) return;
     const { wrap, panel } = openReblog;
     openReblog = null;
     if (!panel) return;
+    restoreReblogConfirmFocus(panel);
     panel.hidden = true;
     panel.style.position = "";
     panel.style.top = "";
@@ -3544,9 +3585,11 @@ let CS77_FILTER_LOW_REP = 20;
     setReblogConfirmAction(false);
     setReblogConfirmStatus("", false);
     setReblogConfirmReady(false);
+    const wasHidden = panel.hidden;
     document.body.appendChild(panel);
     panel.hidden = false;
     placeReblogConfirm(btn, panel);
+    if (wasHidden) focusReblogConfirm(panel);
   }
 
   function reblogWrapsFor(author, permlink) {

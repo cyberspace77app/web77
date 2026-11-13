@@ -2587,6 +2587,10 @@ a.community:hover {
   shape-rendering: geometricPrecision;
 }
 
+.reblog-confirm-panel:focus {
+  outline: none;
+}
+
 .reblog-confirm-panel {
   min-width: 13.5rem;
   max-width: 18rem;
