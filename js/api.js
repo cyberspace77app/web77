@@ -417,9 +417,7 @@
   }
 
   async function getPost(author, permlink) {
-    const a = String(author || "")
-      .trim()
-      .replace(/^@/, "");
+    const a = accountName(author);
     const p = String(permlink || "").trim();
     if (!a || !p) return null;
     const result = await hiveRpc("bridge.get_post", {
@@ -455,16 +453,10 @@
   // Blog follows, alphabetical by account name. `start` is the last name already
   // shown. Current Hivemind starts after that name.
   async function getFollowPage(method, account, start, limit) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const lim = Math.min(Math.max(Number(limit) || 100, 1), 1000);
-    const from = String(start || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const from = accountName(start);
     const result = await hiveRpc(method, [name, from, "blog", lim]);
     return Array.isArray(result) ? result : [];
   }
@@ -496,10 +488,7 @@
   }
 
   async function listAllSubscriptions(account) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const result = await hiveRpc("bridge.list_all_subscriptions", { account: name });
     const list = Array.isArray(result) ? result : [];
@@ -513,10 +502,7 @@
   }
 
   function normalizeCommunityAccount(raw) {
-    const name = String(raw || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(raw);
     return isCommunityName(name) ? name : "";
   }
 
@@ -606,10 +592,7 @@
   }
 
   async function lookupAccounts(lowerBound, limit) {
-    const name = String(lowerBound || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(lowerBound);
     if (!name) return [];
     const lim = Math.min(Math.max(limit || 20, 1), 100);
     const result = await hiveRpc("condenser_api.lookup_accounts", [name, lim]);
@@ -628,10 +611,7 @@
   }
 
   async function unreadNotifications(account, minScore) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return { unread: 0, lastread: "" };
     const result = await hiveRpc("bridge.unread_notifications", {
       account: name,
@@ -645,10 +625,7 @@
   }
 
   async function accountNotifications(account, opts) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const options = opts || {};
     const params = {
@@ -662,9 +639,7 @@
   }
 
   async function getActiveVotes(author, permlink) {
-    const a = String(author || "")
-      .trim()
-      .replace(/^@/, "");
+    const a = accountName(author);
     const p = String(permlink || "").trim();
     if (!a || !p) return [];
     const result = await hiveRpc("condenser_api.get_active_votes", [a, p]);
@@ -673,9 +648,7 @@
 
   // Hivemind serves this list (same backend as bridge). bridge.get_reblogged_by is not registered.
   async function getRebloggedBy(author, permlink) {
-    const a = String(author || "")
-      .trim()
-      .replace(/^@/, "");
+    const a = accountName(author);
     const p = String(permlink || "").trim();
     if (!a || !p) return [];
     const result = await hiveRpc("condenser_api.get_reblogged_by", [a, p]);
@@ -683,10 +656,7 @@
     const out = [];
     const seen = new Set();
     for (let i = 0; i < result.length; i++) {
-      const name = String(result[i] || "")
-        .replace(/^@/, "")
-        .trim()
-        .toLowerCase();
+      const name = accountName(result[i]);
       if (!name || seen.has(name)) continue;
       seen.add(name);
       out.push(name);
@@ -695,9 +665,7 @@
   }
 
   async function getContent(author, permlink) {
-    const a = String(author || "")
-      .trim()
-      .replace(/^@/, "");
+    const a = accountName(author);
     const p = String(permlink || "").trim();
     if (!a || !p) return null;
     const result = await hiveRpc("condenser_api.get_content", [a, p]);
@@ -829,8 +797,17 @@
   function accountName(username) {
     return String(username || "")
       .trim()
-      .replace(/^@/, "")
+      .replace(/^@+/, "")
       .toLowerCase();
+  }
+
+  function validAccountName(name) {
+    return /^[a-z0-9.\-]{3,16}$/.test(name);
+  }
+
+  function accountNameOrEmpty(raw) {
+    const name = accountName(raw);
+    return validAccountName(name) ? name : "";
   }
 
   async function findRcAccount(username) {
@@ -920,10 +897,7 @@
   }
 
   async function getHivePower(username) {
-    const name = String(username || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(username);
     if (!name) return 0;
     const [accounts, props] = await Promise.all([
       getAccounts([name]),
@@ -1091,10 +1065,7 @@
   }
 
   async function getAccountHistory(account, start, limit) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const from = start == null ? -1 : start;
     const lim = Math.min(Math.max(limit || 100, 1), 1000);
@@ -1220,10 +1191,7 @@
   }
 
   async function getWalletHistory(account, start, limit) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const from = start == null ? -1 : start;
     const lim = Math.min(Math.max(limit || 100, 1), 1000);
@@ -1239,10 +1207,7 @@
   }
 
   async function getSavingsWithdrawFrom(account) {
-    const name = String(account || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(account);
     if (!name) return [];
     const result = await hiveRpc("condenser_api.get_savings_withdraw_from", [name]);
     return Array.isArray(result) ? result : [];
@@ -1774,10 +1739,7 @@
   // op is read from that block.
   async function getCommentTrxId(author, permlink, created) {
     const createdMs = hiveTimeMs(created);
-    const name = String(author || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    const name = accountName(author);
     const link = String(permlink || "").trim();
     if (!name || !link || !Number.isFinite(createdMs)) return "";
     try {
@@ -1923,6 +1885,10 @@
     rcDelegable,
     claimAccountQuote,
     parseAsset,
+    accountName,
+    validAccountName,
+    accountNameOrEmpty,
+    hiveTimeMs,
     vestsToHive,
     hiveToVests,
     getActiveNode,

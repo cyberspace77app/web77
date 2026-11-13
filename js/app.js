@@ -81,16 +81,11 @@ let CS77_FILTER_LOW_REP = 20;
   // dao.js reaches the same object through window.Avatars.
   const Avatars = (function () {
     const BATCH = 20;
-    const NAME_RE = /^[a-z0-9.\-]{3,16}$/;
     const cache = new Map();
     const pending = new Map();
 
     function normalize(name) {
-      const n = String(name || "")
-        .replace(/^@/, "")
-        .trim()
-        .toLowerCase();
-      return NAME_RE.test(n) ? n : "";
+      return HiveApi.accountNameOrEmpty(name);
     }
 
     function isProfile(value) {
@@ -733,14 +728,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function normalizeLoginUser(name) {
-    return String(name || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    return HiveApi.accountName(name);
   }
 
   function validLoginUser(name) {
-    return /^[a-z0-9.\-]{3,16}$/.test(name);
+    return HiveApi.validAccountName(name);
   }
 
   function readLoggedIn() {
@@ -1286,10 +1278,7 @@ let CS77_FILTER_LOW_REP = 20;
   errorBanner.addEventListener("click", clearError);
 
   function parseCreatedTs(created) {
-    if (!created) return NaN;
-    const s = String(created);
-    if (/Z$/i.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) return Date.parse(s);
-    return Date.parse(s + "Z");
+    return HiveApi.hiveTimeMs(created);
   }
 
   function timeAgo(created) {
@@ -3286,10 +3275,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function normalizeReblogName(name) {
-    return String(name || "")
-      .replace(/^@/, "")
-      .trim()
-      .toLowerCase();
+    return HiveApi.accountName(name);
   }
 
   function reblogCountOf(post) {
@@ -5486,13 +5472,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function communityIdFromInput(raw) {
-    const s = String(raw || "")
-      .trim()
-      .replace(/^@/, "")
-      .replace(/^c\//i, "");
-    if (/^hive-\d+$/i.test(s)) return s.toLowerCase();
-    if (/^\d+$/.test(s)) return "hive-" + s;
-    return "";
+    const direct = communityFromToken(raw);
+    if (direct) return direct;
+    const trimmed = String(raw || "").trim();
+    const s = trimmed.replace(/^@/, "").replace(/^c\//i, "");
+    if (!/^hive-\d+$/i.test(s) && !/^\d+$/.test(s)) return "";
+    return communityFromToken(s);
   }
 
   function favoriteCommunityRecord(row) {
@@ -5544,12 +5529,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function normalizeUserName(raw) {
-    const name = String(raw || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) return "";
-    return name;
+    return HiveApi.accountNameOrEmpty(raw);
   }
 
   function readFavoriteUsers() {
@@ -36557,7 +36537,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.5";
+      script.src = "/js/dao.js?v=0.21.6";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);

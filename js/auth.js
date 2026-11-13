@@ -119,7 +119,7 @@
   }
 
   function validStoredName(name) {
-    return /^[a-z0-9.\-]{3,16}$/.test(name);
+    return global.HiveApi.validAccountName(name);
   }
 
   function recordId(role, username) {
@@ -320,17 +320,14 @@
   }
 
   function accountName(username) {
-    return String(username || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
+    return global.HiveApi.accountName(username);
   }
 
   function requireSession(username) {
     if (!sessionBytes || sessionBytes.length !== 32 || !sessionUser) {
       throw new Error("No posting key is stored in this browser.");
     }
-    if (username && sessionUser !== String(username).toLowerCase().replace(/^@/, "")) {
+    if (username && sessionUser !== accountName(username)) {
       throw new Error("Stored posting key belongs to a different account.");
     }
     return sessionBytes;
@@ -339,7 +336,7 @@
   function hasKey(username) {
     if (!sessionBytes || sessionBytes.length !== 32 || !sessionUser) return false;
     if (!username) return true;
-    return sessionUser === String(username).toLowerCase().replace(/^@/, "");
+    return sessionUser === accountName(username);
   }
 
   async function persistRole(role, username, bytes) {
@@ -366,7 +363,7 @@
   async function checkedPostingKey(username, wif) {
     const name = accountName(username);
     const secret = String(wif || "").replace(/\s+/g, "");
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+    if (!validStoredName(name)) {
       throw new Error("Enter a valid Hive username.");
     }
     if (!secret) throw new Error("Enter a posting key.");
@@ -444,7 +441,7 @@
     const roleName = normalizeRole(role);
     let pass = String(password == null ? "" : password);
     password = "";
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+    if (!validStoredName(name)) {
       pass = "";
       throw new Error("Enter a valid Hive username.");
     }
@@ -746,7 +743,7 @@
   async function materializeRoleKey(username, secret, role) {
     const name = accountName(username);
     const roleName = normalizeRole(role);
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+    if (!validStoredName(name)) {
       throw new Error("Enter a valid Hive username.");
     }
     let raw = String(secret == null ? "" : secret);
@@ -915,7 +912,7 @@
     const name = accountName(username);
     let pass = String(password == null ? "" : password);
     password = "";
-    if (!/^[a-z0-9.\-]{3,16}$/.test(name)) {
+    if (!validStoredName(name)) {
       pass = "";
       throw new Error("Enter a valid Hive username.");
     }

@@ -11,10 +11,7 @@ var cs77_blacklist_posts = [
 
 var Cs77Blacklist = (function () {
   function normUser(name) {
-    return String(name || "")
-      .replace(/^@/, "")
-      .trim()
-      .toLowerCase();
+    return HiveApi.accountName(name);
   }
 
   function postKey(author, permlink) {

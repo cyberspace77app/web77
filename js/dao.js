@@ -214,8 +214,7 @@
     if (!created) return NaN;
     var s = String(created);
     if (s.indexOf("1970-01-01") === 0) return NaN;
-    if (/Z$/i.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) return Date.parse(s);
-    return Date.parse(s + "Z");
+    return api().hiveTimeMs(created);
   }
 
   function ageLabel(sec) {
@@ -389,8 +388,7 @@
   }
 
   function accountName(raw) {
-    var name = normalizeQuery(raw);
-    return /^[a-z0-9.\-]{3,16}$/.test(name) ? name : "";
+    return api().accountNameOrEmpty(raw);
   }
 
   function percentText(rate) {
