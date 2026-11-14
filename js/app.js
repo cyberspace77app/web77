@@ -613,6 +613,7 @@ let CS77_FILTER_LOW_REP = 20;
   const votersHist = { on: false, pop: false, pending: null };
   const zapHist = { on: false, pop: false, pending: null };
   const lightningHist = { on: false, pop: false, pending: null };
+  const profileQrHist = { on: false, pop: false, pending: null };
   const walletOpState = {
     kind: "",
     max: 0,
@@ -5656,6 +5657,13 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Pop the next same-page panel before logout finishes, so Back does not reopen it.
   function popOpenPanelHistory(job) {
+    if (profileQrHist.on) {
+      closeProfileQrDialog({ skipHistory: true });
+      profileQrHist.on = false;
+      profileQrHist.pending = job;
+      history.back();
+      return true;
+    }
     if (lightningHist.on) {
       closeLightningDialog({ skipHistory: true });
       lightningHist.on = false;
@@ -5735,6 +5743,7 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
   const LIGHTNING_HISTORY_KEYS = ["lightningPanel", "lightningFocus"];
+  const PROFILE_QR_HISTORY_KEYS = ["profileQrPanel", "profileQrTab"];
   const VOTERS_HISTORY_KEYS = [
     "votersPanel",
     "votersKind",
@@ -5757,6 +5766,7 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryPost = null;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (leavePanelForNav(profileQrHist, profileQrDialogOpen(), closeProfileQrDialog, href, replace)) return;
     if (leavePanelForNav(lightningHist, lightningDialogOpen(), closeLightningDialog, href, replace)) return;
     if (!zapSignBlocksClose() && leavePanelForNav(zapHist, zapDialogOpen(), closeZapOverlay, href, replace)) return;
     if (leavePanelForNav(peopleHist, peopleList.open, closePeoplePanel, href, replace)) return;
@@ -5909,6 +5919,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
+    closeProfileQrDialog({ skipHistory: true });
     stopEmbedSizeWatch();
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
@@ -5933,6 +5944,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeClaimTokensOverlay();
       closeLightningDialog({ skipHistory: true });
       stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
+      closeProfileQrDialog({ skipHistory: true });
+      stripPanelHistory(profileQrHist, PROFILE_QR_HISTORY_KEYS);
       closeZapOverlay({ skipHistory: true });
       stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
@@ -5967,6 +5980,8 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
+    if (leavePanelForReload(profileQrHist, closeProfileQrDialog)) return;
+    if (profileQrDialogOpen()) closeProfileQrDialog({ skipHistory: true });
     if (leavePanelForReload(lightningHist, closeLightningDialog)) return;
     if (lightningDialogOpen()) closeLightningDialog({ skipHistory: true });
     if (!zapSignBlocksClose() && leavePanelForReload(zapHist, closeZapOverlay)) return;
@@ -6220,6 +6235,19 @@ let CS77_FILTER_LOW_REP = 20;
         );
         lightningHist.on = true;
       }
+      return;
+    }
+    if (resumePanelNavigation(profileQrHist, closeProfileQrDialog)) return;
+    if (
+      keepPanelOnPop(
+        "profileQrPanel",
+        profileQrDialogOpen,
+        reopenProfileQrFromHistory,
+        profileQrDialogOpen,
+        closeProfileQrDialog,
+        profileQrHist
+      )
+    ) {
       return;
     }
     if (resumePanelNavigation(lightningHist, closeLightningDialog)) return;
@@ -7730,6 +7758,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (embedDialogOpen()) {
       hideEmbed();
+      return;
+    }
+    if (profileQrDialogOpen()) {
+      closeProfileQrDialog();
       return;
     }
     if (contentDeleteOpen()) {
@@ -20235,6 +20267,40 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="profile-bitcoin-btn" aria-label="Add Bitcoin Lightning">\u20BF</button>`;
   }
 
+  // Coarse dots from assets/intern/qr-button-12.svg. currentColor follows the button.
+  function profileQrMarkSvg() {
+    return (
+      '<svg class="profile-qr-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">' +
+      '<g fill="currentColor">' +
+      '<circle cx="9.6" cy="3.2" r="2.2"/>' +
+      '<circle cx="22.4" cy="3.2" r="2.2"/>' +
+      '<circle cx="22.4" cy="9.6" r="2.2"/>' +
+      '<circle cx="28.8" cy="9.6" r="2.2"/>' +
+      '<circle cx="3.2" cy="16" r="2.2"/>' +
+      '<circle cx="9.6" cy="16" r="2.2"/>' +
+      '<circle cx="16" cy="16" r="2.2"/>' +
+      '<circle cx="28.8" cy="16" r="2.2"/>' +
+      '<circle cx="3.2" cy="22.4" r="2.2"/>' +
+      '<circle cx="16" cy="22.4" r="2.2"/>' +
+      '<circle cx="22.4" cy="22.4" r="2.2"/>' +
+      '<circle cx="28.8" cy="22.4" r="2.2"/>' +
+      '<circle cx="16" cy="28.8" r="2.2"/>' +
+      '<circle cx="22.4" cy="28.8" r="2.2"/>' +
+      "</g></svg>"
+    );
+  }
+
+  function profileQrHtml() {
+    const open = profileQrDialogOpen();
+    return (
+      '<button type="button" class="profile-qr-btn' +
+      (open ? " is-open" : "") +
+      '" aria-label="QR code">' +
+      profileQrMarkSvg() +
+      "</button>"
+    );
+  }
+
   function lightningDialogOpen() {
     const el = $("#lightningOverlay");
     return Boolean(el && !el.hidden);
@@ -20737,57 +20803,72 @@ let CS77_FILTER_LOW_REP = 20;
     refreshZapNwcSaved(() => look === lightningNwcLook && lightningDialogOpen());
   }
 
-  // lean-qr stays unloaded until a QR is asked for. The same helper covers a
-  // lightning invoice link, a lightning address, and a web address.
-  const LEAN_QR_URL = "https://cdn.jsdelivr.net/npm/lean-qr@2.7.4/index.mjs";
-  const LEAN_QR_SVG_URL = "https://cdn.jsdelivr.net/npm/lean-qr@2.7.4/extras/svg.mjs";
-  let leanQrPromise = null;
+  // qr.js stays unloaded until a QR is asked for. The same helper covers a
+  // lightning invoice, a lightning LNURL, and a web address.
+  const QR_SCRIPT = "/js/qr.js?v=0.21.1";
+  let qrScriptPromise = null;
 
-  function loadLeanQr() {
-    if (leanQrPromise) return leanQrPromise;
-    leanQrPromise = Promise.all([
-      import(LEAN_QR_URL),
-      import(LEAN_QR_SVG_URL),
-    ]).then(([core, svg]) => {
-      if (!core || typeof core.generate !== "function" || !svg || typeof svg.toSvg !== "function") {
-        throw new Error("Could not load the QR code library.");
-      }
-      return {
-        generate: core.generate,
-        correction: core.correction,
-        toSvg: svg.toSvg,
+  function loadQrScript() {
+    if (window.cs77Qr && typeof window.cs77Qr.invoice === "function") {
+      return Promise.resolve(window.cs77Qr);
+    }
+    if (qrScriptPromise) return qrScriptPromise;
+    qrScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = QR_SCRIPT;
+      script.async = true;
+      script.onload = () => {
+        if (window.cs77Qr && typeof window.cs77Qr.invoice === "function") resolve(window.cs77Qr);
+        else reject(new Error("Could not load the QR code library."));
       };
+      script.onerror = () => reject(new Error("Could not load the QR code library."));
+      document.body.appendChild(script);
     }).catch((err) => {
-      leanQrPromise = null;
+      qrScriptPromise = null;
       throw err;
     });
-    return leanQrPromise;
+    return qrScriptPromise;
   }
 
   function qrCodeColors() {
     const style = getComputedStyle(document.documentElement);
     const gray = style.getPropertyValue("--gray").trim() || "#d7d7d7";
-    return { on: gray, off: "transparent" };
+    return { color: gray, background: "transparent", shape: "round", pad: 4, label: "QR code" };
+  }
+
+  function qrIsInvoice(text) {
+    return /^lightning:/i.test(text) || /^ln(?:bcrt|bc|tb)\d/i.test(text) || /^lnurl1/i.test(text);
+  }
+
+  function qrBuild(Qr, text, level) {
+    const paint = Object.assign({ level: level }, qrCodeColors());
+    if (qrIsInvoice(text)) return Qr.invoice(text, paint);
+    if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return Qr.link(text, paint);
+    return Qr.text(text, paint);
+  }
+
+  // Smallest version at level L, then the strongest correction that still fits it.
+  function qrChoose(Qr, text) {
+    const low = qrBuild(Qr, text, "L");
+    let best = low;
+    const higher = ["M", "Q", "H"];
+    for (let i = 0; i < higher.length; i++) {
+      try {
+        const next = qrBuild(Qr, text, higher[i]);
+        if (next.version === low.version) best = next;
+      } catch (err) {
+        /* this level does not fit */
+      }
+    }
+    return best;
   }
 
   // Returns an SVG element. Callers pass the text a wallet or a browser should open.
   async function renderQrCode(text) {
     const value = String(text || "");
     if (!value) throw new Error("Nothing to encode.");
-    const lib = await loadLeanQr();
-    const options = {};
-    if (lib.correction && lib.correction.L != null) options.minCorrectionLevel = lib.correction.L;
-    const code = lib.generate(value, options);
-    const colors = qrCodeColors();
-    const svg = lib.toSvg(code, document, {
-      on: colors.on,
-      off: colors.off,
-      pad: 4,
-    });
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "QR code");
-    svg.classList.add("qr-code");
-    return svg;
+    const Qr = await loadQrScript();
+    return qrChoose(Qr, value).toSvg(document);
   }
 
   let zapQrLook = 0;
@@ -20830,6 +20911,283 @@ let CS77_FILTER_LOW_REP = 20;
     } finally {
       if (look === zapQrLook) btn.disabled = false;
     }
+  }
+
+  let profileQrTab = "site";
+  let profileQrLook = 0;
+
+  function profileQrDialogOpen() {
+    const el = $("#profileQrOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function profileQrSiteUrl(user) {
+    return "https://cyberspace77.com/@" + user;
+  }
+
+  function profileQrFallbackAddress(user) {
+    return user + "@v4v.app";
+  }
+
+  // BIP-173 charset. LNURL (LUD-01) is bech32 with the human-readable part "lnurl".
+  const LNURL_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+  function lnurlPolymod(values) {
+    const generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let chk = 1;
+    for (let i = 0; i < values.length; i++) {
+      const top = chk >> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ values[i];
+      for (let bit = 0; bit < 5; bit++) {
+        if ((top >> bit) & 1) chk ^= generator[bit];
+      }
+    }
+    return chk;
+  }
+
+  function lnurlHrpExpand(hrp) {
+    const out = [];
+    for (let i = 0; i < hrp.length; i++) out.push(hrp.charCodeAt(i) >> 5);
+    out.push(0);
+    for (let i = 0; i < hrp.length; i++) out.push(hrp.charCodeAt(i) & 31);
+    return out;
+  }
+
+  function lnurlChecksum(data) {
+    const values = lnurlHrpExpand("lnurl").concat(data, [0, 0, 0, 0, 0, 0]);
+    const mod = lnurlPolymod(values) ^ 1;
+    const out = [];
+    for (let i = 0; i < 6; i++) out.push((mod >>> (5 * (5 - i))) & 31);
+    return out;
+  }
+
+  // Eight-bit URL bytes to the five-bit groups bech32 carries, with padding.
+  function lnurlToFiveBits(bytes) {
+    const out = [];
+    let acc = 0;
+    let bits = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      acc = (acc << 8) | bytes[i];
+      bits += 8;
+      while (bits >= 5) {
+        bits -= 5;
+        out.push((acc >>> bits) & 31);
+      }
+    }
+    if (bits) out.push((acc << (5 - bits)) & 31);
+    return out;
+  }
+
+  function encodeLnurl(url) {
+    const data = lnurlToFiveBits(new TextEncoder().encode(url));
+    const combined = data.concat(lnurlChecksum(data));
+    let body = "lnurl1";
+    for (let i = 0; i < combined.length; i++) body += LNURL_CHARSET.charAt(combined[i]);
+    return body;
+  }
+
+  // Primal's receive code: lightning: plus the bech32 of the LUD-16 pay URL.
+  function profileQrLightningLnurl(address) {
+    const at = String(address || "").indexOf("@");
+    const name = at > 0 ? address.slice(0, at) : "";
+    const domain = at > 0 ? address.slice(at + 1) : "";
+    const url = "https://" + domain + "/.well-known/lnurlp/" + encodeURIComponent(name);
+    return "lightning:" + encodeLnurl(url);
+  }
+
+  // A stored LUD-16 address wins. Empty or unusable becomes username@v4v.app.
+  function profileQrResolvedAddress(user, raw) {
+    const parsed = normalizeLightningAddress(raw);
+    if (!parsed.error && parsed.address) return parsed.address;
+    return profileQrFallbackAddress(user);
+  }
+
+  // Null when this account's wallet has not been read yet.
+  function profileQrKnownLightning(user) {
+    if (ownAccountReady(user)) {
+      return profileQrResolvedAddress(user, lightningAddressFromAccount(accountState.account));
+    }
+    const profile = profileState.profile;
+    if (profileState.author === user && profile && profile.walletLoaded) {
+      return profileQrResolvedAddress(user, lightningAddressFromWallet(profileReceiveWallet(profile)));
+    }
+    return null;
+  }
+
+  async function profileQrFetchLightning(user, look) {
+    try {
+      const rows = await HiveApi.getAccounts([user]);
+      if (look !== profileQrLook || !profileQrDialogOpen() || observer() !== user) return "";
+      const account = rows && rows[0];
+      const named = account && String(account.name || "").toLowerCase() === user;
+      if (!named) return "";
+      return profileQrResolvedAddress(user, lightningAddressFromAccount(account));
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function syncProfileQrTabs() {
+    const nav = $("#profileQrNav");
+    if (!nav) return;
+    const tab = profileQrTab === "ln" ? "ln" : "site";
+    nav.querySelectorAll("[data-profile-qr]").forEach((btn) => {
+      const on = btn.getAttribute("data-profile-qr") === tab;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  let profileQrCopyTimer = 0;
+
+  function setProfileQrCaption(text, isError, copyText) {
+    const caption = $("#profileQrCaption");
+    if (!caption) return;
+    if (profileQrCopyTimer) {
+      clearTimeout(profileQrCopyTimer);
+      profileQrCopyTimer = 0;
+    }
+    caption.classList.toggle("is-error", Boolean(isError) && Boolean(text));
+    caption.replaceChildren();
+    if (!text) return;
+    if (!copyText) {
+      caption.textContent = text;
+      return;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "profile-qr-copy";
+    btn.textContent = text;
+    btn.setAttribute("data-copy", copyText);
+    btn.setAttribute("data-label", text);
+    btn.setAttribute("aria-label", "Copy " + text);
+    caption.appendChild(btn);
+  }
+
+  function copyProfileQrCaption(btn) {
+    const value = btn.getAttribute("data-copy") || "";
+    const label = btn.getAttribute("data-label") || "";
+    if (!value || !profileQrDialogOpen()) return;
+    copyToClipboard(value)
+      .then(() => {
+        if (!btn.isConnected || !profileQrDialogOpen()) return;
+        btn.textContent = "Copied";
+        btn.classList.add("is-copied");
+        btn.setAttribute("aria-label", "Copied");
+        if (profileQrCopyTimer) clearTimeout(profileQrCopyTimer);
+        profileQrCopyTimer = window.setTimeout(() => {
+          profileQrCopyTimer = 0;
+          if (!btn.isConnected) return;
+          btn.textContent = label;
+          btn.classList.remove("is-copied");
+          btn.setAttribute("aria-label", "Copy " + label);
+        }, 1600);
+      })
+      .catch((err) => {
+        showError((err && err.message) || "Couldn't copy.");
+      });
+  }
+
+  async function paintProfileQr() {
+    const look = ++profileQrLook;
+    const user = observer();
+    const box = $("#profileQrCode");
+    if (!user || !box || !profileQrDialogOpen()) return;
+    const tab = profileQrTab === "ln" ? "ln" : "site";
+    box.replaceChildren();
+    let text = "";
+    let label = "";
+    if (tab === "site") {
+      text = profileQrSiteUrl(user);
+      label = "@" + user;
+      setProfileQrCaption(label, false, label);
+    } else {
+      let address = profileQrKnownLightning(user);
+      if (!address) {
+        setProfileQrCaption("Checking the Lightning address\u2026", false);
+        address = await profileQrFetchLightning(user, look);
+        if (look !== profileQrLook || !profileQrDialogOpen()) return;
+        if (!address) {
+          setProfileQrCaption("Could not load the Lightning address.", true);
+          return;
+        }
+      }
+      text = profileQrLightningLnurl(address);
+      label = address;
+      setProfileQrCaption(label, false, label);
+    }
+    try {
+      const svg = await renderQrCode(text);
+      if (look !== profileQrLook || !profileQrDialogOpen() || observer() !== user) return;
+      svg.setAttribute("aria-label", tab === "ln" ? "Lightning address" : "Cyberspace profile");
+      box.replaceChildren(svg);
+    } catch (err) {
+      if (look !== profileQrLook || !profileQrDialogOpen()) return;
+      box.replaceChildren();
+      setProfileQrCaption("Could not make a QR code.", true);
+    }
+  }
+
+  function setProfileQrTab(tab) {
+    const next = tab === "ln" ? "ln" : "site";
+    if (next === profileQrTab && $("#profileQrCode svg")) return;
+    profileQrTab = next;
+    syncProfileQrTabs();
+    if (profileQrHist.on) {
+      writePanelHistory(
+        profileQrHist,
+        { profileQrPanel: true, profileQrTab: profileQrTab },
+        false
+      );
+    }
+    paintProfileQr();
+  }
+
+  function closeProfileQrDialog(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
+    profileQrLook += 1;
+    const el = $("#profileQrOverlay");
+    const wasOpen = Boolean(el && !el.hidden);
+    const box = $("#profileQrCode");
+    if (box) box.replaceChildren();
+    setProfileQrCaption("", false);
+    hideDialog(el);
+    document.querySelectorAll(".profile-qr-btn.is-open").forEach((btn) => {
+      btn.classList.remove("is-open");
+    });
+    if (wasOpen || profileQrHist.on) releasePanelHistory(profileQrHist, skipHistory);
+  }
+
+  function reopenProfileQrFromHistory(state) {
+    openProfileQrDialog({
+      fromHistory: true,
+      tab: state && state.profileQrTab === "ln" ? "ln" : "site",
+    });
+  }
+
+  function openProfileQrDialog(opts) {
+    const user = observer();
+    const el = $("#profileQrOverlay");
+    if (!user || !el || profileQrDialogOpen()) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
+    closeProfileMore();
+    profileQrTab = fromHistory && opts.tab === "ln" ? "ln" : "site";
+    syncProfileQrTabs();
+    const box = $("#profileQrCode");
+    if (box) box.replaceChildren();
+    setProfileQrCaption("", false);
+    document.querySelectorAll(".profile-qr-btn").forEach((btn) => {
+      btn.classList.add("is-open");
+    });
+    const focusFrom = document.activeElement;
+    el.hidden = false;
+    focusDialog(el, focusFrom);
+    writePanelHistory(
+      profileQrHist,
+      { profileQrPanel: true, profileQrTab: profileQrTab },
+      fromHistory
+    );
+    paintProfileQr();
   }
 
   function hideZapFallback() {
@@ -24096,7 +24454,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<button type="button" class="btn-primary btn-compact profile-follow-btn" data-author="${HiveMd.escapeHtml(author)}" data-followed="${profileState.followed ? "1" : "0"}"${followBusy ? " disabled" : ""}>${profileFollowLabel()}</button>`;
     const handle = `<p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>`;
     const title = own
-      ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}${profileBitcoinHtml()}</div>`
+      ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}${profileBitcoinHtml()}${profileQrHtml()}</div>`
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
@@ -35341,13 +35699,18 @@ let CS77_FILTER_LOW_REP = 20;
     return !!(history.state && history.state.lightningPanel);
   }
 
-  // People, voters, the zap dialog, the lightning dialog, and the edit dialog each add one same-page history entry.
+  function logoProfileQrOn() {
+    return !!(history.state && history.state.profileQrPanel);
+  }
+
+  // People, voters, the zap dialog, the lightning dialog, the profile QR dialog, and the edit dialog each add one same-page history entry.
   function logoSamePageExtra() {
     return (
       (logoPeopleOn() ? 1 : 0) +
       (logoVotersOn() ? 1 : 0) +
       (logoZapOn() ? 1 : 0) +
       (logoLightningOn() ? 1 : 0) +
+      (logoProfileQrOn() ? 1 : 0) +
       (logoEditOn() ? 1 : 0)
     );
   }
@@ -35397,6 +35760,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeVoters: false,
           closeZap: false,
           closeLightning: false,
+          closeProfileQr: false,
         };
       }
       return {
@@ -35406,6 +35770,7 @@ let CS77_FILTER_LOW_REP = 20;
         closeVoters: false,
         closeZap: false,
         closeLightning: false,
+        closeProfileQr: false,
       };
     }
     const originIndex = logoOriginIndex(layers);
@@ -35421,11 +35786,12 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     if (stop < 0) {
-      return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false, closeLightning: false };
+      return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false, closeLightning: false, closeProfileQr: false };
     }
     const steps = logoStepsAfter(layers, stop);
     const zap = logoZapOn();
     const lightning = logoLightningOn();
+    const profileQr = logoProfileQrOn();
     return {
       top: onGlobal,
       steps: steps,
@@ -35433,6 +35799,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeVoters: voters && steps > 1,
       closeZap: zap && steps > 1,
       closeLightning: lightning && steps > 1,
+      closeProfileQr: profileQr && steps > 1,
     };
   }
 
@@ -35452,6 +35819,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (jump.closeLightning && lightningHist.on) {
       closeLightningDialog({ skipHistory: true });
       lightningHist.on = false;
+    }
+    if (jump.closeProfileQr && profileQrHist.on) {
+      closeProfileQrDialog({ skipHistory: true });
+      profileQrHist.on = false;
     }
     if (jump.steps > 1) history.go(-jump.steps);
     else if (jump.steps === 1) history.back();
@@ -35474,6 +35845,10 @@ let CS77_FILTER_LOW_REP = 20;
     if (logoLightningOn() && lightningHist.on) {
       closeLightningDialog({ skipHistory: true });
       lightningHist.on = false;
+    }
+    if (logoProfileQrOn() && profileQrHist.on) {
+      closeProfileQrDialog({ skipHistory: true });
+      profileQrHist.on = false;
     }
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
@@ -36927,6 +37302,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
+    closeProfileQrDialog({ skipHistory: true });
     stopEmbedSizeWatch();
     clearError();
     if (ownerSignSession && !ownerSignBusy) {
@@ -36951,6 +37327,8 @@ let CS77_FILTER_LOW_REP = 20;
       closeClaimTokensOverlay();
       closeLightningDialog({ skipHistory: true });
       stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
+      closeProfileQrDialog({ skipHistory: true });
+      stripPanelHistory(profileQrHist, PROFILE_QR_HISTORY_KEYS);
       closeZapOverlay({ skipHistory: true });
       stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
       closeProposalOverlay();
@@ -38447,6 +38825,12 @@ let CS77_FILTER_LOW_REP = 20;
         openLightningDialog();
         return;
       }
+      const profileQrBtn = e.target.closest(".profile-qr-btn");
+      if (profileQrBtn && inInteractiveSurface(profileQrBtn)) {
+        e.preventDefault();
+        openProfileQrDialog();
+        return;
+      }
       const removeTag = e.target.closest("[data-remove-tag]");
       if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
@@ -39652,6 +40036,32 @@ let CS77_FILTER_LOW_REP = 20;
         if (e.target.closest("#embedCopy")) {
           e.preventDefault();
           copyEmbedCode();
+        }
+      });
+    }
+    const profileQrOverlay = $("#profileQrOverlay");
+    if (profileQrOverlay) {
+      profileQrOverlay.addEventListener("click", (e) => {
+        if (e.target === profileQrOverlay) {
+          const active = document.activeElement;
+          if (!active || !profileQrOverlay.contains(active)) closeProfileQrDialog();
+          return;
+        }
+        const tab = e.target.closest("[data-profile-qr]");
+        if (tab) {
+          e.preventDefault();
+          setProfileQrTab(tab.getAttribute("data-profile-qr"));
+          return;
+        }
+        const copy = e.target.closest(".profile-qr-copy");
+        if (copy) {
+          e.preventDefault();
+          copyProfileQrCaption(copy);
+          return;
+        }
+        if (e.target.closest("#profileQrClose")) {
+          e.preventDefault();
+          closeProfileQrDialog();
         }
       });
     }

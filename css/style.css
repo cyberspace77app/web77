@@ -4444,6 +4444,39 @@ a.tag:hover {
   text-shadow: var(--glow-yellow);
 }
 
+.profile-qr-btn {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.15rem;
+  margin: 0;
+  padding: 0 0.15rem;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.profile-qr-btn .profile-qr-mark {
+  display: block;
+  width: 1.65rem;
+  height: 1.65rem;
+}
+
+.profile-qr-btn:hover,
+.profile-qr-btn.is-open {
+  color: var(--yellow);
+}
+
+.profile-qr-btn:hover .profile-qr-mark,
+.profile-qr-btn.is-open .profile-qr-mark {
+  filter: drop-shadow(0 0 6px rgba(255, 225, 74, 0.55));
+}
+
 .profile-zap-btn {
   appearance: none;
   display: inline-flex;
@@ -4520,6 +4553,7 @@ a.tag:hover {
 
 .profile-more-btn:focus-visible,
 .profile-bitcoin-btn:focus-visible,
+.profile-qr-btn:focus-visible,
 .profile-zap-btn:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
@@ -6296,6 +6330,102 @@ a.wallet-tx-time:hover {
   display: block;
   width: min(18rem, 100%);
   height: auto;
+}
+
+.profile-qr-nav {
+  margin-bottom: 1.15rem;
+}
+
+.profile-qr-nav button {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+  padding: 0.6rem 1.05rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  line-height: 1.2;
+}
+
+.profile-qr-nav button:hover {
+  color: var(--yellow);
+  text-shadow: none;
+}
+
+.profile-qr-nav button.is-active {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+  background: rgba(227, 19, 55, 0.1);
+  text-shadow: var(--glow-yellow);
+}
+
+.profile-qr-nav button:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+#profileQrOverlay {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-items: safe center;
+}
+
+.profile-qr-code {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 16rem;
+}
+
+.profile-qr-code .qr-code {
+  width: min(16rem, 100%);
+}
+
+#profileQrCaption {
+  margin: 0.65rem 0 0.15rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+#profileQrCaption:empty {
+  display: none;
+}
+
+#profileQrCaption.is-error {
+  color: var(--red-bright);
+}
+
+.profile-qr-copy {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.profile-qr-copy:hover,
+.profile-qr-copy.is-copied {
+  color: var(--yellow);
+}
+
+.profile-qr-copy:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .zap-nwc-hint {
