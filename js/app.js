@@ -20244,7 +20244,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function profileQrMenuItemHtml() {
-    return `<button type="button" class="profile-more-item profile-qr-menu" role="menuitem">QR codes</button>`;
+    return `<button type="button" class="profile-more-item profile-qr-menu" role="menuitem">QR code</button>`;
   }
 
   function profileMoreMenuHtml(author) {
