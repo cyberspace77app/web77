@@ -869,11 +869,17 @@
     return names;
   }
 
+  // Draw the rows before avatar accounts return. A paint that waits on
+  // prepare stays blank: the empty list looks near the end, so the next
+  // witness page starts and cancels this paint before it can commit.
   function paintCurrentList() {
     if (state.mode !== "witnesses") return;
     var gen = ++witnessPaintGen;
-    prepareNames(witnessNamesForPaint()).then(function () {
-      if (gen !== witnessPaintGen) return;
+    var names = witnessNamesForPaint();
+    paintCurrentListBody();
+    if (!window.Avatars || !names.some(function (name) { return !window.Avatars.has(name); })) return;
+    prepareNames(names).then(function () {
+      if (gen !== witnessPaintGen || state.mode !== "witnesses") return;
       paintCurrentListBody();
     });
   }
