@@ -6388,7 +6388,7 @@ a.wallet-tx-time:hover {
 }
 
 #profileQrCaption {
-  margin: 0.65rem 0 0.15rem;
+  margin: 0.15rem 0 1.15rem;
   text-align: center;
   overflow-wrap: anywhere;
 }
