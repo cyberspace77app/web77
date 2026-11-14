@@ -6853,6 +6853,16 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   margin: 0;
 }
 
+#lightningOverlay #lightningAddressNote a {
+  color: var(--gray-dim);
+  text-shadow: none;
+}
+
+#lightningOverlay #lightningAddressNote a:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
 #lightningOverlay .zap-single-tap-toggle {
   margin: 0.15rem 0 0.9rem;
 }

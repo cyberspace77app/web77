@@ -345,6 +345,7 @@ let CS77_FILTER_LOW_REP = 20;
   let lightningDialogFocus = "";
   // Lightning pay uses a saved Nostr Wallet Connect secret, then a browser wallet,
   // then a lightning: link. Coming back from that link asks if the payment went through.
+  // A default name@v4v.app address waits on the Hive receipt instead of asking.
   // The secret is edited in Add Bitcoin Lightning.
   let zapSendGen = 0;
   // Armed after a lightning: link. leftAt is when the page first went away.
@@ -361,6 +362,14 @@ let CS77_FILTER_LOW_REP = 20;
   const ZAP_PAY_ARM_MS = 450;
   // Show the question while the wallet is still open, so coming back does not depend on focus.
   const ZAP_PAY_ASK_MS = 3000;
+  // Default name@v4v.app zaps wait on @v4vapp custom_json instead of asking.
+  let zapV4vTimer = 0;
+  let zapV4vGen = 0;
+  const V4V_POLL_MS = 3000;
+  // A silent single tap has no dialog to close. Give up after 3 minutes
+  // so the bolt does not blink forever.
+  const V4V_WATCH_MS = 3 * 60 * 1000;
+  const V4V_HISTORY_LIMIT = 100;
   let zapLookGen = 0;
   let zapHttp = null;
   let zapNwcSaved = false;
@@ -380,6 +389,8 @@ let CS77_FILTER_LOW_REP = 20;
     asset: "ln",
     lnAddress: "",
     lnStatus: "missing",
+    // True only for the synthetic name@v4v.app address, not a stored one.
+    lnDefault: false,
     lnDenied: false,
     pending: false,
     selected: { ln: 21, hive: 1, hbd: 0.1 },
@@ -398,6 +409,9 @@ let CS77_FILTER_LOW_REP = 20;
     // Subspace title to cite. Empty cites @author.
     subspace: "",
     commentBusy: false,
+    // Set while a default-address lightning: invoice is waiting on Hive.
+    v4vWatch: false,
+    paymentHash: "",
   };
   const zapWalletCache = new Map();
   const zapTipsCache = new Map();
@@ -20368,6 +20382,7 @@ let CS77_FILTER_LOW_REP = 20;
     lightningDialogFocus = opts && opts.focus === "nwc" ? "nwc" : "";
     closeProfileMore();
     const user = observer();
+    input.placeholder = lightningAddressPlaceholder(user);
     const look = ++lightningAddressLook;
     const account = user && ownAccountReady(user) ? accountState.account : null;
     if (account || !user) {
@@ -20388,6 +20403,7 @@ let CS77_FILTER_LOW_REP = 20;
     setLightningStatus("", false);
     setLightningDialogLocked(false);
     if (!lightningAddressKnown) input.disabled = true;
+    paintLightningDefaultWallet();
     el.hidden = false;
     fillZapSingleTapForm();
     refreshLightningNwc();
@@ -20418,6 +20434,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (field && !String(field.value || "").trim()) field.value = next;
       lightningDialogValue = next;
       lightningAddressKnown = true;
+      paintLightningDefaultWallet();
     } catch (err) {
       if (look !== lightningAddressLook || !lightningDialogOpen()) return;
       lightningAddressKnown = false;
@@ -21294,6 +21311,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function hideZapFallback() {
+    stopV4vWatch();
     zapState.invoice = "";
     zapState.sent = false;
     zapState.sentSats = 0;
@@ -21911,6 +21929,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapSendGen += 1;
     zapLookGen += 1;
     stopZapHttp();
+    stopV4vWatch();
     cancelZapWalletReturn();
     clearZapMotion();
   }
@@ -21975,7 +21994,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!zapState.singleTap || gen !== zapSendGen) return;
     // The lightning: link stays in progress until the page comes back, or the give-up.
-    if (zapWalletAsk || zapPayConfirmOpen()) return;
+    // A default v4v.app address stays in progress until that Hive receipt arrives.
+    if (zapWalletAsk || zapPayConfirmOpen() || zapState.v4vWatch) return;
     const silentWallet = Boolean(zapState.invoice) && !zapState.paid;
     if (!zapState.paid && !silentWallet) return;
     finishSingleTap(Boolean(zapState.paid));
@@ -22029,6 +22049,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.asset = "ln";
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
+    zapState.lnDefault = false;
     zapState.lnDenied = false;
     zapState.pending = false;
     zapState.selected = { ln: 21, hive: 1, hbd: 0.1 };
@@ -22121,6 +22142,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (gen !== zapLookGen || !zapUiOpen()) return;
       zapState.lnAddress = "";
       zapState.lnStatus = "error";
+      zapState.lnDefault = false;
     }
     if (gen !== zapLookGen || !zapUiOpen()) return;
     const status = $("#zapStatus");
@@ -22132,19 +22154,59 @@ let CS77_FILTER_LOW_REP = 20;
     else setZapStatus(zapLnStatusMessage(), true);
   }
 
+  // Every Hive name can receive on name@v4v.app when the profile stores no address.
+  // A stored address that does not parse stays unusable and does not fall back.
+  function v4vDefaultAddress(name) {
+    const user = walletHiveName(name);
+    if (!user) return "";
+    const parsed = normalizeLightningAddress(user + "@v4v.app");
+    return parsed.error ? "" : parsed.address || "";
+  }
+
+  function lightningAddressPlaceholder(name) {
+    return v4vDefaultAddress(name) || "username@v4v.app";
+  }
+
+  // An empty field receives on the default address. A typed address matches only
+  // when it is that same name@v4v.app.
+  function lightningUsesDefaultAddress(raw, name) {
+    const text = String(raw == null ? "" : raw).trim();
+    if (!text) return true;
+    const parsed = normalizeLightningAddress(text);
+    const fallback = v4vDefaultAddress(name);
+    return Boolean(fallback) && !parsed.error && parsed.address === fallback;
+  }
+
+  function paintLightningDefaultWallet() {
+    const note = $("#lightningDefaultWallet");
+    const input = $("#lightningAddress");
+    if (!note || !input) return;
+    note.hidden = !lightningUsesDefaultAddress(input.value, observer());
+  }
+
   function applyZapWallet(wallet) {
     const raw = lightningAddressFromWallet(wallet);
     const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
+    zapState.lnDefault = false;
     if (raw && parsed.error) {
       zapState.lnAddress = "";
       zapState.lnStatus = "invalid";
-    } else if (parsed.address) {
+      return;
+    }
+    if (parsed.address) {
       zapState.lnAddress = parsed.address;
       zapState.lnStatus = "ready";
-    } else {
-      zapState.lnAddress = "";
-      zapState.lnStatus = "missing";
+      return;
     }
+    const fallback = v4vDefaultAddress(zapState.author);
+    if (fallback) {
+      zapState.lnAddress = fallback;
+      zapState.lnStatus = "ready";
+      zapState.lnDefault = true;
+      return;
+    }
+    zapState.lnAddress = "";
+    zapState.lnStatus = "missing";
   }
 
   const ZAP_TIPS_CACHE_MS = 60000;
@@ -22730,12 +22792,21 @@ let CS77_FILTER_LOW_REP = 20;
     zapTipsHideTimer = window.setTimeout(hideZapTips, 180);
   }
 
+  // The accept line covers a stored address or the v4v.app default.
+  // An unusable stored address does not fall back. The yellow bolt stays on a stored address only.
+  function zapPanelAccepts(name, rec) {
+    if (!rec || !rec.loaded) return false;
+    if (rec.accepts) return true;
+    if (lightningAddressFromWallet(rec.wallet)) return false;
+    return Boolean(v4vDefaultAddress(name));
+  }
+
   function paintZapTipsPanel() {
     const panel = zapTipsPanelNode;
     const open = openZapTips;
     if (!panel || !open) return;
     const bits = ['<div class="zap-tips-head">'];
-    if (open.accepts === true) {
+    if (open.panelAccepts === true) {
       bits.push(
         '<p class="zap-tips-accept">' + HiveMd.escapeHtml("@" + open.author + " accepts \u26A1 sats.") + "</p>"
       );
@@ -22792,6 +22863,7 @@ let CS77_FILTER_LOW_REP = 20;
       permlink: permlink,
       gen: gen,
       accepts: known ? known.accepts : null,
+      panelAccepts: known ? zapPanelAccepts(author, known) : null,
       entries: null,
       commentsFailed: false,
       tipsFailed: false,
@@ -22808,12 +22880,14 @@ let CS77_FILTER_LOW_REP = 20;
       .then((rec) => {
         if (!openZapTips || openZapTips.gen !== gen) return;
         openZapTips.accepts = Boolean(rec && rec.accepts);
+        openZapTips.panelAccepts = zapPanelAccepts(author, rec);
         paintZapTipsPanel();
         placeZapTips(anchor, panel);
       })
       .catch(() => {
         if (!openZapTips || openZapTips.gen !== gen) return;
         if (openZapTips.accepts == null) openZapTips.accepts = false;
+        if (openZapTips.panelAccepts == null) openZapTips.panelAccepts = false;
         paintZapTipsPanel();
       });
     loadZapTipRecord(author, permlink)
@@ -23128,7 +23202,11 @@ let CS77_FILTER_LOW_REP = 20;
     const input = $("#zapPaid");
     if (!toggle) return;
     const box = $("#zapWalletFallback");
-    const show = zapUsesPaidToggle() && Boolean(zapState.invoice) && Boolean(box && !box.hidden);
+    const show =
+      zapUsesPaidToggle() &&
+      !zapState.v4vWatch &&
+      Boolean(zapState.invoice) &&
+      Boolean(box && !box.hidden);
     toggle.hidden = !show;
     if (input) input.checked = show && Boolean(zapState.sent);
   }
@@ -23177,6 +23255,10 @@ let CS77_FILTER_LOW_REP = 20;
   function watchZapPaidViewport() {
     const mq = window.matchMedia("(max-width: 720px)");
     const onChange = () => {
+      if (zapState.v4vWatch) {
+        syncZapPaidToggle();
+        return;
+      }
       const box = $("#zapWalletFallback");
       if (!box || box.hidden || !zapState.invoice || zapState.singleTap) {
         syncZapPaidToggle();
@@ -23199,6 +23281,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function scheduleZapPayQuestion() {
     clearZapPayAskTimer();
+    if (zapState.v4vWatch) return;
     if (zapUsesPaidToggle()) return;
     if (zapState.sent || !zapState.invoice || zapPayConfirmOpen()) return;
     const invoice = zapState.invoice;
@@ -23240,6 +23323,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeAskZapWalletReturn() {
+    if (zapState.v4vWatch) return;
     if (zapPayConfirmOpen()) return;
     if (zapUsesPaidToggle()) return;
     const ask = zapWalletAsk;
@@ -23318,12 +23402,193 @@ let CS77_FILTER_LOW_REP = 20;
     if (link && !link.hidden) focusDesktop(link);
   }
 
-  async function acceptZapWalletPaid() {
-    const ov = $("#zapPayOverlay");
-    if (!ov || ov.hidden) return;
-    hideDialog(ov);
-    releaseZapPayPage();
-    if (zapState.sent || !zapState.invoice) return;
+  // BOLT11 payment hash, tag p. The 520-bit signature and checksum stay out of the walk.
+  function bech32WordsToHex(words, start, len) {
+    let acc = 0;
+    let bits = 0;
+    let hex = "";
+    const stop = start + len;
+    for (let i = start; i < stop; i++) {
+      acc = (acc << 5) | words[i];
+      bits += 5;
+      while (bits >= 8) {
+        bits -= 8;
+        hex += ((acc >> bits) & 255).toString(16).padStart(2, "0");
+        acc &= (1 << bits) - 1;
+      }
+    }
+    if (bits !== 4 || (acc & 15) !== 0 || hex.length !== 64) return "";
+    return hex;
+  }
+
+  function bolt11PaymentHash(pr) {
+    const text = String(pr || "").trim().toLowerCase();
+    if (!/^ln(bc|tb|bcrt)/.test(text)) return "";
+    const sep = text.lastIndexOf("1");
+    if (sep < 3) return "";
+    const charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    const words = [];
+    for (let i = sep + 1; i < text.length; i++) {
+      const val = charset.indexOf(text.charAt(i));
+      if (val < 0) return "";
+      words.push(val);
+    }
+    const end = words.length - 104 - 6;
+    if (end <= 7) return "";
+    let pos = 7;
+    while (pos + 3 <= end) {
+      const tag = words[pos];
+      const len = words[pos + 1] * 32 + words[pos + 2];
+      pos += 3;
+      if (pos + len > end) return "";
+      if (tag === 1 && len === 52) return bech32WordsToHex(words, pos, len);
+      pos += len;
+    }
+    return "";
+  }
+
+  // v4v.app stores the payment hash in parent_id as standard base64.
+  function v4vParentHash(parentId) {
+    let text = String(parentId || "").trim().replace(/-/g, "+").replace(/_/g, "/");
+    if (!text) return "";
+    const mod = text.length % 4;
+    if (mod) text += "====".slice(mod);
+    let raw = "";
+    try {
+      raw = atob(text);
+    } catch (err) {
+      return "";
+    }
+    if (raw.length !== 32) return "";
+    let hex = "";
+    for (let i = 0; i < raw.length; i++) {
+      const code = raw.charCodeAt(i);
+      if (code > 255) return "";
+      hex += code.toString(16).padStart(2, "0");
+    }
+    return hex;
+  }
+
+  function v4vJsonBody(payload) {
+    const json = payload && payload.json;
+    if (typeof json === "string") {
+      try {
+        return JSON.parse(json);
+      } catch (err) {
+        return null;
+      }
+    }
+    if (json && typeof json === "object") return json;
+    return null;
+  }
+
+  // The credit is custom_json on @v4vapp. The recipient's own history does not list it.
+  // Notifications and a later conversion request use the same account and must not count.
+  function v4vTransferMatches(row, author, hash) {
+    const rec = Array.isArray(row) ? row[1] : row;
+    if (!rec || typeof rec !== "object") return false;
+    const op = rec.op;
+    let type = "";
+    let payload = null;
+    if (Array.isArray(op)) {
+      type = String(op[0] || "");
+      payload = op[1];
+    } else if (op && typeof op === "object") {
+      type = String(op.type || "").replace(/_operation$/, "");
+      payload = op.value;
+    }
+    if (type !== "custom_json" || !payload || typeof payload !== "object") return false;
+    if (String(payload.id || "") !== "v4vapp_transfer") return false;
+    const auths = payload.required_auths;
+    if (!Array.isArray(auths)) return false;
+    let signed = false;
+    for (let i = 0; i < auths.length; i++) {
+      if (String(auths[i] || "").toLowerCase() === "v4vapp") signed = true;
+    }
+    if (!signed) return false;
+    const body = v4vJsonBody(payload);
+    if (!body) return false;
+    if (String(body.from_account || "").replace(/^@/, "").toLowerCase() !== "v4vapp") return false;
+    const to = String(body.to_account || "").replace(/^@/, "").toLowerCase();
+    if (!author || to !== author) return false;
+    return v4vParentHash(body.parent_id) === hash;
+  }
+
+  async function v4vPaymentRegistered(author, hash) {
+    const result = await HiveApi.hiveRpc("account_history_api.get_account_history", {
+      account: "v4vapp",
+      start: -1,
+      limit: V4V_HISTORY_LIMIT,
+      operation_filter_low: 262144,
+      operation_filter_high: 0,
+    });
+    const rows = zapHistoryRows(result) || [];
+    for (let i = 0; i < rows.length; i++) {
+      if (v4vTransferMatches(rows[i], author, hash)) return true;
+    }
+    return false;
+  }
+
+  function stopV4vWatch() {
+    zapV4vGen += 1;
+    if (zapV4vTimer) {
+      clearTimeout(zapV4vTimer);
+      zapV4vTimer = 0;
+    }
+    zapState.v4vWatch = false;
+    zapState.paymentHash = "";
+  }
+
+  // First look is 3 seconds out, then again 3 seconds after each answer.
+  function startV4vWatch(hash) {
+    stopV4vWatch();
+    const paymentHash = String(hash || "");
+    const invoice = zapState.invoice;
+    const author = walletHiveName(zapState.author);
+    if (!/^[0-9a-f]{64}$/.test(paymentHash) || !invoice || !author) return false;
+    const gen = zapV4vGen;
+    const started = Date.now();
+    zapState.v4vWatch = true;
+    zapState.paymentHash = paymentHash;
+    const tick = async () => {
+      zapV4vTimer = 0;
+      if (gen !== zapV4vGen || !zapState.v4vWatch) return;
+      if (zapState.paid || zapState.invoice !== invoice || (!zapDialogOpen() && !zapState.singleTap)) {
+        stopV4vWatch();
+        return;
+      }
+      if (zapState.singleTap && !zapDialogOpen() && Date.now() - started >= V4V_WATCH_MS) {
+        stopV4vWatch();
+        finishSingleTap(false);
+        return;
+      }
+      let matched = false;
+      try {
+        matched = await v4vPaymentRegistered(author, paymentHash);
+      } catch (err) {
+        matched = false;
+      }
+      if (gen !== zapV4vGen || !zapState.v4vWatch || zapState.invoice !== invoice) return;
+      if (matched) {
+        confirmZapLightningPaid();
+        return;
+      }
+      if (!zapDialogOpen() && !zapState.singleTap) {
+        stopV4vWatch();
+        return;
+      }
+      zapV4vTimer = window.setTimeout(tick, V4V_POLL_MS);
+    };
+    zapV4vTimer = window.setTimeout(tick, V4V_POLL_MS);
+    return true;
+  }
+
+  // Same result as Yes on the payment question, including a hidden single tap.
+  async function confirmZapLightningPaid() {
+    if (zapState.sent || !zapState.invoice) {
+      stopV4vWatch();
+      return;
+    }
     const hidden = !zapDialogOpen();
     markZapLightningSent(zapState.sentSats, zapState.invoice);
     if (hidden) {
@@ -23343,6 +23608,14 @@ let CS77_FILTER_LOW_REP = 20;
     if (submit && !submit.hidden) focusDesktop(submit);
   }
 
+  async function acceptZapWalletPaid() {
+    const ov = $("#zapPayOverlay");
+    if (!ov || ov.hidden) return;
+    hideDialog(ov);
+    releaseZapPayPage();
+    await confirmZapLightningPaid();
+  }
+
   function offerLightningUri(pr, sats) {
     zapState.invoice = pr;
     zapState.sent = false;
@@ -23354,6 +23627,17 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    // A default v4v.app address settles on Hive. Do not ask, and do not show Payment sent.
+    if (zapState.lnDefault && startV4vWatch(bolt11PaymentHash(pr))) {
+      if (zapState.singleTap) return;
+      const box = $("#zapWalletFallback");
+      if (box) box.hidden = false;
+      syncZapPayAction();
+      setZapStatus("Waiting for the payment\u2026", false);
+      if (!isMobileViewport()) showZapQr();
+      syncZapPaidToggle();
+      return;
+    }
     // Arm after the click so the resume guard cannot swallow this lightning: link.
     armZapWalletReturn(sats);
     if (zapState.singleTap) {
@@ -23369,6 +23653,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function markZapLightningSent(sats, invoice) {
+    stopV4vWatch();
     zapState.sent = true;
     zapState.sentSats = sats;
     zapState.invoice = invoice || zapState.invoice || "";
@@ -30325,8 +30610,8 @@ let CS77_FILTER_LOW_REP = 20;
         <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
         <div class="profile-more-menu" role="menu" hidden>
           ${edit}
-          ${profileQrMenuItemHtml()}
           <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
+          ${profileQrMenuItemHtml()}
           <a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(id))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>
         </div>
       </div>`;
@@ -31321,6 +31606,7 @@ let CS77_FILTER_LOW_REP = 20;
     const ownerLock = ownerReady ? "" : " disabled";
     communityEditTags = Array.isArray(fields.tags) ? fields.tags.slice() : [];
     const account = esc(communityState.name || "");
+    const lnPlaceholder = esc(lightningAddressPlaceholder(communityState.name));
     return `
       <div class="community-panel community-edit">
         <form class="settings-form" id="communityEditForm" autocomplete="off" novalidate>
@@ -31389,7 +31675,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
           <div class="settings-field">
             <label class="settings-label" for="communityLightning">Bitcoin Lightning Address</label>
-            <input id="communityLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain" value="${esc(fields.lightning || "")}"${ownerLock}>
+            <input id="communityLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="${lnPlaceholder}" value="${esc(fields.lightning || "")}"${ownerLock}>
           </div>
           <div class="settings-field">
             <label class="settings-label" for="communityBeneficiary">Required beneficiary</label>
@@ -39384,6 +39670,7 @@ let CS77_FILTER_LOW_REP = 20;
     const lightningSave = $("#lightningSave");
     const lightningCancel = $("#lightningCancel");
     if (lightningInput) {
+      lightningInput.addEventListener("input", paintLightningDefaultWallet);
       lightningInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
