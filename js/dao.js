@@ -2395,8 +2395,10 @@
     if (state.mode !== "proposals") return;
     var gen = ++proposalPaintGen;
     var names = state.proposals.rows.length ? proposalNamesForPaint() : [];
+    paintProposalListBody();
+    if (!window.Avatars || !names.some(function (name) { return !window.Avatars.has(name); })) return;
     prepareNames(names).then(function () {
-      if (gen !== proposalPaintGen) return;
+      if (gen !== proposalPaintGen || state.mode !== "proposals") return;
       paintProposalListBody();
     });
   }

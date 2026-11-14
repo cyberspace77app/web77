@@ -4446,6 +4446,7 @@
     directImageUrl,
     avatarUrl,
     directAvatarUrl,
+    avatarBlank: AVATAR_BLANK,
     lazyAvatarHtml,
     excerpt,
     markdownReady: markdownEnginesReady,

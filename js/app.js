@@ -77,7 +77,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Avatar cache for every surface. One get_accounts batch (up to 20 names)
   // supplies profile_image, then the img src is the /p/ file images.hive.blog
-  // would redirect /u/<name>/avatar/<size> to. No picture uses the Satoshi mark.
+  // would redirect /u/<name>/avatar/<size> to. A name not loaded yet stays a
+  // blank circle. Satoshi is only for an account that has no profile picture.
   // dao.js reaches the same object through window.Avatars.
   const Avatars = (function () {
     const BATCH = 20;
@@ -152,12 +153,13 @@ let CS77_FILTER_LOW_REP = 20;
     function src(name, size) {
       const key = normalize(name);
       const dim = sizeName(size);
-      if (key && cache.has(key)) {
-        const image = profileImageOf(cache.get(key));
-        if (image && window.HiveMd) {
-          const direct = HiveMd.directAvatarUrl(image, dim);
-          if (direct) return direct;
-        }
+      if (!key || !cache.has(key)) {
+        return window.HiveMd && HiveMd.avatarBlank ? HiveMd.avatarBlank : fallback(dim);
+      }
+      const image = profileImageOf(cache.get(key));
+      if (image && window.HiveMd) {
+        const direct = HiveMd.directAvatarUrl(image, dim);
+        if (direct) return direct;
       }
       return fallback(dim);
     }
@@ -15281,6 +15283,25 @@ let CS77_FILTER_LOW_REP = 20;
 
   let searchPaintGen = 0;
 
+  // User rows are already on screen with a blank circle. Set the picture in
+  // place so a favorite click or a later page is not rebuilt away.
+  function paintSearchUserAvatars(names) {
+    const list = document.getElementById("searchResults");
+    if (!list) return;
+    const wanted = new Set(names);
+    const rows = list.querySelectorAll(".search-user-row");
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name = row.getAttribute("data-account") || "";
+      if (!wanted.has(name)) continue;
+      const img = row.querySelector("img.avatar");
+      if (!img) continue;
+      const next = Avatars.src(name, "small");
+      if (img.getAttribute("src") !== next) img.src = next;
+    }
+    stampAvatars(list);
+  }
+
   async function paintSearchResults() {
     const gen = ++searchPaintGen;
     const list = $("#searchResults");
@@ -15329,14 +15350,19 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     list.className = "community-list";
-    const names = page === "users" ? state.results : state.results.map((row) => row && row.name);
-    await prepareAvatars(names);
-    if (gen !== searchPaintGen || !list.isConnected) return;
     if (page === "users") {
-      list.innerHTML = state.results.map((name) => searchUserRowHtml(name)).join("");
+      const names = state.results;
+      list.innerHTML = names.map((name) => searchUserRowHtml(name)).join("");
       stampAvatars(list);
+      if (!names.some((name) => !Avatars.has(name))) return;
+      await prepareAvatars(names);
+      if (gen !== searchPaintGen || !list.isConnected) return;
+      paintSearchUserAvatars(names);
       return;
     }
+    const names = state.results.map((row) => row && row.name);
+    await prepareAvatars(names);
+    if (gen !== searchPaintGen || !list.isConnected) return;
     list.innerHTML = state.results.map((row) => communityDirRowHtml(row, "toggle")).join("");
     stampAvatars(list);
   }
@@ -15362,7 +15388,19 @@ let CS77_FILTER_LOW_REP = 20;
     const list = $("#searchResults");
     if (!list || !items || !items.length) return;
     const gen = searchGen;
-    const names = page === "users" ? items : items.map((item) => item && item.name);
+    if (page === "users") {
+      list.className = "community-list";
+      const html = items.map((item) => searchResultHtml(page, item)).join("");
+      const hasRows = list.querySelector(".community-row, .fav-tag-chip");
+      if (!hasRows) list.innerHTML = html;
+      else list.insertAdjacentHTML("beforeend", html);
+      stampAvatars(list);
+      await prepareAvatars(items);
+      if (gen !== searchGen || !list.isConnected || searchPageName() !== page) return;
+      paintSearchUserAvatars(items);
+      return;
+    }
+    const names = items.map((item) => item && item.name);
     await prepareAvatars(names);
     if (gen !== searchGen || !list.isConnected || searchPageName() !== page) return;
     list.className = "community-list";
@@ -29234,19 +29272,36 @@ let CS77_FILTER_LOW_REP = 20;
     if (more) more.hidden = !(state.holdAuto && state.query && !state.done);
   }
 
+  function paintPeopleAvatars(names) {
+    const list = document.getElementById("peopleList");
+    if (!list) return;
+    const wanted = new Set(names);
+    const rows = list.querySelectorAll(".follow-account");
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const name = row.getAttribute("data-account") || "";
+      if (!wanted.has(name)) continue;
+      const img = row.querySelector("img.avatar");
+      if (!img) continue;
+      const next = Avatars.src(name, "small");
+      if (img.getAttribute("src") !== next) img.src = next;
+    }
+    stampAvatars(list);
+  }
+
   async function appendPeopleAccounts(names) {
     const state = peopleList;
     const gen = state.gen;
-    await prepareAvatars(names);
-    if (state.gen !== gen || !state.open) return;
     const list = document.getElementById("peopleList");
-    if (!list || !names.length) return;
+    if (!list || !names.length || state.gen !== gen || !state.open) return;
     if (list.className !== "follow-list") {
       list.className = "follow-list";
       list.innerHTML = "";
     }
     list.insertAdjacentHTML("beforeend", names.map(followAccountHtml).join(""));
-    stampAvatars(list);
+    await prepareAvatars(names);
+    if (state.gen !== gen || !state.open) return;
+    paintPeopleAvatars(names);
   }
 
   function peopleTailNearView() {
@@ -36742,7 +36797,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.7";
+      script.src = "/js/dao.js?v=0.21.8";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
