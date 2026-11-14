@@ -103,6 +103,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.path = "/index.html" + (("?" + qs) if qs else "")
         return super().do_GET()
 
+    def handle(self):
+        try:
+            super().handle()
+        except ConnectionError:
+            # The browser dropped the socket mid-read (WinError 10054/10053
+            # on a keep-alive connection). The previous response already
+            # completed; this is not a failed request.
+            self.close_connection = True
+
     def log_message(self, fmt, *args):
         try:
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -113,6 +122,11 @@ class Handler(SimpleHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     allow_reuse_address = False
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
 
 
 if __name__ == "__main__":
