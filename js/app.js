@@ -20699,6 +20699,101 @@ let CS77_FILTER_LOW_REP = 20;
     refreshZapNwcSaved(() => look === lightningNwcLook && lightningDialogOpen());
   }
 
+  // lean-qr stays unloaded until a QR is asked for. The same helper covers a
+  // lightning invoice link, a lightning address, and a web address.
+  const LEAN_QR_URL = "https://cdn.jsdelivr.net/npm/lean-qr@2.7.4/index.mjs";
+  const LEAN_QR_SVG_URL = "https://cdn.jsdelivr.net/npm/lean-qr@2.7.4/extras/svg.mjs";
+  let leanQrPromise = null;
+
+  function loadLeanQr() {
+    if (leanQrPromise) return leanQrPromise;
+    leanQrPromise = Promise.all([
+      import(LEAN_QR_URL),
+      import(LEAN_QR_SVG_URL),
+    ]).then(([core, svg]) => {
+      if (!core || typeof core.generate !== "function" || !svg || typeof svg.toSvg !== "function") {
+        throw new Error("Could not load the QR code library.");
+      }
+      return {
+        generate: core.generate,
+        correction: core.correction,
+        toSvg: svg.toSvg,
+      };
+    }).catch((err) => {
+      leanQrPromise = null;
+      throw err;
+    });
+    return leanQrPromise;
+  }
+
+  function qrCodeColors() {
+    const style = getComputedStyle(document.documentElement);
+    const gray = style.getPropertyValue("--gray").trim() || "#d7d7d7";
+    return { on: gray, off: "transparent" };
+  }
+
+  // Returns an SVG element. Callers pass the text a wallet or a browser should open.
+  async function renderQrCode(text) {
+    const value = String(text || "");
+    if (!value) throw new Error("Nothing to encode.");
+    const lib = await loadLeanQr();
+    const options = {};
+    if (lib.correction && lib.correction.L != null) options.minCorrectionLevel = lib.correction.L;
+    const code = lib.generate(value, options);
+    const colors = qrCodeColors();
+    const svg = lib.toSvg(code, document, {
+      on: colors.on,
+      off: colors.off,
+      pad: 4,
+    });
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "QR code");
+    svg.classList.add("qr-code");
+    return svg;
+  }
+
+  let zapQrLook = 0;
+
+  function clearZapQr() {
+    zapQrLook += 1;
+    const box = $("#zapQr");
+    const btn = $("#zapShowQr");
+    if (box) {
+      box.hidden = true;
+      box.replaceChildren();
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.setAttribute("aria-pressed", "false");
+    }
+  }
+
+  async function showZapQr() {
+    const btn = $("#zapShowQr");
+    const box = $("#zapQr");
+    if (!btn || !box || !zapState.invoice) return;
+    if (btn.getAttribute("aria-pressed") === "true") {
+      clearZapQr();
+      return;
+    }
+    const invoice = zapState.invoice;
+    const look = ++zapQrLook;
+    btn.disabled = true;
+    try {
+      const svg = await renderQrCode("lightning:" + invoice);
+      if (look !== zapQrLook || zapState.invoice !== invoice) return;
+      svg.setAttribute("aria-label", "Lightning invoice");
+      box.replaceChildren(svg);
+      box.hidden = false;
+      btn.setAttribute("aria-pressed", "true");
+    } catch (err) {
+      if (look !== zapQrLook) return;
+      setZapStatus("Could not make a QR code.", true);
+    } finally {
+      if (look === zapQrLook) btn.disabled = false;
+    }
+  }
+
   function hideZapFallback() {
     zapState.invoice = "";
     zapState.sent = false;
@@ -20707,8 +20802,10 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.paid = false;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
+    clearZapQr();
     cancelZapWalletReturn();
     syncZapPayAction();
+    syncZapPaidToggle();
   }
 
   function zapFormLocked() {
@@ -22522,12 +22619,93 @@ let CS77_FILTER_LOW_REP = 20;
     }, ZAP_WALLET_GIVEUP_MS);
   }
 
+  // Desktop, with single tap off, confirms with the toggle under the QR code.
+  function zapUsesPaidToggle() {
+    return !zapState.singleTap && !isMobileViewport();
+  }
+
+  function syncZapPaidToggle() {
+    const toggle = $("#zapPaidToggle");
+    const input = $("#zapPaid");
+    if (!toggle) return;
+    const box = $("#zapWalletFallback");
+    const show = zapUsesPaidToggle() && Boolean(zapState.invoice) && Boolean(box && !box.hidden);
+    toggle.hidden = !show;
+    if (input) input.checked = show && Boolean(zapState.sent);
+  }
+
+  function confirmZapPaidFromToggle() {
+    if (!zapState.invoice || zapState.singleTap || zapState.commentBusy) return;
+    cancelZapWalletReturn();
+    if (!zapState.sent) {
+      zapState.sent = true;
+      zapState.offerComment = Boolean(zapState.permlink && observer());
+      if (zapState.permlink) zapState.cast = true;
+      zapState.paid = true;
+      const who = zapCitedName() || "this user";
+      setZapStatus("Zapped " + formatGroupedNumber(zapState.sentSats, 0) + " sats to " + who + ".", false);
+    }
+    syncZapPayAction();
+    paintZapForm();
+    syncZapPaidToggle();
+    const submit = $("#zapSubmit");
+    if (submit && !submit.hidden) focusDesktop(submit);
+  }
+
+  function undoZapPaidFromToggle() {
+    if (zapState.commentBusy) return;
+    zapState.sent = false;
+    zapState.offerComment = false;
+    zapState.cast = false;
+    zapState.paid = false;
+    setZapStatus(zapState.invoice ? "Opening a lightning wallet\u2026" : "", false);
+    syncZapPayAction();
+    paintZapForm();
+    syncZapPaidToggle();
+  }
+
+  function onZapPaidToggle() {
+    const input = $("#zapPaid");
+    if (!input) return;
+    if (zapState.commentBusy || !zapUsesPaidToggle()) {
+      input.checked = Boolean(zapState.sent);
+      return;
+    }
+    if (input.checked) confirmZapPaidFromToggle();
+    else undoZapPaidFromToggle();
+  }
+
+  function watchZapPaidViewport() {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const onChange = () => {
+      const box = $("#zapWalletFallback");
+      if (!box || box.hidden || !zapState.invoice || zapState.singleTap) {
+        syncZapPaidToggle();
+        return;
+      }
+      if (zapUsesPaidToggle()) {
+        clearZapPayAskTimer();
+        if (zapPayConfirmOpen()) {
+          hideDialog($("#zapPayOverlay"));
+          releaseZapPayPage();
+        }
+      } else if (!zapState.sent) {
+        scheduleZapPayQuestion();
+      }
+      syncZapPaidToggle();
+    };
+    if (typeof mq.addEventListener === "function") mq.addEventListener("change", onChange);
+    else if (typeof mq.addListener === "function") mq.addListener(onChange);
+  }
+
   function scheduleZapPayQuestion() {
     clearZapPayAskTimer();
+    if (zapUsesPaidToggle()) return;
     if (zapState.sent || !zapState.invoice || zapPayConfirmOpen()) return;
     const invoice = zapState.invoice;
     zapPayAskTimer = window.setTimeout(() => {
       zapPayAskTimer = 0;
+      if (zapUsesPaidToggle()) return;
       if (zapPayConfirmOpen() || zapState.sent || zapState.invoice !== invoice) return;
       if (!zapDialogOpen() && !zapState.singleTap) return;
       zapWalletAsk = null;
@@ -22564,6 +22742,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function maybeAskZapWalletReturn() {
     if (zapPayConfirmOpen()) return;
+    if (zapUsesPaidToggle()) return;
     const ask = zapWalletAsk;
     if (!ask || zapState.sent || !zapState.invoice || zapState.invoice !== ask.invoice) return;
     if (document.hidden) return;
@@ -22686,6 +22865,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (box) box.hidden = false;
     syncZapPayAction();
     setZapStatus("Opening a lightning wallet\u2026", false);
+    if (!isMobileViewport()) showZapQr();
+    syncZapPaidToggle();
   }
 
   function markZapLightningSent(sats, invoice) {
@@ -22697,6 +22878,7 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.paid = true;
     const box = $("#zapWalletFallback");
     if (box) box.hidden = true;
+    clearZapQr();
     const who = zapCitedName() || "this user";
     setZapStatus("Zapped " + formatGroupedNumber(sats, 0) + " sats to " + who + ".", false);
     syncZapPayAction();
@@ -38820,6 +39002,13 @@ let CS77_FILTER_LOW_REP = 20;
         }
       });
     }
+    const zapShowQr = $("#zapShowQr");
+    if (zapShowQr) zapShowQr.addEventListener("click", () => {
+      showZapQr();
+    });
+    const zapPaid = $("#zapPaid");
+    if (zapPaid) zapPaid.addEventListener("change", onZapPaidToggle);
+    watchZapPaidViewport();
     const zapOverlay = $("#zapOverlay");
     if (zapOverlay) {
       zapOverlay.addEventListener("click", (e) => {

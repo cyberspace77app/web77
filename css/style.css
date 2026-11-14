@@ -6277,6 +6277,27 @@ a.wallet-tx-time:hover {
   margin: 0 0 0.85rem;
 }
 
+.zap-qr {
+  display: flex;
+  justify-content: center;
+  margin: 0.15rem 0 0.85rem;
+}
+
+#zapWalletFallback > .zap-paid-toggle {
+  align-self: center;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 2.625rem;
+  margin: 0.35rem auto 0.85rem;
+}
+
+.qr-code {
+  display: block;
+  width: min(18rem, 100%);
+  height: auto;
+}
+
 .zap-nwc-hint {
   display: flex;
   flex-wrap: wrap;
