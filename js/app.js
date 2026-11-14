@@ -20208,13 +20208,19 @@ let CS77_FILTER_LOW_REP = 20;
     return BLOCK_EXPLORER + "@" + name + "/" + link;
   }
 
+  function profileQrMenuItemHtml() {
+    return `<button type="button" class="profile-more-item profile-qr-menu" role="menuitem">QR codes</button>`;
+  }
+
   function profileMoreMenuHtml(author) {
     const items = [];
     if (isOwnAuthor(author)) {
       items.push(
         `<a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(appHref("/settings/profile"))}">Edit</a>`
       );
-    } else {
+    }
+    items.push(profileQrMenuItemHtml());
+    if (!isOwnAuthor(author)) {
       const disabled = profileState.mutePending || profileState.pending ? " disabled" : "";
       items.push(
         `<button type="button" class="profile-more-item profile-mute-btn" role="menuitem" data-author="${HiveMd.escapeHtml(author)}"${disabled}>${profileMuteLabel()}</button>`
@@ -20915,10 +20921,53 @@ let CS77_FILTER_LOW_REP = 20;
 
   let profileQrTab = "site";
   let profileQrLook = 0;
+  let profileQrTarget = null;
 
   function profileQrDialogOpen() {
     const el = $("#profileQrOverlay");
     return Boolean(el && !el.hidden);
+  }
+
+  function profileQrStill() {
+    return Boolean(profileQrTarget && profileQrDialogOpen());
+  }
+
+  // The open page. A profile uses that account. A subspace uses the subspace.
+  function profileQrSubjectFromPage() {
+    const route = parseRoute();
+    if (route.name === "profile" && route.author) {
+      const name = walletHiveName(route.author);
+      if (name) return { kind: "user", name: name };
+    }
+    if (route.name === "community" && route.community) {
+      const name = normalizeCommunityName(route.community);
+      if (name) return { kind: "community", name: name };
+    }
+    return null;
+  }
+
+  function communityOwnerAccount(info) {
+    const team = communityTeamRows(info);
+    for (let i = 0; i < team.length; i++) {
+      if (String(team[i].role || "").trim().toLowerCase() !== "owner") continue;
+      const name = walletHiveName(team[i].name);
+      if (name) return name;
+    }
+    return "";
+  }
+
+  function profileQrSitePayload(target) {
+    if (target.kind === "community") {
+      const num = communityNumber(target.name);
+      if (!num) return null;
+      const url = "https://cyberspace77.com/subspace/" + num;
+      return { text: url, label: url, aria: "Subspace" };
+    }
+    return {
+      text: profileQrSiteUrl(target.name),
+      label: "@" + target.name,
+      aria: "Cyberspace profile",
+    };
   }
 
   function profileQrSiteUrl(user) {
@@ -21003,7 +21052,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Null when this account's wallet has not been read yet.
+  // A read with no usable address is username@v4v.app, not null.
   function profileQrKnownLightning(user) {
+    if (!user) return null;
     if (ownAccountReady(user)) {
       return profileQrResolvedAddress(user, lightningAddressFromAccount(accountState.account));
     }
@@ -21011,20 +21062,60 @@ let CS77_FILTER_LOW_REP = 20;
     if (profileState.author === user && profile && profile.walletLoaded) {
       return profileQrResolvedAddress(user, lightningAddressFromWallet(profileReceiveWallet(profile)));
     }
+    const cached = cachedZapWallet(user);
+    if (cached && cached.loaded) {
+      return profileQrResolvedAddress(user, lightningAddressFromWallet(cached.wallet));
+    }
     return null;
   }
 
   async function profileQrFetchLightning(user, look) {
     try {
       const rows = await HiveApi.getAccounts([user]);
-      if (look !== profileQrLook || !profileQrDialogOpen() || observer() !== user) return "";
+      if (look !== profileQrLook || !profileQrStill()) return "";
       const account = rows && rows[0];
-      const named = account && String(account.name || "").toLowerCase() === user;
+      const named = account && walletHiveName(account.name) === user;
       if (!named) return "";
       return profileQrResolvedAddress(user, lightningAddressFromAccount(account));
     } catch (err) {
       return "";
     }
+  }
+
+  async function profileQrCommunityOwner(name, look) {
+    const info = communityState.name === name ? communityState.info : null;
+    const known = communityOwnerAccount(info);
+    if (known) return known;
+    try {
+      const fresh = await HiveApi.getCommunity(name, observer());
+      if (
+        look !== profileQrLook ||
+        !profileQrStill() ||
+        !profileQrTarget ||
+        profileQrTarget.kind !== "community" ||
+        profileQrTarget.name !== name
+      ) {
+        return "";
+      }
+      return communityOwnerAccount(fresh) || "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  // The profile account, or the subspace owner. Empty means the read failed.
+  async function profileQrLightningAddress(target, look) {
+    let user = target.kind === "community" ? target.owner || "" : target.name;
+    if (target.kind === "community" && !user) {
+      user = await profileQrCommunityOwner(target.name, look);
+      if (look !== profileQrLook || !profileQrStill() || profileQrTarget !== target) return "";
+      if (!user) return "";
+      target.owner = user;
+    }
+    if (!user) return "";
+    const known = profileQrKnownLightning(user);
+    if (known) return known;
+    return profileQrFetchLightning(user, look);
   }
 
   function syncProfileQrTabs() {
@@ -21090,36 +21181,42 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function paintProfileQr() {
     const look = ++profileQrLook;
-    const user = observer();
+    const target = profileQrTarget;
     const box = $("#profileQrCode");
-    if (!user || !box || !profileQrDialogOpen()) return;
+    if (!target || !box || !profileQrDialogOpen()) return;
     const tab = profileQrTab === "ln" ? "ln" : "site";
     box.replaceChildren();
     let text = "";
-    let label = "";
+    let aria = "";
     if (tab === "site") {
-      text = profileQrSiteUrl(user);
-      label = "@" + user;
-      setProfileQrCaption(label, false, label);
+      const site = profileQrSitePayload(target);
+      if (!site) {
+        setProfileQrCaption("Could not make a QR code.", true);
+        return;
+      }
+      text = site.text;
+      aria = site.aria;
+      setProfileQrCaption(site.label, false, site.label);
     } else {
-      let address = profileQrKnownLightning(user);
+      aria = "Lightning address";
+      const readyUser = target.kind === "community" ? target.owner || "" : target.name;
+      let address = readyUser ? profileQrKnownLightning(readyUser) : null;
       if (!address) {
         setProfileQrCaption("Checking the Lightning address\u2026", false);
-        address = await profileQrFetchLightning(user, look);
-        if (look !== profileQrLook || !profileQrDialogOpen()) return;
+        address = await profileQrLightningAddress(target, look);
+        if (look !== profileQrLook || profileQrTarget !== target || !profileQrDialogOpen()) return;
         if (!address) {
           setProfileQrCaption("Could not load the Lightning address.", true);
           return;
         }
       }
       text = profileQrLightningLnurl(address);
-      label = address;
-      setProfileQrCaption(label, false, label);
+      setProfileQrCaption(address, false, address);
     }
     try {
       const svg = await renderQrCode(text);
-      if (look !== profileQrLook || !profileQrDialogOpen() || observer() !== user) return;
-      svg.setAttribute("aria-label", tab === "ln" ? "Lightning address" : "Cyberspace profile");
+      if (look !== profileQrLook || profileQrTarget !== target || !profileQrDialogOpen()) return;
+      svg.setAttribute("aria-label", aria);
       box.replaceChildren(svg);
     } catch (err) {
       if (look !== profileQrLook || !profileQrDialogOpen()) return;
@@ -21146,6 +21243,7 @@ let CS77_FILTER_LOW_REP = 20;
   function closeProfileQrDialog(opts) {
     const skipHistory = !!(opts && opts.skipHistory);
     profileQrLook += 1;
+    profileQrTarget = null;
     const el = $("#profileQrOverlay");
     const wasOpen = Boolean(el && !el.hidden);
     const box = $("#profileQrCode");
@@ -21166,11 +21264,16 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function openProfileQrDialog(opts) {
-    const user = observer();
     const el = $("#profileQrOverlay");
-    if (!user || !el || profileQrDialogOpen()) return;
+    const subject = profileQrSubjectFromPage();
+    if (!subject || !el || profileQrDialogOpen()) return;
     const fromHistory = Boolean(opts && opts.fromHistory);
     closeProfileMore();
+    const owner =
+      subject.kind === "community" && communityState.name === subject.name
+        ? communityOwnerAccount(communityState.info)
+        : "";
+    profileQrTarget = { kind: subject.kind, name: subject.name, owner: owner };
     profileQrTab = fromHistory && opts.tab === "ln" ? "ln" : "site";
     syncProfileQrTabs();
     const box = $("#profileQrCode");
@@ -30222,6 +30325,7 @@ let CS77_FILTER_LOW_REP = 20;
         <button type="button" class="profile-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
         <div class="profile-more-menu" role="menu" hidden>
           ${edit}
+          ${profileQrMenuItemHtml()}
           <button type="button" class="profile-more-item community-write-btn" role="menuitem">Write a post</button>
           <a class="profile-more-item" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerAccountUrl(id))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>
         </div>
@@ -38706,6 +38810,13 @@ let CS77_FILTER_LOW_REP = 20;
       );
       if (!inProfileMore) closeProfileMore();
       if (inProfileMoreMenu) {
+        const profileQrItem = profileMoreEl.closest(".profile-qr-menu");
+        if (profileQrItem) {
+          e.preventDefault();
+          closeProfileMore();
+          openProfileQrDialog();
+          return;
+        }
         const profileMuteBtn = profileMoreEl.closest(".profile-mute-btn");
         if (profileMuteBtn) {
           e.preventDefault();
