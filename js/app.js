@@ -20931,6 +20931,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (btn) {
       btn.disabled = false;
+      btn.classList.remove("is-open");
       btn.setAttribute("aria-pressed", "false");
     }
   }
@@ -20952,6 +20953,7 @@ let CS77_FILTER_LOW_REP = 20;
       svg.setAttribute("aria-label", "Lightning invoice");
       box.replaceChildren(svg);
       box.hidden = false;
+      btn.classList.add("is-open");
       btn.setAttribute("aria-pressed", "true");
     } catch (err) {
       if (look !== zapQrLook) return;
@@ -39832,9 +39834,12 @@ let CS77_FILTER_LOW_REP = 20;
       });
     }
     const zapShowQr = $("#zapShowQr");
-    if (zapShowQr) zapShowQr.addEventListener("click", () => {
-      showZapQr();
-    });
+    if (zapShowQr) {
+      zapShowQr.innerHTML = profileQrMarkSvg();
+      zapShowQr.addEventListener("click", () => {
+        showZapQr();
+      });
+    }
     const zapPaid = $("#zapPaid");
     if (zapPaid) zapPaid.addEventListener("change", onZapPaidToggle);
     watchZapPaidViewport();

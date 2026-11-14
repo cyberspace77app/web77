@@ -4450,9 +4450,12 @@ a.tag:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2.15rem;
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  min-height: 1.35rem;
   margin: 0;
-  padding: 0 0.15rem;
+  padding: 0;
   border: none;
   background: transparent;
   color: #fff;
@@ -4463,8 +4466,8 @@ a.tag:hover {
 
 .profile-qr-btn .profile-qr-mark {
   display: block;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.35rem;
+  height: 1.35rem;
 }
 
 .profile-qr-btn:hover,
@@ -6306,7 +6309,7 @@ a.wallet-tx-time:hover {
 .zap-fallback-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.55rem;
+  gap: 1rem;
   align-items: center;
   margin: 0 0 0.85rem;
 }
