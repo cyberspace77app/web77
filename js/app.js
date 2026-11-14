@@ -20803,9 +20803,9 @@ let CS77_FILTER_LOW_REP = 20;
     refreshZapNwcSaved(() => look === lightningNwcLook && lightningDialogOpen());
   }
 
-  // qr.js stays unloaded until a QR is asked for. The same helper covers a
-  // lightning invoice, a lightning LNURL, and a web address.
-  const QR_SCRIPT = "/js/qr.js?v=0.21.1";
+  // qr.js stays unloaded until a QR is asked for. The same helper draws a
+  // lightning invoice, a lightning LNURL, or a web address, and can scan one.
+  const QR_SCRIPT = "/js/qr.js?v=0.21.2";
   let qrScriptPromise = null;
 
   function loadQrScript() {

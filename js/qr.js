@@ -15,6 +15,17 @@
  * A BOLT11 invoice or LNURL is encoded as LIGHTNING: plus the uppercase
  * bech32. The scheme and the invoice are case-insensitive, and uppercase
  * fits the QR alphanumeric set, so the symbol stays smaller.
+ *
+ * Scan a picture, or the frames from a camera:
+ *   cs77Qr.scanImage(file).then(function (hit) { hit.data; });
+ *   var scanner = new cs77Qr.Scanner(video, function (hit) {
+ *     hit.data; hit.cornerPoints;
+ *   });
+ *   scanner.start();
+ *
+ * The browser BarcodeDetector is used when it can read QR codes. Otherwise
+ * each frame is copied off the camera and decoded here. cornerPoints are
+ * in the picture's pixels, clockwise from the code's top left.
  */
 (function (global) {
   "use strict";
@@ -816,6 +827,2027 @@
     var opts = Object.assign({ label: "Lightning invoice" }, options || {});
     return new cs77Qr(invoicePayload(value), opts);
   };
+
+  var NO_QR = "No QR code found.";
+  // Format BCH can correct 3 of the 15 bits. Farther than that is a bad sample.
+  var FORMAT_MAX_ERRORS = 3;
+  var VERSION_MAX_ERRORS = 3;
+  var KANJI_COUNT_BITS = [8, 10, 12];
+  var LEVEL_FROM_EC = ["M", "L", "H", "Q"];
+
+  function noQrError() {
+    var err = new Error(NO_QR);
+    err.code = "NO_QR";
+    return err;
+  }
+
+  function gfMul(a, b) {
+    if (!a || !b) return 0;
+    return EXP[(LOG[a] + LOG[b]) % 255];
+  }
+
+  function gfInv(a) {
+    return EXP[255 - LOG[a]];
+  }
+
+  function hamming(a, b) {
+    var x = (a ^ b) >>> 0;
+    var n = 0;
+    while (x) {
+      n += x & 1;
+      x >>>= 1;
+    }
+    return n;
+  }
+
+  function pointDist(a, b) {
+    var dx = a.x - b.x;
+    var dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // The encoder's remainder is systematic: the first byte is the high term,
+  // and a valid word evaluates to 0 at α^0 .. α^(nsym-1). The error magnitude
+  // needs the extra factor of X. Without it, a damaged word is "fixed" to
+  // the wrong bytes and still fails the syndrome check.
+  function rsSyndromes(msg, nsym) {
+    var syn = new Uint8Array(nsym);
+    var i;
+    var j;
+    var y;
+    var root;
+    for (i = 0; i < nsym; i++) {
+      y = 0;
+      root = EXP[i];
+      for (j = 0; j < msg.length; j++) {
+        if (y) y = EXP[(LOG[y] + LOG[root]) % 255];
+        y ^= msg[j];
+      }
+      syn[i] = y;
+    }
+    return syn;
+  }
+
+  function rsClean(syn) {
+    var i;
+    for (i = 0; i < syn.length; i++) if (syn[i]) return false;
+    return true;
+  }
+
+  function rsCorrect(msg, nsym) {
+    var syn = rsSyndromes(msg, nsym);
+    var C;
+    var B;
+    var T;
+    var L;
+    var m;
+    var b;
+    var n;
+    var i;
+    var delta;
+    var coef;
+    var pos;
+    var p;
+    var exp;
+    var x;
+    var sum;
+    var xp;
+    var j;
+    var X;
+    var Xinv;
+    var num;
+    var den;
+    var mag;
+    var omega;
+    var s;
+    if (rsClean(syn)) return true;
+    C = new Uint8Array(nsym * 2);
+    B = new Uint8Array(nsym * 2);
+    C[0] = 1;
+    B[0] = 1;
+    L = 0;
+    m = 1;
+    b = 1;
+    for (n = 0; n < nsym; n++) {
+      delta = syn[n];
+      for (i = 1; i <= L; i++) delta ^= gfMul(C[i], syn[n - i]);
+      if (!delta) {
+        m++;
+        continue;
+      }
+      T = C.slice();
+      coef = gfMul(delta, gfInv(b));
+      for (i = 0; i + m < C.length; i++) C[i + m] ^= gfMul(B[i], coef);
+      if (2 * L <= n) {
+        L = n + 1 - L;
+        B = T;
+        b = delta;
+        m = 1;
+      } else {
+        m++;
+      }
+    }
+    if (!L || L * 2 > nsym || !C[L]) return false;
+    pos = [];
+    for (p = 0; p < msg.length; p++) {
+      exp = (msg.length - 1 - p) % 255;
+      x = exp ? EXP[(255 - exp) % 255] : 1;
+      sum = 0;
+      xp = 1;
+      for (j = 0; j <= L; j++) {
+        sum ^= gfMul(C[j], xp);
+        xp = gfMul(xp, x);
+      }
+      if (!sum) pos.push(p);
+    }
+    if (pos.length !== L) return false;
+    omega = new Uint8Array(L);
+    for (i = 0; i < L; i++) {
+      s = 0;
+      for (j = 0; j <= L && j <= i; j++) s ^= gfMul(C[j], syn[i - j]);
+      omega[i] = s;
+    }
+    for (i = 0; i < pos.length; i++) {
+      p = pos[i];
+      exp = (msg.length - 1 - p) % 255;
+      X = EXP[exp];
+      Xinv = exp ? EXP[(255 - exp) % 255] : 1;
+      num = 0;
+      xp = 1;
+      for (j = 0; j < L; j++) {
+        num ^= gfMul(omega[j], xp);
+        xp = gfMul(xp, Xinv);
+      }
+      den = 0;
+      xp = 1;
+      x = gfMul(Xinv, Xinv);
+      for (j = 1; j <= L; j += 2) {
+        den ^= gfMul(C[j], xp);
+        xp = gfMul(xp, x);
+      }
+      if (!den) return false;
+      mag = gfMul(gfMul(num, gfInv(den)), X);
+      msg[p] ^= mag;
+    }
+    return rsClean(rsSyndromes(msg, nsym));
+  }
+
+  function splitBlocks(codewords, info) {
+    var dataLens = [];
+    var blocks = [];
+    var i;
+    var b;
+    var p;
+    var maxLen;
+    for (i = 0; i < info.blocks; i++) {
+      dataLens.push(info.blockLen + (i < info.shortBlocks ? 0 : 1));
+      blocks.push(new Uint8Array(dataLens[i] + info.words));
+    }
+    p = 0;
+    maxLen = info.blockLen + 1;
+    for (i = 0; i < maxLen; i++) {
+      for (b = 0; b < info.blocks; b++) {
+        if (i < dataLens[b]) blocks[b][i] = codewords[p++];
+      }
+    }
+    for (i = 0; i < info.words; i++) {
+      for (b = 0; b < info.blocks; b++) blocks[b][dataLens[b] + i] = codewords[p++];
+    }
+    if (p !== codewords.length) return null;
+    return { blocks: blocks, dataLens: dataLens };
+  }
+
+  function readCodewords(modules, func, size) {
+    var total = totalBytes((size - 17) / 4);
+    var out = new Uint8Array(total);
+    var bit = 0;
+    var limit = total * 8;
+    var upward = true;
+    var right;
+    var vert;
+    var y;
+    var j;
+    var x;
+    var i;
+    for (right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (vert = 0; vert < size; vert++) {
+        y = upward ? size - 1 - vert : vert;
+        for (j = 0; j < 2; j++) {
+          x = right - j;
+          i = y * size + x;
+          if (func[i]) continue;
+          if (bit < limit && modules[i]) out[bit >>> 3] |= 1 << (7 - (bit & 7));
+          bit++;
+        }
+      }
+      upward = !upward;
+    }
+    return out;
+  }
+
+  function readFormat(modules, size) {
+    var a = 0;
+    var b = 0;
+    var i;
+    var best;
+    var bestDist;
+    var mask;
+    var level;
+    var code;
+    var dist;
+    for (i = 0; i < 15; i++) {
+      if (i < 6) { if (modules[i * size + 8]) a |= 1 << i; }
+      else if (i < 8) { if (modules[(i + 1) * size + 8]) a |= 1 << i; }
+      else if (i === 8) { if (modules[8 * size + 7]) a |= 1 << i; }
+      else if (modules[8 * size + (14 - i)]) a |= 1 << i;
+      if (i < 8) { if (modules[8 * size + (size - 1 - i)]) b |= 1 << i; }
+      else if (modules[(size - 15 + i) * size + 8]) b |= 1 << i;
+    }
+    best = null;
+    bestDist = FORMAT_MAX_ERRORS + 1;
+    for (mask = 0; mask < 8; mask++) {
+      for (i = 0; i < 4; i++) {
+        level = LEVEL_FROM_EC[i];
+        code = formatBits(level, mask);
+        dist = hamming(a, code);
+        if (hamming(b, code) < dist) dist = hamming(b, code);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = { level: level, mask: mask };
+        }
+      }
+    }
+    return best;
+  }
+
+  function readVersionInfo(modules, size) {
+    var bitsA;
+    var bitsB;
+    var i;
+    var x;
+    var y;
+    var ver;
+    var code;
+    var dist;
+    var best;
+    var bestDist;
+    var ties;
+    if (size < 45) return 0;
+    bitsA = 0;
+    bitsB = 0;
+    for (i = 0; i < 18; i++) {
+      x = size - 11 + (i % 3);
+      y = (i / 3) | 0;
+      if (modules[y * size + x]) bitsA |= 1 << i;
+      if (modules[x * size + y]) bitsB |= 1 << i;
+    }
+    best = 0;
+    bestDist = VERSION_MAX_ERRORS + 1;
+    ties = 0;
+    for (ver = 7; ver <= 40; ver++) {
+      code = versionBits(ver);
+      dist = hamming(bitsA, code);
+      if (hamming(bitsB, code) < dist) dist = hamming(bitsB, code);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = ver;
+        ties = 1;
+      } else if (dist === bestDist) ties++;
+    }
+    if (!best || (ties > 1 && bestDist > 0)) return 0;
+    return best;
+  }
+
+  function padDigits(value, width) {
+    var s = String(value);
+    while (s.length < width) s = "0" + s;
+    return s;
+  }
+
+  function bytesToText(bytes, eci) {
+    var encoding = "utf-8";
+    if (eci === 1 || eci === 2 || eci === 3) encoding = "iso-8859-1";
+    else if (eci === 20 || eci === 21) encoding = "shift_jis";
+    else if (eci === 4) encoding = "iso-8859-2";
+    try {
+      return new TextDecoder(encoding).decode(bytes);
+    } catch (err) {
+      if (encoding === "utf-8") return null;
+      try {
+        return new TextDecoder("utf-8").decode(bytes);
+      } catch (err2) {
+        return null;
+      }
+    }
+  }
+
+  function parsePayload(bytes, version) {
+    var bit = 0;
+    var limit = bytes.length * 8;
+    var text = "";
+    var eci = null;
+    var guard = 0;
+    var mode;
+    var group;
+    var count;
+    var val;
+    var i;
+    var high;
+    var low;
+    var sj;
+    var chunk;
+    var pair;
+    var raw;
+
+    function read(len) {
+      var v = 0;
+      var k;
+      var pos;
+      if (bit + len > limit) return -1;
+      for (k = 0; k < len; k++) {
+        pos = bit++;
+        v = (v << 1) | ((bytes[pos >>> 3] >>> (7 - (pos & 7))) & 1);
+      }
+      return v;
+    }
+
+    group = countGroup(version);
+    while (bit + 4 <= limit && guard++ < 64) {
+      mode = read(4);
+      if (mode <= 0) break;
+      if (mode === 7) {
+        val = read(8);
+        if (val < 0) return null;
+        if (val <= 0x7f) eci = val;
+        else if (val <= 0xbf) {
+          low = read(8);
+          if (low < 0) return null;
+          eci = ((val & 0x3f) << 8) | low;
+        } else {
+          high = read(8);
+          low = read(8);
+          if (high < 0 || low < 0) return null;
+          eci = ((val & 0x1f) << 16) | (high << 8) | low;
+        }
+        continue;
+      }
+      if (mode === 5) continue;
+      if (mode === 9) {
+        if (read(8) < 0) return null;
+        continue;
+      }
+      if (mode === 3) {
+        if (read(16) < 0) return null;
+        continue;
+      }
+      if (mode === 1) {
+        count = read(COUNT_BITS.numeric[group]);
+        if (count < 0) return null;
+        while (count > 0) {
+          if (count >= 3) {
+            val = read(10);
+            if (val < 0 || val > 999) return null;
+            text += padDigits(val, 3);
+            count -= 3;
+          } else if (count === 2) {
+            val = read(7);
+            if (val < 0 || val > 99) return null;
+            text += padDigits(val, 2);
+            count = 0;
+          } else {
+            val = read(4);
+            if (val < 0 || val > 9) return null;
+            text += String(val);
+            count = 0;
+          }
+        }
+      } else if (mode === 2) {
+        count = read(COUNT_BITS.alphanumeric[group]);
+        if (count < 0) return null;
+        while (count > 0) {
+          if (count >= 2) {
+            val = read(11);
+            if (val < 0) return null;
+            high = (val / 45) | 0;
+            low = val % 45;
+            if (high > 44 || low > 44) return null;
+            text += ALNUM.charAt(high) + ALNUM.charAt(low);
+            count -= 2;
+          } else {
+            val = read(6);
+            if (val < 0 || val > 44) return null;
+            text += ALNUM.charAt(val);
+            count = 0;
+          }
+        }
+      } else if (mode === 4) {
+        count = read(COUNT_BITS.byte[group]);
+        if (count < 0 || bit + count * 8 > limit) return null;
+        chunk = new Uint8Array(count);
+        for (i = 0; i < count; i++) chunk[i] = read(8);
+        pair = bytesToText(chunk, eci);
+        if (pair == null) return null;
+        text += pair;
+      } else if (mode === 8) {
+        count = read(KANJI_COUNT_BITS[group]);
+        if (count < 0) return null;
+        raw = [];
+        for (i = 0; i < count; i++) {
+          val = read(13);
+          if (val < 0) return null;
+          high = (val / 0xc0) | 0;
+          low = val % 0xc0;
+          sj = high * 0x100 + low;
+          sj += sj < 0x1f00 ? 0x8140 : 0xc140;
+          raw.push((sj >>> 8) & 255, sj & 255);
+        }
+        chunk = new Uint8Array(raw);
+        pair = bytesToText(chunk, 20);
+        if (pair == null) return null;
+        text += pair;
+      } else return null;
+    }
+    return text;
+  }
+
+  function decodeGrid(modules, version) {
+    var size = 17 + 4 * version;
+    var stated;
+    var format;
+    var drawn;
+    var unmasked;
+    var y;
+    var x;
+    var i;
+    var codewords;
+    var parts;
+    var data;
+    var pos;
+    var b;
+    var text;
+    if (modules.length !== size * size) return null;
+    stated = readVersionInfo(modules, size);
+    format = readFormat(modules, size);
+    if (!format) return stated && stated !== version ? { redirect: stated } : null;
+    drawn = drawTemplate(version);
+    unmasked = new Uint8Array(modules);
+    for (y = 0; y < size; y++) {
+      for (x = 0; x < size; x++) {
+        i = y * size + x;
+        if (drawn.func[i]) continue;
+        if (maskOn(format.mask, x, y)) unmasked[i] ^= 1;
+      }
+    }
+    codewords = readCodewords(unmasked, drawn.func, size);
+    parts = splitBlocks(codewords, capacity(version, format.level));
+    if (!parts) return null;
+    data = new Uint8Array(capacity(version, format.level).dataBytes);
+    pos = 0;
+    for (b = 0; b < parts.blocks.length; b++) {
+      if (!rsCorrect(parts.blocks[b], capacity(version, format.level).words)) {
+        return stated && stated !== version ? { redirect: stated } : null;
+      }
+      data.set(parts.blocks[b].subarray(0, parts.dataLens[b]), pos);
+      pos += parts.dataLens[b];
+    }
+    text = parsePayload(data, version);
+    if (text == null) return stated && stated !== version ? { redirect: stated } : null;
+    return { text: text, level: format.level, version: version };
+  }
+
+  function solveLinear(rows, values) {
+    var n = values.length;
+    var M = [];
+    var col;
+    var i;
+    var j;
+    var max;
+    var tmp;
+    var factor;
+    var x;
+    var sum;
+    for (i = 0; i < n; i++) {
+      M[i] = rows[i].slice();
+      M[i].push(values[i]);
+    }
+    for (col = 0; col < n; col++) {
+      max = col;
+      for (i = col + 1; i < n; i++) {
+        if (Math.abs(M[i][col]) > Math.abs(M[max][col])) max = i;
+      }
+      tmp = M[col];
+      M[col] = M[max];
+      M[max] = tmp;
+      if (Math.abs(M[col][col]) < 1e-10) return null;
+      for (i = col + 1; i < n; i++) {
+        factor = M[i][col] / M[col][col];
+        if (!factor) continue;
+        for (j = col; j <= n; j++) M[i][j] -= factor * M[col][j];
+      }
+    }
+    x = new Array(n);
+    for (i = n - 1; i >= 0; i--) {
+      sum = M[i][n];
+      for (j = i + 1; j < n; j++) sum -= M[i][j] * x[j];
+      x[i] = sum / M[i][i];
+    }
+    return x;
+  }
+
+  function affineMap(src, dst) {
+    var rows = [];
+    var values = [];
+    var i;
+    var h;
+    for (i = 0; i < 3; i++) {
+      rows.push([src[i].x, src[i].y, 1, 0, 0, 0]);
+      values.push(dst[i].x);
+      rows.push([0, 0, 0, src[i].x, src[i].y, 1]);
+      values.push(dst[i].y);
+    }
+    h = solveLinear(rows, values);
+    if (!h) return null;
+    return function (x, y) {
+      return { x: h[0] * x + h[1] * y + h[2], y: h[3] * x + h[4] * y + h[5] };
+    };
+  }
+
+  function perspectiveMap(src, dst) {
+    var rows = [];
+    var values = [];
+    var i;
+    var h;
+    for (i = 0; i < 4; i++) {
+      rows.push([src[i].x, src[i].y, 1, 0, 0, 0, -dst[i].x * src[i].x, -dst[i].x * src[i].y]);
+      values.push(dst[i].x);
+      rows.push([0, 0, 0, src[i].x, src[i].y, 1, -dst[i].y * src[i].x, -dst[i].y * src[i].y]);
+      values.push(dst[i].y);
+    }
+    h = solveLinear(rows, values);
+    if (!h) return null;
+    return function (x, y) {
+      var den = h[6] * x + h[7] * y + 1;
+      if (Math.abs(den) < 1e-8) return { x: -1, y: -1 };
+      return {
+        x: (h[0] * x + h[1] * y + h[2]) / den,
+        y: (h[3] * x + h[4] * y + h[5]) / den
+      };
+    };
+  }
+
+  function integralImage(gray, w, h) {
+    var iw = w + 1;
+    var out = new Uint32Array(iw * (h + 1));
+    var y;
+    var x;
+    var row;
+    for (y = 0; y < h; y++) {
+      row = 0;
+      for (x = 0; x < w; x++) {
+        row += gray[y * w + x];
+        out[(y + 1) * iw + (x + 1)] = out[y * iw + (x + 1)] + row;
+      }
+    }
+    return out;
+  }
+
+  function rectSum(sum, iw, x0, y0, x1, y1) {
+    return sum[(y1 + 1) * iw + (x1 + 1)] - sum[y0 * iw + (x1 + 1)] -
+      sum[(y1 + 1) * iw + x0] + sum[y0 * iw + x0];
+  }
+
+  function localMean(sum, w, h, x, y, radius) {
+    var x0 = x - radius;
+    var y0 = y - radius;
+    var x1 = x + radius;
+    var y1 = y + radius;
+    var area;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= w) x1 = w - 1;
+    if (y1 >= h) y1 = h - 1;
+    area = (x1 - x0 + 1) * (y1 - y0 + 1);
+    if (!area) return 127;
+    return rectSum(sum, w + 1, x0, y0, x1, y1) / area;
+  }
+
+  // A pixel is a dark module when it is clearly darker than the window
+  // around it, so a shadow across the photo does not flip the whole code.
+  // Inverted codes (light modules on a dark page) flip that test.
+  function pixelDark(gray, sum, w, h, x, y, radius, invert) {
+    var ix = x | 0;
+    var iy = y | 0;
+    var g;
+    var mean;
+    if (ix < 0 || iy < 0 || ix >= w || iy >= h) return false;
+    g = gray[iy * w + ix];
+    mean = localMean(sum, w, h, ix, iy, radius);
+    if (invert) return g * 4 > mean * 5;
+    return g * 5 < mean * 4;
+  }
+
+  function sampleGray(gray, w, h, x, y) {
+    var x0;
+    var y0;
+    var x1;
+    var y1;
+    var fx;
+    var fy;
+    var g00;
+    var g10;
+    var g01;
+    var g11;
+    if (x < 0 || y < 0 || x > w - 1 || y > h - 1) return 255;
+    x0 = x | 0;
+    y0 = y | 0;
+    x1 = x0 + 1;
+    y1 = y0 + 1;
+    if (x1 >= w) x1 = w - 1;
+    if (y1 >= h) y1 = h - 1;
+    fx = x - x0;
+    fy = y - y0;
+    g00 = gray[y0 * w + x0];
+    g10 = gray[y0 * w + x1];
+    g01 = gray[y1 * w + x0];
+    g11 = gray[y1 * w + x1];
+    return (g00 * (1 - fx) + g10 * fx) * (1 - fy) + (g01 * (1 - fx) + g11 * fx) * fy;
+  }
+
+  function sampleDark(gray, sum, w, h, x, y, radius, invert) {
+    var g;
+    var mean;
+    if (x < 0 || y < 0 || x > w - 1 || y > h - 1) return false;
+    g = sampleGray(gray, w, h, x, y);
+    mean = localMean(sum, w, h, x | 0, y | 0, radius);
+    if (invert) return g * 4 > mean * 5;
+    return g * 5 < mean * 4;
+  }
+
+  function binarize(gray, sum, w, h, radius, invert) {
+    var bin = new Uint8Array(w * h);
+    var y;
+    var x;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        if (pixelDark(gray, sum, w, h, x, y, radius, invert)) bin[y * w + x] = 1;
+      }
+    }
+    return bin;
+  }
+
+  function ratioOk(a, b, c, d, e) {
+    var total = a + b + c + d + e;
+    var m;
+    var t;
+    if (total < 7) return false;
+    m = total / 7;
+    t = m / 2;
+    return Math.abs(a - m) <= t &&
+      Math.abs(b - m) <= t &&
+      Math.abs(c - 3 * m) <= 3 * t &&
+      Math.abs(d - m) <= t &&
+      Math.abs(e - m) <= t;
+  }
+
+  // Alignment sits in the data, so the outer black ring can merge with
+  // several neighboring modules. Judge the inner white-black-white, and
+  // only require the outer runs to be present and not enormous.
+  function alignMeasure(a, b, c, d, e) {
+    var m = (b + c + d) / 3;
+    var t;
+    if (m < 1) return 0;
+    t = m * 0.75;
+    if (Math.abs(b - m) > t || Math.abs(c - m) > t || Math.abs(d - m) > t) return 0;
+    if (a < m * 0.35 || e < m * 0.35 || a > m * 8 || e > m * 8) return 0;
+    return m;
+  }
+
+  // The horizontal scan hits every row of the center module. The pattern's
+  // center is the middle of the black run through that hit.
+  function blackRunCenter(bin, w, h, x, y) {
+    var ix = x | 0;
+    var iy = y | 0;
+    var up = 0;
+    var down = 0;
+    var yy;
+    if (ix < 0 || iy < 0 || ix >= w || iy >= h || !bin[iy * w + ix]) return y;
+    for (yy = iy - 1; yy >= 0 && bin[yy * w + ix]; yy--) {
+      up++;
+      if (up > 48) break;
+    }
+    for (yy = iy + 1; yy < h && bin[yy * w + ix]; yy++) {
+      down++;
+      if (down > 48) break;
+    }
+    return iy + (down - up) / 2;
+  }
+
+  // Walk one line through a black pixel and rebuild the five finder runs.
+  function crossAt(bin, w, h, x, y, dx, dy) {
+    var back0 = 0;
+    var back1 = 0;
+    var leftCenter = 0;
+    var rightCenter = 0;
+    var fwd1 = 0;
+    var fwd0 = 0;
+    var nx;
+    var ny;
+    var sx;
+    var sy;
+    var bit;
+    var state;
+    var want;
+    var c2;
+    var total;
+    var shift;
+    x = x | 0;
+    y = y | 0;
+    if (x < 0 || y < 0 || x >= w || y >= h || !bin[y * w + x]) return null;
+    nx = x;
+    ny = y;
+    state = 2;
+    want = 1;
+    while (state >= 0) {
+      sx = nx - dx;
+      sy = ny - dy;
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) break;
+      bit = bin[sy * w + sx] ? 1 : 0;
+      if (bit !== want) {
+        state--;
+        want = want ? 0 : 1;
+        continue;
+      }
+      if (state === 2) leftCenter++;
+      else if (state === 1) back1++;
+      else back0++;
+      nx = sx;
+      ny = sy;
+    }
+    if (!back0 || !back1) return null;
+    nx = x;
+    ny = y;
+    state = 2;
+    want = 1;
+    while (state <= 4) {
+      sx = nx + dx;
+      sy = ny + dy;
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) break;
+      bit = bin[sy * w + sx] ? 1 : 0;
+      if (bit !== want) {
+        state++;
+        want = want ? 0 : 1;
+        continue;
+      }
+      if (state === 2) rightCenter++;
+      else if (state === 3) fwd1++;
+      else fwd0++;
+      nx = sx;
+      ny = sy;
+    }
+    if (!fwd1 || !fwd0) return null;
+    c2 = leftCenter + 1 + rightCenter;
+    if (!ratioOk(back0, back1, c2, fwd1, fwd0)) return null;
+    total = back0 + back1 + c2 + fwd1 + fwd0;
+    shift = (rightCenter - leftCenter) / 2;
+    return {
+      x: x + dx * shift,
+      y: y + dy * shift,
+      total: total,
+      moduleSize: total / 7
+    };
+  }
+
+  function addFinder(list, found) {
+    var i;
+    var item;
+    var d;
+    var n;
+    for (i = 0; i < list.length; i++) {
+      item = list[i];
+      d = pointDist(item, found);
+      if (d < Math.max(item.moduleSize, found.moduleSize) * 2) {
+        n = item.count + 1;
+        item.x = (item.x * item.count + found.x) / n;
+        item.y = (item.y * item.count + found.y) / n;
+        item.moduleSize = (item.moduleSize * item.count + found.moduleSize) / n;
+        item.count = n;
+        return;
+      }
+    }
+    found.count = 1;
+    list.push(found);
+  }
+
+  function maybeFinder(bin, w, h, c0, c1, c2, c3, c4, x, y, list) {
+    var total;
+    var centerX;
+    var ix;
+    var vert;
+    var iy;
+    var diag;
+    if (!ratioOk(c0, c1, c2, c3, c4)) return false;
+    total = c0 + c1 + c2 + c3 + c4;
+    centerX = x - c4 - c3 - c2 / 2;
+    ix = centerX | 0;
+    if (ix < 0 || ix >= w) return true;
+    vert = crossAt(bin, w, h, ix, y | 0, 0, 1);
+    if (!vert) return true;
+    if (Math.abs(vert.total - total) > total * 0.45) return true;
+    iy = vert.y | 0;
+    diag = crossAt(bin, w, h, ix, iy, 1, 1);
+    if (!diag) return true;
+    addFinder(list, {
+      x: centerX,
+      y: vert.y,
+      moduleSize: (total / 7 + vert.moduleSize) / 2
+    });
+    return true;
+  }
+
+  function findFinders(bin, w, h) {
+    var list = [];
+    var y;
+    var x;
+    var counts;
+    var state;
+    var row;
+    var rowHits;
+    for (y = 0; y < h; y++) {
+      counts = [0, 0, 0, 0, 0];
+      state = 0;
+      row = y * w;
+      rowHits = 0;
+      for (x = 0; x < w; x++) {
+        if (bin[row + x]) {
+          if (state & 1) {
+            state++;
+            counts[state] = 1;
+          } else counts[state]++;
+        } else if (state & 1) {
+          counts[state]++;
+        } else if (state === 4) {
+          // A noisy row can look like a finder many times. Cap the expensive
+          // cross-checks, but keep scanning later rows so a low finder is not dropped.
+          if (rowHits < 12 && maybeFinder(bin, w, h, counts[0], counts[1], counts[2], counts[3], counts[4], x, y, list)) {
+            rowHits++;
+          }
+          counts[0] = counts[2];
+          counts[1] = counts[3];
+          counts[2] = counts[4];
+          counts[3] = 1;
+          counts[4] = 0;
+          state = 3;
+        } else {
+          state++;
+          counts[state] = 1;
+        }
+      }
+      if (state === 4) {
+        maybeFinder(bin, w, h, counts[0], counts[1], counts[2], counts[3], counts[4], w, y, list);
+      }
+    }
+    return list;
+  }
+
+  function orderFinders(a, b, c) {
+    var ab = pointDist(a, b);
+    var ac = pointDist(a, c);
+    var bc = pointDist(b, c);
+    var tl;
+    var p1;
+    var p2;
+    var cross;
+    if (bc >= ab && bc >= ac) {
+      tl = a;
+      p1 = b;
+      p2 = c;
+    } else if (ac >= ab && ac >= bc) {
+      tl = b;
+      p1 = a;
+      p2 = c;
+    } else {
+      tl = c;
+      p1 = a;
+      p2 = b;
+    }
+    if (pointDist(tl, p1) < (tl.moduleSize + p1.moduleSize) * 4) return null;
+    if (pointDist(tl, p2) < (tl.moduleSize + p2.moduleSize) * 4) return null;
+    // Screen y grows downward, so a negative cross puts p1 at the bottom left.
+    cross = (p1.x - tl.x) * (p2.y - tl.y) - (p1.y - tl.y) * (p2.x - tl.x);
+    if (cross < 0) return { tl: tl, tr: p2, bl: p1 };
+    if (cross > 0) return { tl: tl, tr: p1, bl: p2 };
+    return null;
+  }
+
+  function finderTriplets(list) {
+    var src = list.slice().sort(function (a, b) { return b.count - a.count; });
+    var out = [];
+    var i;
+    var j;
+    var k;
+    if (src.length > 5) src.length = 5;
+    for (i = 0; i < src.length; i++) {
+      for (j = i + 1; j < src.length; j++) {
+        for (k = j + 1; k < src.length; k++) out.push([src[i], src[j], src[k]]);
+      }
+    }
+    out.sort(function (a, b) {
+      return (b[0].count + b[1].count + b[2].count) - (a[0].count + a[1].count + a[2].count);
+    });
+    if (out.length > 8) out.length = 8;
+    return out;
+  }
+
+  function estimateVersion(tl, tr, bl) {
+    var mod = (tl.moduleSize + tr.moduleSize + bl.moduleSize) / 3;
+    var size;
+    var ver;
+    if (!(mod > 0)) return 1;
+    size = (pointDist(tl, tr) + pointDist(tl, bl)) / 2 / mod + 7;
+    ver = Math.round((size - 17) / 4);
+    if (ver < 1) return 1;
+    if (ver > 40) return 40;
+    return ver;
+  }
+
+  function crossAlign(bin, w, h, x, y, dx, dy) {
+    var runs = [0, 0, 0, 0, 0];
+    var nx = x | 0;
+    var ny = y | 0;
+    var state;
+    var want;
+    var sx;
+    var sy;
+    var bit;
+    var i;
+    if (nx < 0 || ny < 0 || nx >= w || ny >= h || !bin[ny * w + nx]) return 0;
+    runs[2] = 1;
+    state = 2;
+    want = 1;
+    nx = x | 0;
+    ny = y | 0;
+    while (state >= 0) {
+      sx = nx - dx;
+      sy = ny - dy;
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) break;
+      bit = bin[sy * w + sx] ? 1 : 0;
+      if (bit !== want) {
+        state--;
+        want = want ? 0 : 1;
+        continue;
+      }
+      runs[state]++;
+      nx = sx;
+      ny = sy;
+    }
+    state = 2;
+    want = 1;
+    nx = x | 0;
+    ny = y | 0;
+    while (state <= 4) {
+      sx = nx + dx;
+      sy = ny + dy;
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) break;
+      bit = bin[sy * w + sx] ? 1 : 0;
+      if (bit !== want) {
+        state++;
+        want = want ? 0 : 1;
+        continue;
+      }
+      runs[state]++;
+      nx = sx;
+      ny = sy;
+    }
+    for (i = 0; i < 5; i++) if (!runs[i]) return 0;
+    return alignMeasure(runs[0], runs[1], runs[2], runs[3], runs[4]);
+  }
+
+  function findAlignment(bin, w, h, expectX, expectY, modulePx) {
+    var reach = Math.max(3, modulePx * 6);
+    var x0 = Math.max(0, Math.floor(expectX - reach));
+    var y0 = Math.max(0, Math.floor(expectY - reach));
+    var x1 = Math.min(w - 1, Math.ceil(expectX + reach));
+    var y1 = Math.min(h - 1, Math.ceil(expectY + reach));
+    var best = null;
+    var bestD = modulePx * 4;
+    var y;
+    var x;
+    var counts;
+    var state;
+    var row;
+    var total;
+    var centerX;
+    var ix;
+    var iy;
+    var mod;
+    var d;
+    for (y = y0; y <= y1; y++) {
+      counts = [0, 0, 0, 0, 0];
+      state = 0;
+      row = y * w;
+      // Scan the whole row. Starting at the window edge cuts a run in half
+      // and the alignment pattern never forms.
+      for (x = 0; x < w; x++) {
+        if (bin[row + x]) {
+          if (state & 1) {
+            state++;
+            counts[state] = 1;
+          } else counts[state]++;
+        } else if (state & 1) {
+          counts[state]++;
+        } else if (state === 4) {
+          total = alignMeasure(counts[0], counts[1], counts[2], counts[3], counts[4]);
+          centerX = x - counts[4] - counts[3] - counts[2] / 2;
+          if (total && centerX >= x0 && centerX <= x1 && Math.abs(total - modulePx) <= modulePx * 0.85) {
+            ix = centerX | 0;
+            iy = blackRunCenter(bin, w, h, ix, y);
+            mod = crossAlign(bin, w, h, ix, iy | 0, 0, 1);
+            d = Math.hypot(centerX - expectX, iy - expectY);
+            // A skewed photo bends the vertical run. A hit that lands on the
+            // affine estimate is kept even when that cross-check misses.
+            if (d < bestD && ((mod && Math.abs(mod - modulePx) <= modulePx * 0.85) || d < modulePx * 2)) {
+              bestD = d;
+              best = { x: centerX, y: iy };
+            }
+          }
+          counts[0] = counts[2];
+          counts[1] = counts[3];
+          counts[2] = counts[4];
+          counts[3] = 1;
+          counts[4] = 0;
+          state = 3;
+        } else {
+          state++;
+          counts[state] = 1;
+        }
+      }
+    }
+    return best;
+  }
+
+  function sampleGrid(transform, size, gray, sum, w, h, radius, invert) {
+    var modules = new Uint8Array(size * size);
+    var y;
+    var x;
+    var p;
+    for (y = 0; y < size; y++) {
+      for (x = 0; x < size; x++) {
+        p = transform(x + 0.5, y + 0.5);
+        if (sampleDark(gray, sum, w, h, p.x, p.y, radius, invert)) modules[y * size + x] = 1;
+      }
+    }
+    return modules;
+  }
+
+  function gridCorners(transform, size) {
+    return [
+      transform(0, 0),
+      transform(size, 0),
+      transform(size, size),
+      transform(0, size)
+    ];
+  }
+
+  function mapGrid(map, size, gray, sum, w, h, radius, invert, version) {
+    var modules = sampleGrid(map, size, gray, sum, w, h, radius, invert);
+    var decoded = decodeGrid(modules, version);
+    if (!decoded) return null;
+    if (decoded.redirect) return decoded;
+    return {
+      data: decoded.text,
+      version: decoded.version,
+      level: decoded.level,
+      cornerPoints: gridCorners(map, size)
+    };
+  }
+
+  function tryVersion(bin, gray, sum, w, h, radius, invert, tl, tr, bl, version, redirected) {
+    var size = 17 + 4 * version;
+    var src = [
+      { x: 3.5, y: 3.5 },
+      { x: size - 3.5, y: 3.5 },
+      { x: 3.5, y: size - 3.5 }
+    ];
+    var dst = [tl, tr, bl];
+    var map = affineMap(src, dst);
+    var hit;
+    var redirect;
+    var modulePx;
+    var centers;
+    var expect;
+    var align;
+    var persp;
+    if (!map) return null;
+    // A flat photo decodes from the three finders. Perspective is only a
+    // second try, so a jittery alignment target cannot warp a good sample.
+    hit = mapGrid(map, size, gray, sum, w, h, radius, invert, version);
+    if (hit && hit.data != null) return hit;
+    redirect = hit && hit.redirect;
+    if (version >= 2) {
+      modulePx = pointDist(tl, tr) / (size - 7);
+      centers = alignmentCenters(version);
+      expect = map(centers[centers.length - 1] + 0.5, centers[centers.length - 1] + 0.5);
+      align = findAlignment(bin, w, h, expect.x, expect.y, modulePx);
+      if (align) {
+        persp = perspectiveMap(
+          src.concat([{ x: centers[centers.length - 1] + 0.5, y: centers[centers.length - 1] + 0.5 }]),
+          dst.concat([align])
+        );
+        if (persp) {
+          hit = mapGrid(persp, size, gray, sum, w, h, radius, invert, version);
+          if (hit && hit.data != null) return hit;
+          if (hit && hit.redirect) redirect = hit.redirect;
+        }
+      }
+    }
+    if (!redirected && redirect && redirect !== version && redirect >= 1 && redirect <= 40) {
+      return tryVersion(bin, gray, sum, w, h, radius, invert, tl, tr, bl, redirect, true);
+    }
+    return null;
+  }
+
+  function decodeTriplet(bin, gray, sum, w, h, radius, invert, trio) {
+    var ordered = orderFinders(trio[0], trio[1], trio[2]);
+    var ver;
+    var delta;
+    var version;
+    var hit;
+    if (!ordered) return null;
+    ver = estimateVersion(ordered.tl, ordered.tr, ordered.bl);
+    for (delta = 0; delta <= 1; delta++) {
+      version = delta ? ver - 1 : ver;
+      if (version < 1 || version > 40) continue;
+      hit = tryVersion(bin, gray, sum, w, h, radius, invert, ordered.tl, ordered.tr, ordered.bl, version, false);
+      if (hit) return hit;
+      if (!delta) {
+        version = ver + 1;
+        if (version <= 40) {
+          hit = tryVersion(bin, gray, sum, w, h, radius, invert, ordered.tl, ordered.tr, ordered.bl, version, false);
+          if (hit) return hit;
+        }
+      }
+    }
+    return null;
+  }
+
+  function decodeBinary(bin, gray, sum, w, h, radius, invert) {
+    var found = findFinders(bin, w, h);
+    var trips;
+    var i;
+    var hit;
+    if (found.length < 3) return null;
+    trips = finderTriplets(found);
+    for (i = 0; i < trips.length; i++) {
+      hit = decodeTriplet(bin, gray, sum, w, h, radius, invert, trips[i]);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function grayWeights(options) {
+    var w = options && (options.weights || options.grayscaleWeights);
+    var r = 76;
+    var g = 150;
+    var b = 30;
+    if (w && typeof w === "object") {
+      r = Number(w.r != null ? w.r : w.red);
+      g = Number(w.g != null ? w.g : w.green);
+      b = Number(w.b != null ? w.b : w.blue);
+    } else if (options && options.red != null) {
+      r = Number(options.red);
+      g = Number(options.green);
+      b = Number(options.blue);
+    }
+    if (!(r >= 0) || !(g >= 0) || !(b >= 0)) return { r: 76, g: 150, b: 30 };
+    if (r <= 1 && g <= 1 && b <= 1 && r + g + b <= 1.01) {
+      return { r: Math.round(r * 256), g: Math.round(g * 256), b: Math.round(b * 256) };
+    }
+    return { r: r, g: g, b: b };
+  }
+
+  function toGray(data, w, h, weights) {
+    var gray = new Uint8Array(w * h);
+    var i;
+    var o;
+    var r;
+    var g;
+    var b;
+    var a;
+    var y;
+    for (i = 0, o = 0; i < data.length; i += 4, o++) {
+      r = data[i];
+      g = data[i + 1];
+      b = data[i + 2];
+      a = data[i + 3];
+      if (a < 255) {
+        r = (r * a + 255 * (255 - a)) / 255;
+        g = (g * a + 255 * (255 - a)) / 255;
+        b = (b * a + 255 * (255 - a)) / 255;
+      }
+      y = (weights.r * r + weights.g * g + weights.b * b + 128) >> 8;
+      gray[o] = y > 255 ? 255 : y;
+    }
+    return gray;
+  }
+
+  function downscaleRgba(data, w, h, maxSide) {
+    var scale = Math.max(w, h) / maxSide;
+    var nw = Math.max(1, Math.round(w / scale));
+    var nh = Math.max(1, Math.round(h / scale));
+    var out = new Uint8ClampedArray(nw * nh * 4);
+    var y;
+    var x;
+    var sy0;
+    var sy1;
+    var sx0;
+    var sx1;
+    var yy;
+    var xx;
+    var r;
+    var g;
+    var b;
+    var a;
+    var n;
+    var si;
+    var di;
+    for (y = 0; y < nh; y++) {
+      sy0 = (y * h / nh) | 0;
+      sy1 = ((y + 1) * h / nh) | 0;
+      if (sy1 <= sy0) sy1 = sy0 + 1;
+      for (x = 0; x < nw; x++) {
+        sx0 = (x * w / nw) | 0;
+        sx1 = ((x + 1) * w / nw) | 0;
+        if (sx1 <= sx0) sx1 = sx0 + 1;
+        r = 0;
+        g = 0;
+        b = 0;
+        a = 0;
+        n = 0;
+        for (yy = sy0; yy < sy1 && yy < h; yy++) {
+          for (xx = sx0; xx < sx1 && xx < w; xx++) {
+            si = (yy * w + xx) * 4;
+            r += data[si];
+            g += data[si + 1];
+            b += data[si + 2];
+            a += data[si + 3];
+            n++;
+          }
+        }
+        di = (y * nw + x) * 4;
+        out[di] = r / n;
+        out[di + 1] = g / n;
+        out[di + 2] = b / n;
+        out[di + 3] = a / n;
+      }
+    }
+    return { data: out, width: nw, height: nh, scaleX: w / nw, scaleY: h / nh };
+  }
+
+  function inversionList(options) {
+    var mode = options && (options.inversionMode || options.inversion);
+    if (mode === "invert" || mode === "inverted") return ["invert"];
+    if (mode === "original" || mode === "none") return ["original"];
+    return ["original", "invert"];
+  }
+
+  function radiiFor(w, h) {
+    var small = w < h ? w : h;
+    var primary = Math.max(2, Math.round(small / 10));
+    var tight = Math.max(2, Math.round(small / 18));
+    if (tight === primary) return [primary];
+    return [primary, tight];
+  }
+
+  function scalePoints(points, scaleX, scaleY) {
+    var i;
+    if (scaleX === 1 && scaleY === 1) return points;
+    for (i = 0; i < points.length; i++) {
+      points[i] = { x: points[i].x * scaleX, y: points[i].y * scaleY };
+    }
+    return points;
+  }
+
+  function decodePrepared(rgba, width, height, options) {
+    var packed;
+    var scaleX = 1;
+    var scaleY = 1;
+    var weights;
+    var gray;
+    var sum;
+    var modes;
+    var radii;
+    var mi;
+    var ri;
+    var invert;
+    var bin;
+    var hit;
+    if (width > 720 || height > 720) {
+      packed = downscaleRgba(rgba, width, height, 720);
+      rgba = packed.data;
+      width = packed.width;
+      height = packed.height;
+      scaleX = packed.scaleX;
+      scaleY = packed.scaleY;
+    }
+    weights = grayWeights(options);
+    gray = toGray(rgba, width, height, weights);
+    sum = integralImage(gray, width, height);
+    modes = inversionList(options);
+    radii = radiiFor(width, height);
+    for (mi = 0; mi < modes.length; mi++) {
+      invert = modes[mi] === "invert";
+      for (ri = 0; ri < radii.length; ri++) {
+        bin = binarize(gray, sum, width, height, radii[ri], invert);
+        hit = decodeBinary(bin, gray, sum, width, height, radii[ri], invert);
+        if (hit) {
+          hit.cornerPoints = scalePoints(hit.cornerPoints, scaleX, scaleY);
+          return hit;
+        }
+      }
+    }
+    return null;
+  }
+
+  function isImageData(src) {
+    return !!src && src.data && typeof src.width === "number" && typeof src.height === "number" &&
+      src.data.length >= src.width * src.height * 4 && typeof src.getContext !== "function" &&
+      typeof src.play !== "function";
+  }
+
+  // Synchronous read of a screenshot. imageData is { data, width, height }
+  // with RGBA bytes. Returns { data, cornerPoints } or null.
+  function decodeImageData(imageData, options) {
+    if (!isImageData(imageData) || imageData.width < 11 || imageData.height < 11) return null;
+    return decodePrepared(imageData.data, imageData.width | 0, imageData.height | 0, options || null);
+  }
+
+  var detectorState = { disabled: false, promise: null };
+
+  function disableDetector() {
+    detectorState.disabled = true;
+    detectorState.promise = Promise.resolve(null);
+  }
+
+  // Chromium on an Apple Silicon Mac running macOS Ventura reports a
+  // BarcodeDetector that never returns a code. The software decoder is
+  // used there instead. Same failure nimiq/qr-scanner works around.
+  function macDetectorBroken() {
+    var ua = typeof navigator !== "undefined" ? navigator.userAgentData : null;
+    if (!ua || !ua.brands || typeof ua.getHighEntropyValues !== "function") return Promise.resolve(false);
+    var chromium = false;
+    var i;
+    for (i = 0; i < ua.brands.length; i++) {
+      if (/Chromium/i.test(ua.brands[i].brand || "")) chromium = true;
+    }
+    if (!chromium || !/mac ?OS/i.test(ua.platform || "")) return Promise.resolve(false);
+    return ua.getHighEntropyValues(["architecture", "platformVersion"]).then(function (info) {
+      var arch = info && info.architecture ? info.architecture : "arm";
+      var version = parseInt(info && info.platformVersion ? info.platformVersion : "13", 10);
+      return /arm/i.test(arch) && version >= 13;
+    }, function () {
+      return true;
+    });
+  }
+
+  function probeDetector() {
+    if (detectorState.disabled) return Promise.resolve(null);
+    if (typeof BarcodeDetector !== "function" || typeof BarcodeDetector.getSupportedFormats !== "function") {
+      return Promise.resolve(null);
+    }
+    return BarcodeDetector.getSupportedFormats().then(function (formats) {
+      if (!formats || formats.indexOf("qr_code") < 0) return false;
+      return macDetectorBroken().then(function (broken) { return !broken; });
+    }).then(function (ok) {
+      if (!ok) return null;
+      try {
+        return new BarcodeDetector({ formats: ["qr_code"] });
+      } catch (err) {
+        return null;
+      }
+    }, function () {
+      return null;
+    });
+  }
+
+  function loadDetector() {
+    if (detectorState.disabled) return Promise.resolve(null);
+    if (!detectorState.promise) detectorState.promise = probeDetector();
+    return detectorState.promise;
+  }
+
+  function detectorFailed(err) {
+    var msg = String(err && err.message ? err.message : err || "");
+    return /not implemented|service unavailable|not supported/i.test(msg);
+  }
+
+  function copyPoints(points) {
+    var out = [];
+    var i;
+    var p;
+    if (!points || !points.length) return out;
+    for (i = 0; i < points.length; i++) {
+      p = points[i];
+      out.push({ x: Number(p.x) || 0, y: Number(p.y) || 0 });
+    }
+    return out;
+  }
+
+  function sourceSize(src) {
+    if (src && typeof src.videoWidth === "number" && src.videoWidth > 0) {
+      return { width: src.videoWidth, height: src.videoHeight };
+    }
+    if (src && typeof src.naturalWidth === "number" && src.naturalWidth > 0) {
+      return { width: src.naturalWidth, height: src.naturalHeight };
+    }
+    if (src && src.width > 0 && src.height > 0) return { width: src.width, height: src.height };
+    return null;
+  }
+
+  function clampRegion(region, sw, sh) {
+    var x = Math.max(0, Math.round(region && region.x ? region.x : 0));
+    var y = Math.max(0, Math.round(region && region.y ? region.y : 0));
+    var w = region && region.width ? Math.round(region.width) : sw - x;
+    var h = region && region.height ? Math.round(region.height) : sh - y;
+    var dw;
+    var dh;
+    if (x >= sw || y >= sh) return null;
+    if (x + w > sw) w = sw - x;
+    if (y + h > sh) h = sh - y;
+    if (w < 11 || h < 11) return null;
+    dw = region && region.downScaledWidth ? Math.round(region.downScaledWidth) : w;
+    dh = region && region.downScaledHeight ? Math.round(region.downScaledHeight) : h;
+    if (dw > w) dw = w;
+    if (dh > h) dh = h;
+    if (Math.abs(dw / dh - w / h) > 0.02) dh = Math.max(1, Math.round(dw * h / w));
+    return { x: x, y: y, width: w, height: h, downScaledWidth: dw, downScaledHeight: dh };
+  }
+
+  function mapPoints(points, region) {
+    var sx;
+    var sy;
+    var out = [];
+    var i;
+    if (!region) return points;
+    sx = region.width / region.downScaledWidth;
+    sy = region.height / region.downScaledHeight;
+    for (i = 0; i < points.length; i++) {
+      out.push({ x: points[i].x * sx + region.x, y: points[i].y * sy + region.y });
+    }
+    return out;
+  }
+
+  function makeCanvas(canvas) {
+    if (canvas && typeof canvas.getContext === "function") return canvas;
+    if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
+    return document.createElement("canvas");
+  }
+
+  function drawSource(src, region, canvas) {
+    var view = sourceSize(src);
+    var box;
+    var ctx;
+    var shot;
+    if (!view) return null;
+    box = clampRegion(region || { x: 0, y: 0, width: view.width, height: view.height }, view.width, view.height);
+    if (!box) return null;
+    canvas = makeCanvas(canvas);
+    if (!canvas) return null;
+    canvas.width = box.downScaledWidth;
+    canvas.height = box.downScaledHeight;
+    ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(src, box.x, box.y, box.width, box.height, 0, 0, box.downScaledWidth, box.downScaledHeight);
+    shot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return { canvas: canvas, imageData: shot, region: box };
+  }
+
+  function loadUrl(url, revoke) {
+    return new Promise(function (resolve, reject) {
+      var img;
+      if (typeof Image !== "function") {
+        reject(new Error("This browser cannot load that image."));
+        return;
+      }
+      img = new Image();
+      img.onload = function () {
+        if (revoke) URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = function () {
+        if (revoke) URL.revokeObjectURL(url);
+        reject(new Error("Could not load that image."));
+      };
+      if (!revoke) img.crossOrigin = "anonymous";
+      img.src = url;
+    });
+  }
+
+  function loadSource(src) {
+    if (isImageData(src)) return Promise.resolve(src);
+    if (src && (typeof src.videoWidth === "number" || typeof src.naturalWidth === "number" ||
+      typeof src.getContext === "function" || (typeof ImageBitmap !== "undefined" && src instanceof ImageBitmap))) {
+      return Promise.resolve(src);
+    }
+    if (typeof Blob !== "undefined" && src instanceof Blob) {
+      return loadUrl(URL.createObjectURL(src), true);
+    }
+    if (typeof src === "string" || (typeof URL !== "undefined" && src instanceof URL)) {
+      return loadUrl(String(src), false);
+    }
+    return Promise.reject(new Error("Cannot read a QR code from that."));
+  }
+
+  function detectOnCanvas(canvas) {
+    return loadDetector().then(function (detector) {
+      if (!detector || !canvas) return null;
+      return detector.detect(canvas).then(function (found) {
+        if (!found || !found.length) return null;
+        return { data: String(found[0].rawValue || ""), cornerPoints: copyPoints(found[0].cornerPoints) };
+      }, function (err) {
+        if (detectorFailed(err)) disableDetector();
+        return null;
+      });
+    });
+  }
+
+  function finishHit(hit, region) {
+    if (!hit) return null;
+    return {
+      data: hit.data,
+      cornerPoints: mapPoints(hit.cornerPoints || [], region),
+      version: hit.version,
+      level: hit.level
+    };
+  }
+
+  // Picture, video frame, canvas, blob, or URL. Rejects when nothing is found.
+  // BarcodeDetector runs first. A miss falls through to the software decoder
+  // so an inverted code still reads when the native detector skips it.
+  function scanImage(source, options) {
+    var opts = options || {};
+    var forceSoftware = opts.engine === "software" || opts.decoder === "software";
+    return loadSource(source).then(function (loaded) {
+      var region = opts.scanRegion || null;
+      if (isImageData(loaded) && (forceSoftware || typeof document === "undefined")) {
+        var direct = decodeImageData(loaded, opts);
+        if (!direct) throw noQrError();
+        return finishHit(direct, null);
+      }
+      var frame = drawSource(isImageData(loaded) ? imageDataCanvas(loaded) : loaded, region, opts.canvas);
+      if (!frame) {
+        if (isImageData(loaded)) {
+          var fallback = decodeImageData(loaded, opts);
+          if (!fallback) throw noQrError();
+          return finishHit(fallback, null);
+        }
+        throw noQrError();
+      }
+      var native = forceSoftware ? Promise.resolve(null) : detectOnCanvas(frame.canvas);
+      return native.then(function (hit) {
+        if (hit) return finishHit(hit, frame.region);
+        var soft = decodeImageData(frame.imageData, opts);
+        if (soft) return finishHit(soft, frame.region);
+        if (region && opts.alsoTryWithoutScanRegion) {
+          return scanImage(loaded, {
+            engine: forceSoftware ? "software" : opts.engine,
+            decoder: opts.decoder,
+            canvas: opts.canvas,
+            inversionMode: opts.inversionMode || opts.inversion,
+            weights: opts.weights,
+            grayscaleWeights: opts.grayscaleWeights,
+            red: opts.red,
+            green: opts.green,
+            blue: opts.blue
+          });
+        }
+        throw noQrError();
+      });
+    });
+  }
+
+  function imageDataCanvas(imageData) {
+    var canvas = makeCanvas(null);
+    var ctx;
+    if (!canvas) return null;
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+  }
+
+  function stopTracks(stream) {
+    var tracks;
+    var i;
+    if (!stream || typeof stream.getTracks !== "function") return;
+    tracks = stream.getTracks();
+    for (i = 0; i < tracks.length; i++) {
+      try { tracks[i].stop(); } catch (err) { /* already ended */ }
+    }
+  }
+
+  function cameraAttempts(preferred) {
+    var bases = [{ width: { min: 1024 } }, { width: { min: 768 } }, {}];
+    var exact = [];
+    var plain = [];
+    var i;
+    var video;
+    var key = preferred === "environment" || preferred === "user" ? "facingMode" : "deviceId";
+    for (i = 0; i < bases.length; i++) {
+      plain.push(bases[i]);
+      if (!preferred) continue;
+      video = {};
+      if (bases[i].width) video.width = bases[i].width;
+      video[key] = { exact: preferred };
+      exact.push(video);
+    }
+    return exact.concat(plain);
+  }
+
+  function facingOf(stream, preferred) {
+    var track = stream.getVideoTracks()[0];
+    var settings = track && track.getSettings ? track.getSettings() : null;
+    if (settings && (settings.facingMode === "user" || settings.facingMode === "environment")) {
+      return settings.facingMode;
+    }
+    if (preferred === "user" || preferred === "environment") return preferred;
+    return "environment";
+  }
+
+  function openCamera(preferred) {
+    var videos;
+    var i;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return Promise.reject(new Error("This browser has no camera."));
+    }
+    videos = cameraAttempts(preferred);
+    i = 0;
+    function next() {
+      if (i >= videos.length) return Promise.reject(new Error("Camera not found."));
+      return navigator.mediaDevices.getUserMedia({ audio: false, video: videos[i++] }).then(function (stream) {
+        return { stream: stream, facing: facingOf(stream, preferred) };
+      }, function () {
+        return next();
+      });
+    }
+    return next();
+  }
+
+  function defaultScanRegion(video) {
+    var vw = video.videoWidth || 0;
+    var vh = video.videoHeight || 0;
+    var small;
+    var side;
+    var down;
+    if (!vw || !vh) return null;
+    small = vw < vh ? vw : vh;
+    side = Math.round(small * 2 / 3);
+    if (side < 32) side = small;
+    down = side > 450 ? 450 : side;
+    return {
+      x: Math.round((vw - side) / 2),
+      y: Math.round((vh - side) / 2),
+      width: side,
+      height: side,
+      downScaledWidth: down,
+      downScaledHeight: down
+    };
+  }
+
+  function trackHasTorch(track) {
+    var caps;
+    if (!track) return false;
+    if (typeof track.getCapabilities === "function") {
+      caps = track.getCapabilities();
+      if (caps && caps.torch) return true;
+    }
+    if (typeof track.getSettings === "function" && track.getSettings() && ("torch" in track.getSettings())) return true;
+    return false;
+  }
+
+  // Live scan. onResult is called with { data, cornerPoints } for each hit.
+  // start() asks for the camera. stop() releases it.
+  function Scanner(video, onResult, options) {
+    var opts = options || {};
+    if (!(this instanceof Scanner)) return new Scanner(video, onResult, options);
+    if (!video || typeof video.play !== "function") throw new Error("Pass a video element.");
+    this.video = video;
+    this.canvas = makeCanvas(opts.canvas);
+    this._onResult = typeof onResult === "function" ? onResult : function () {};
+    this._onError = typeof opts.onDecodeError === "function" ? opts.onDecodeError : null;
+    this._preferred = opts.preferredCamera || "environment";
+    this._maxScans = opts.maxScansPerSecond > 0 ? opts.maxScansPerSecond : 25;
+    this._regionFn = typeof opts.calculateScanRegion === "function" ? opts.calculateScanRegion : null;
+    this._inversion = opts.inversionMode || opts.inversion || "both";
+    this._weights = grayWeights(opts);
+    this._active = false;
+    this._destroyed = false;
+    this._pumping = false;
+    this._epoch = 0;
+    this._last = 0;
+    this._flash = false;
+    this._facing = "environment";
+    video.playsInline = true;
+    video.muted = true;
+    if (typeof video.setAttribute === "function") {
+      video.setAttribute("playsinline", "");
+      video.setAttribute("muted", "");
+    }
+    var self = this;
+    this._onVis = function () {
+      if (typeof document === "undefined") return;
+      if (document.hidden) self._hold();
+      else if (self._active) self.start();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this._onVis);
+  }
+
+  Scanner.prototype._region = function () {
+    if (this._regionFn) {
+      try {
+        return this._regionFn(this.video) || defaultScanRegion(this.video);
+      } catch (err) {
+        return defaultScanRegion(this.video);
+      }
+    }
+    return defaultScanRegion(this.video);
+  };
+
+  Scanner.prototype._dropStream = function () {
+    if (this.video.srcObject && typeof this.video.srcObject.getTracks === "function") {
+      stopTracks(this.video.srcObject);
+    }
+    this.video.srcObject = null;
+  };
+
+  Scanner.prototype._hold = function () {
+    try { this.video.pause(); } catch (err) { /* not playing */ }
+    this._dropStream();
+  };
+
+  Scanner.prototype._fail = function (err) {
+    if (!err || err.code === "NO_QR" || String(err.message || err) === NO_QR) return;
+    if (this._onError) this._onError(err);
+  };
+
+  Scanner.prototype._pump = function () {
+    var self = this;
+    var request;
+    if (self._pumping || !self._active || self._destroyed) return;
+    self._pumping = true;
+    request = typeof self.video.requestVideoFrameCallback === "function"
+      ? function (fn) { self.video.requestVideoFrameCallback(function () { fn(); }); }
+      : function (fn) { requestAnimationFrame(fn); };
+    function idle() {
+      return !self._active || self._destroyed || (typeof document !== "undefined" && document.hidden);
+    }
+    function schedule() {
+      if (idle()) {
+        self._pumping = false;
+        return;
+      }
+      request(function () {
+        var wait;
+        if (idle()) {
+          self._pumping = false;
+          return;
+        }
+        if (self.video.readyState <= 1) {
+          schedule();
+          return;
+        }
+        wait = (1000 / self._maxScans) - (Date.now() - self._last);
+        if (wait > 5) {
+          setTimeout(run, wait);
+          return;
+        }
+        run();
+      });
+    }
+    function run() {
+      var region;
+      var frame;
+      if (idle()) {
+        self._pumping = false;
+        return;
+      }
+      self._last = Date.now();
+      region = self._region();
+      if (!region) {
+        schedule();
+        return;
+      }
+      try {
+        frame = drawSource(self.video, region, self.canvas);
+      } catch (err) {
+        self._fail(err);
+        schedule();
+        return;
+      }
+      if (!frame) {
+        schedule();
+        return;
+      }
+      self.canvas = frame.canvas;
+      detectOnCanvas(frame.canvas).then(function (hit) {
+        if (!hit) hit = decodeImageData(frame.imageData, {
+          inversionMode: self._inversion,
+          weights: self._weights
+        });
+        if (hit && self._active) self._onResult(finishHit(hit, frame.region));
+        schedule();
+      }, function (err) {
+        self._fail(err);
+        schedule();
+      });
+    }
+    schedule();
+  };
+
+  Scanner.prototype.start = function () {
+    var self = this;
+    var epoch;
+    if (self._destroyed) return Promise.reject(new Error("This scanner has been closed."));
+    self._active = true;
+    if (typeof document !== "undefined" && document.hidden) return Promise.resolve();
+    if (self.video.srcObject) {
+      return self.video.play().then(function () {
+        self._pump();
+      });
+    }
+    epoch = ++self._epoch;
+    if (typeof location !== "undefined" && location.protocol && location.protocol !== "https:" && location.hostname !== "localhost") {
+      if (typeof console !== "undefined") console.warn("The camera stream is only available over https.");
+    }
+    return openCamera(self._preferred).then(function (opened) {
+      if (!self._active || self._epoch !== epoch || self._destroyed) {
+        stopTracks(opened.stream);
+        return;
+      }
+      self._dropStream();
+      self._facing = opened.facing;
+      self.video.srcObject = opened.stream;
+      return self.video.play().then(function () {
+        self._pump();
+        if (self._flash) return self.turnFlashOn();
+      });
+    }).catch(function (err) {
+      if (self._epoch === epoch) self._active = false;
+      throw err;
+    });
+  };
+
+  Scanner.prototype.stop = function () {
+    var self = this;
+    self._active = false;
+    self._epoch++;
+    self._flash = false;
+    try { self.video.pause(); } catch (err) { /* not playing */ }
+    setTimeout(function () {
+      if (!self._active) self._dropStream();
+    }, 300);
+  };
+
+  Scanner.prototype.destroy = function () {
+    this._destroyed = true;
+    this.stop();
+    if (typeof document !== "undefined" && this._onVis) {
+      document.removeEventListener("visibilitychange", this._onVis);
+    }
+  };
+
+  Scanner.prototype.setCamera = function (facingModeOrDeviceId) {
+    if (!facingModeOrDeviceId || facingModeOrDeviceId === this._preferred) return Promise.resolve();
+    this._preferred = facingModeOrDeviceId;
+    if (!this._active) return Promise.resolve();
+    this._dropStream();
+    this._epoch++;
+    return this.start();
+  };
+
+  Scanner.prototype.setInversionMode = function (mode) {
+    if (mode === "invert" || mode === "inverted" || mode === "original" || mode === "both" || mode === "none") {
+      this._inversion = mode === "none" ? "original" : mode;
+    }
+  };
+
+  Scanner.prototype.setGrayscaleWeights = function (red, green, blue) {
+    this._weights = grayWeights({ red: red, green: green, blue: blue });
+  };
+
+  Scanner.prototype.facingMode = function () {
+    return this._facing;
+  };
+
+  Scanner.prototype.hasFlash = function () {
+    var stream = this.video.srcObject;
+    var track;
+    if (!stream || typeof stream.getVideoTracks !== "function") return Promise.resolve(false);
+    track = stream.getVideoTracks()[0];
+    return Promise.resolve(trackHasTorch(track));
+  };
+
+  Scanner.prototype.isFlashOn = function () {
+    return this._flash;
+  };
+
+  // torch:false does not turn the lamp off on every browser, so the
+  // stream is reopened instead.
+  Scanner.prototype.turnFlashOff = function () {
+    var was = this._active;
+    this._flash = false;
+    if (!was || !this.video.srcObject) return Promise.resolve();
+    this._dropStream();
+    this._epoch++;
+    return this.start();
+  };
+
+  Scanner.prototype.turnFlashOn = function () {
+    var self = this;
+    var stream;
+    var track;
+    if (self._destroyed) return Promise.resolve();
+    self._flash = true;
+    stream = self.video.srcObject;
+    if (!stream || typeof stream.getVideoTracks !== "function") return Promise.resolve();
+    track = stream.getVideoTracks()[0];
+    if (!trackHasTorch(track)) {
+      self._flash = false;
+      return Promise.reject(new Error("This camera has no flash."));
+    }
+    return track.applyConstraints({ advanced: [{ torch: true }] }).catch(function (err) {
+      self._flash = false;
+      throw err;
+    });
+  };
+
+  Scanner.prototype.toggleFlash = function () {
+    if (this._flash) return this.turnFlashOff();
+    return this.turnFlashOn();
+  };
+
+  function listCameras(requestLabels) {
+    function listed() {
+      return navigator.mediaDevices.enumerateDevices().then(function (devices) {
+        var out = [];
+        var i;
+        var cam;
+        var n = 0;
+        for (i = 0; i < devices.length; i++) {
+          if (devices[i].kind !== "videoinput") continue;
+          n++;
+          cam = devices[i];
+          out.push({
+            id: cam.deviceId,
+            label: cam.label || (n === 1 ? "Default Camera" : "Camera " + n)
+          });
+        }
+        return out;
+      });
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return Promise.resolve([]);
+    }
+    if (!requestLabels) return listed().catch(function () { return []; });
+    return listed().then(function (cams) {
+      var labeled = false;
+      var i;
+      for (i = 0; i < cams.length; i++) if (cams[i].label && cams[i].label.indexOf("Camera") !== 0 && cams[i].label !== "Default Camera") labeled = true;
+      if (!cams.length || labeled) return cams;
+      return navigator.mediaDevices.getUserMedia({ audio: false, video: true }).then(function (opened) {
+        return listed().then(function (full) {
+          stopTracks(opened);
+          return full;
+        }, function () {
+          stopTracks(opened);
+          return cams;
+        });
+      }, function () {
+        return cams;
+      });
+    }).catch(function () { return []; });
+  }
+
+  cs77Qr.decode = function (imageData, options) {
+    return decodeImageData(imageData, options || null);
+  };
+
+  cs77Qr.scanImage = function (source, options) {
+    return scanImage(source, options || null);
+  };
+
+  cs77Qr.hasCamera = function () {
+    return listCameras(false).then(function (cams) { return cams.length > 0; }, function () { return false; });
+  };
+
+  cs77Qr.listCameras = function (requestLabels) {
+    return listCameras(!!requestLabels);
+  };
+
+  cs77Qr.Scanner = Scanner;
+  cs77Qr.NO_QR = NO_QR;
 
   global.cs77Qr = cs77Qr;
 })(typeof window !== "undefined" ? window : globalThis);
