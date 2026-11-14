@@ -2343,12 +2343,14 @@
   // The same player the post body builds. Empty when the address is not a video.
   // YouTube Shorts, TikTok, and Skate Hype are portrait. A 3Speak short starts
   // portrait. Any other 3Speak frame stays landscape until its thumbnail is
-  // taller than it is wide. peertube.tv and blurt.media start as the responsive
-  // 16:9 frame and follow the video's aspect ratio once the API answers. The
-  // other hosted players are landscape. A wider Skate Hype preview image drops the portrait
-  // frame. An Instagram Reel stays a link. An Imgur post is the official
-  // blockquote embed. A direct i.imgur.com picture or video is not a post.
-  // ?orientation= or ?w= and ?h= replace that guess and stay locked.
+  // taller than it is wide. The player then posts 3speak-player-ready, and that
+  // picture replaces the thumbnail. peertube.tv and blurt.media start as the
+  // responsive 16:9 frame and follow the video's aspect ratio once the API
+  // answers. The other hosted players are landscape. A wider Skate Hype preview
+  // image drops the portrait frame. An Instagram Reel stays a link. An Imgur
+  // post is the official blockquote embed. A direct i.imgur.com picture or
+  // video is not a post. ?orientation= or ?w= and ?h= replace that guess and
+  // stay locked.
   function playerHtmlFromUrl(href) {
     const url = unescapeHtml(String(href || "")).trim();
     if (!url) return "";
@@ -2989,9 +2991,10 @@
 
   // The watch API publishes the thumbnail. A taller image is a portrait clip.
   // A short already starts portrait, and a wider thumbnail puts that one back
-  // in the landscape frame.
+  // in the landscape frame. This runs before the iframe loads. The player's
+  // own size replaces it, and a late poster must not move that frame back.
   function watchThreeSpeakBox(box) {
-    if (!box || frameLocked(box) || box.getAttribute("data-speak-watch")) return;
+    if (!box || frameLocked(box) || box.getAttribute("data-speak-ready") || box.getAttribute("data-speak-watch")) return;
     const id = threeSpeakFrameId(box);
     if (!id || typeof fetch !== "function") return;
     const short = box.getAttribute("data-speak-kind") === "short";
@@ -3001,12 +3004,12 @@
         return res && res.ok ? res.json() : null;
       })
       .then(function (data) {
-        if (!box.isConnected) return;
+        if (!box.isConnected || box.getAttribute("data-speak-ready")) return;
         const thumb = data && data.thumbnail;
         if (!isSafePostUrl(thumb, "src")) return;
         const probe = new Image();
         probe.onload = function () {
-          if (!box.isConnected || frameLocked(box)) return;
+          if (!box.isConnected || frameLocked(box) || box.getAttribute("data-speak-ready")) return;
           const tall = probe.naturalHeight > probe.naturalWidth;
           const wide = probe.naturalWidth > probe.naturalHeight;
           if (short) {
@@ -3029,6 +3032,104 @@
       const box = frames[i].closest && frames[i].closest(".embed");
       if (box) watchThreeSpeakBox(box);
     }
+  }
+
+  // Width over height. The player sends aspectRatio. Width and height are the
+  // fallback when that number is missing. A ratio above 20 is not a frame
+  // we can lay out.
+  function threeSpeakReadyRatio(data) {
+    let ratio = Number(data && data.aspectRatio);
+    if (!(ratio > 0)) {
+      const width = Number(data && data.width);
+      const height = Number(data && data.height);
+      if (width > 0 && height > 0) ratio = width / height;
+    }
+    if (!(ratio > 0) || ratio > 20) return 0;
+    return ratio;
+  }
+
+  // The pixels win when they are present. orientation and isVertical cover a
+  // ready notice that has not included a ratio yet.
+  function threeSpeakReadyShape(data) {
+    if (!data || typeof data !== "object" || data.ad === true) return null;
+    const ratio = threeSpeakReadyRatio(data);
+    let orient = "";
+    if (ratio > 0) {
+      if (Math.abs(ratio - 1) < 0.04) orient = "square";
+      else if (ratio < 1) orient = "vertical";
+      else orient = "horizontal";
+    } else {
+      const named = String(data.orientation || "").toLowerCase();
+      if (named === "vertical" || named === "horizontal" || named === "square") orient = named;
+      else if (data.isVertical === true) orient = "vertical";
+      else if (data.isVertical === false) orient = "horizontal";
+    }
+    if (!orient) return null;
+    return { orient: orient, ratio: ratio };
+  }
+
+  // A vertical clip uses the capped 9:16 frame. A square uses the square
+  // frame. A landscape clip near 16:9 keeps the default box. Any other
+  // landscape ratio uses the same custom frame as a PeerTube video.
+  function applyThreeSpeakShape(box, shape) {
+    if (!box || !box.isConnected || frameLocked(box) || !shape) return;
+    box.setAttribute("data-speak-ready", "1");
+    box.classList.remove("embed-portrait");
+    box.classList.remove("embed-square");
+    box.classList.remove("embed-ratio");
+    box.style.removeProperty("--embed-ratio");
+    if (shape.orient === "vertical") {
+      box.classList.add("embed-portrait");
+      return;
+    }
+    if (shape.orient === "square") {
+      box.classList.add("embed-square");
+      return;
+    }
+    if (!(shape.ratio > 0) || Math.abs(shape.ratio - 16 / 9) < 0.04) return;
+    box.classList.add("embed-ratio");
+    box.style.setProperty("--embed-ratio", shape.ratio.toFixed(4));
+  }
+
+  function threeSpeakFrameFromSource(source) {
+    if (!source || !document.querySelectorAll) return null;
+    const frames = document.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow !== source) continue;
+      const box = frames[i].closest && frames[i].closest(".embed");
+      return box || null;
+    }
+    return null;
+  }
+
+  // play.3speak.tv posts this once the picture size is known, and again if the
+  // shape changes. An ad uses the same type with ad: true, and that shape is
+  // not the video. frameElement is null across origins, so the iframe is
+  // matched by contentWindow. An author lock stays as the author set it.
+  let speakListening = false;
+
+  function onThreeSpeakPlayerMessage(e) {
+    if (!e || e.origin !== "https://play.3speak.tv") return;
+    let data = e.data;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (err) {
+        return;
+      }
+    }
+    if (!data || data.type !== "3speak-player-ready") return;
+    const shape = threeSpeakReadyShape(data);
+    if (!shape) return;
+    const box = threeSpeakFrameFromSource(e.source);
+    if (!box) return;
+    applyThreeSpeakShape(box, shape);
+  }
+
+  function ensureThreeSpeakPlayer() {
+    if (speakListening || typeof window === "undefined") return;
+    speakListening = true;
+    window.addEventListener("message", onThreeSpeakPlayerMessage);
   }
 
   function peerFrameInfo(box) {
@@ -3096,6 +3197,7 @@
   }
 
   if (typeof document !== "undefined") {
+    ensureThreeSpeakPlayer();
     document.addEventListener(
       "loadedmetadata",
       function (e) {
