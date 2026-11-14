@@ -23074,6 +23074,23 @@ let CS77_FILTER_LOW_REP = 20;
     return pr;
   }
 
+  // SDK 9 stops a pay_invoice reply at 60s unless replyTimeout is set.
+  const ZAP_NWC_TIMEOUT_MS = 90000;
+
+  function allowNwcPayWait(client) {
+    const nwc = client && client.nwcClient;
+    const run = nwc && nwc.executeNip47Request;
+    if (typeof run !== "function") return;
+    nwc.executeNip47Request = function (method, params, validator, timeoutValues) {
+      if (method === "pay_invoice") {
+        const next = timeoutValues ? Object.assign({}, timeoutValues) : {};
+        next.replyTimeout = ZAP_NWC_TIMEOUT_MS;
+        timeoutValues = next;
+      }
+      return run.call(this, method, params, validator, timeoutValues);
+    };
+  }
+
   async function payWithNwc(url, pr) {
     let mod;
     try {
@@ -23086,8 +23103,9 @@ let CS77_FILTER_LOW_REP = 20;
       throw new Error("Could not load the wallet connection. Clear it to open a lightning invoice instead.");
     }
     const client = new LN(url);
+    allowNwcPayWait(client);
     try {
-      return await withTimeout(client.pay(pr), 45000, "The connected wallet did not answer.");
+      return await withTimeout(client.pay(pr), ZAP_NWC_TIMEOUT_MS, "The connected wallet did not answer.");
     } finally {
       try { client.close(); } catch (err) { /* socket already closed */ }
     }
