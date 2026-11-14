@@ -6543,6 +6543,27 @@ let CS77_FILTER_LOW_REP = 20;
     return { address: text };
   }
 
+  // Every Hive name can receive on name@v4v.app when the profile stores no address.
+  function v4vDefaultAddress(name) {
+    const user = walletHiveName(name);
+    if (!user) return "";
+    const parsed = normalizeLightningAddress(user + "@v4v.app");
+    return parsed.error ? "" : parsed.address || "";
+  }
+
+  // The zap dialog and the QR dialog both use this. A stored LUD-16 address wins.
+  // An empty value uses the default. An unusable stored address stays unusable,
+  // unless invalidUsesDefault is set, which the QR dialog does.
+  function lightningReceiveChoice(name, raw, opts) {
+    const parsed = normalizeLightningAddress(raw);
+    if (parsed.address) return { address: parsed.address, fallback: false, invalid: false };
+    const invalid = Boolean(String(raw == null ? "" : raw).trim());
+    const useDefault = !invalid || Boolean(opts && opts.invalidUsesDefault);
+    const address = useDefault ? v4vDefaultAddress(name) : "";
+    if (address) return { address: address, fallback: true, invalid: false };
+    return { address: "", fallback: false, invalid: invalid };
+  }
+
   // A valid address compares in canonical form. Anything else compares as typed,
   // so an unchanged invalid value is not treated as an edit.
   function lightningCompareKey(raw) {
@@ -20991,10 +21012,6 @@ let CS77_FILTER_LOW_REP = 20;
     return "https://cyberspace77.com/@" + user;
   }
 
-  function profileQrFallbackAddress(user) {
-    return user + "@v4v.app";
-  }
-
   // BIP-173 charset. LNURL (LUD-01) is bech32 with the human-readable part "lnurl".
   const LNURL_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
@@ -21061,11 +21078,9 @@ let CS77_FILTER_LOW_REP = 20;
     return "lightning:" + encodeLnurl(url);
   }
 
-  // A stored LUD-16 address wins. Empty or unusable becomes username@v4v.app.
+  // A stored LUD-16 address wins. Empty or unusable uses the shared v4v.app default.
   function profileQrResolvedAddress(user, raw) {
-    const parsed = normalizeLightningAddress(raw);
-    if (!parsed.error && parsed.address) return parsed.address;
-    return profileQrFallbackAddress(user);
+    return lightningReceiveChoice(user, raw, { invalidUsesDefault: true }).address;
   }
 
   // Null when this account's wallet has not been read yet.
@@ -22154,15 +22169,6 @@ let CS77_FILTER_LOW_REP = 20;
     else setZapStatus(zapLnStatusMessage(), true);
   }
 
-  // Every Hive name can receive on name@v4v.app when the profile stores no address.
-  // A stored address that does not parse stays unusable and does not fall back.
-  function v4vDefaultAddress(name) {
-    const user = walletHiveName(name);
-    if (!user) return "";
-    const parsed = normalizeLightningAddress(user + "@v4v.app");
-    return parsed.error ? "" : parsed.address || "";
-  }
-
   function lightningAddressPlaceholder(name) {
     return v4vDefaultAddress(name) || "username@v4v.app";
   }
@@ -22185,28 +22191,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function applyZapWallet(wallet) {
-    const raw = lightningAddressFromWallet(wallet);
-    const parsed = raw ? normalizeLightningAddress(raw) : { address: "" };
-    zapState.lnDefault = false;
-    if (raw && parsed.error) {
-      zapState.lnAddress = "";
-      zapState.lnStatus = "invalid";
-      return;
-    }
-    if (parsed.address) {
-      zapState.lnAddress = parsed.address;
-      zapState.lnStatus = "ready";
-      return;
-    }
-    const fallback = v4vDefaultAddress(zapState.author);
-    if (fallback) {
-      zapState.lnAddress = fallback;
-      zapState.lnStatus = "ready";
-      zapState.lnDefault = true;
-      return;
-    }
-    zapState.lnAddress = "";
-    zapState.lnStatus = "missing";
+    const choice = lightningReceiveChoice(zapState.author, lightningAddressFromWallet(wallet));
+    zapState.lnAddress = choice.address;
+    zapState.lnDefault = choice.fallback;
+    if (choice.invalid) zapState.lnStatus = "invalid";
+    else if (choice.address) zapState.lnStatus = "ready";
+    else zapState.lnStatus = "missing";
   }
 
   const ZAP_TIPS_CACHE_MS = 60000;
@@ -22796,9 +22786,7 @@ let CS77_FILTER_LOW_REP = 20;
   // An unusable stored address does not fall back. The yellow bolt stays on a stored address only.
   function zapPanelAccepts(name, rec) {
     if (!rec || !rec.loaded) return false;
-    if (rec.accepts) return true;
-    if (lightningAddressFromWallet(rec.wallet)) return false;
-    return Boolean(v4vDefaultAddress(name));
+    return Boolean(lightningReceiveChoice(name, lightningAddressFromWallet(rec.wallet)).address);
   }
 
   function paintZapTipsPanel() {
