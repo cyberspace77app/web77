@@ -20874,31 +20874,34 @@ let CS77_FILTER_LOW_REP = 20;
     return qrScriptPromise;
   }
 
-  function qrCodeColors() {
+  function qrCodeColors(extra) {
     const style = getComputedStyle(document.documentElement);
     const gray = style.getPropertyValue("--gray").trim() || "#d7d7d7";
-    return { color: gray, background: "transparent", shape: "round", pad: 4, label: "QR code" };
+    return Object.assign(
+      { color: gray, background: "transparent", shape: "round", pad: 4, label: "QR code" },
+      extra || null
+    );
   }
 
   function qrIsInvoice(text) {
     return /^lightning:/i.test(text) || /^ln(?:bcrt|bc|tb)\d/i.test(text) || /^lnurl1/i.test(text);
   }
 
-  function qrBuild(Qr, text, level) {
-    const paint = Object.assign({ level: level }, qrCodeColors());
+  function qrBuild(Qr, text, level, extra) {
+    const paint = Object.assign({ level: level }, qrCodeColors(extra));
     if (qrIsInvoice(text)) return Qr.invoice(text, paint);
     if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return Qr.link(text, paint);
     return Qr.text(text, paint);
   }
 
   // Smallest version at level L, then the strongest correction that still fits it.
-  function qrChoose(Qr, text) {
-    const low = qrBuild(Qr, text, "L");
+  function qrChoose(Qr, text, extra) {
+    const low = qrBuild(Qr, text, "L", extra);
     let best = low;
     const higher = ["M", "Q", "H"];
     for (let i = 0; i < higher.length; i++) {
       try {
-        const next = qrBuild(Qr, text, higher[i]);
+        const next = qrBuild(Qr, text, higher[i], extra);
         if (next.version === low.version) best = next;
       } catch (err) {
         /* this level does not fit */
@@ -20908,11 +20911,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Returns an SVG element. Callers pass the text a wallet or a browser should open.
-  async function renderQrCode(text) {
+  // extra.shape "rect" draws square modules. The default is round.
+  async function renderQrCode(text, extra) {
     const value = String(text || "");
     if (!value) throw new Error("Nothing to encode.");
     const Qr = await loadQrScript();
-    return qrChoose(Qr, value).toSvg(document);
+    return qrChoose(Qr, value, extra).toSvg(document);
   }
 
   let zapQrLook = 0;
@@ -20943,7 +20947,7 @@ let CS77_FILTER_LOW_REP = 20;
     const look = ++zapQrLook;
     btn.disabled = true;
     try {
-      const svg = await renderQrCode("lightning:" + invoice);
+      const svg = await renderQrCode("lightning:" + invoice, { shape: "rect" });
       if (look !== zapQrLook || zapState.invoice !== invoice) return;
       svg.setAttribute("aria-label", "Lightning invoice");
       box.replaceChildren(svg);
