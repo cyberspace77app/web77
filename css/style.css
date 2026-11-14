@@ -6280,7 +6280,7 @@ a.wallet-tx-time:hover {
 .zap-qr {
   display: flex;
   justify-content: center;
-  margin: 0.15rem 0 0.85rem;
+  margin: 0.15rem 0;
 }
 
 #zapWalletFallback > .zap-paid-toggle {
