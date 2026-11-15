@@ -2368,7 +2368,14 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
   transition-delay: 1s;
 }
 
-.post-card:has(.meta-time:hover) {
+.meta-time:focus-visible .meta-time-pop {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.post-card:has(.meta-time:hover),
+.post-card:has(.meta-time:focus-visible) {
   overflow: visible;
   z-index: 8;
 }
