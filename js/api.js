@@ -1805,21 +1805,46 @@
     };
   }
 
+  function rcPropsReady(props) {
+    return Boolean(
+      props &&
+        props.total_vesting_shares != null &&
+        props.available_account_subsidies != null &&
+        vestAmountRaw(props.total_vesting_shares) > 0n
+    );
+  }
+
+  function rcAccountReady(account, name) {
+    return Boolean(
+      account && name && accountName(account.name) === name && account.pending_claimed_accounts != null
+    );
+  }
+
   // Current resource credits, when a name is given, and the RC price of a
   // typical upvote, post, comment, transfer, account creation, and Splinterlands battle.
-  async function operationRcOverview(username) {
+  // known.account and known.props are the open wallet. Those two calls are skipped
+  // when that snapshot is already loaded. Curves, pools, the share split, and the
+  // raw mana bar are not stored on the page.
+  async function operationRcOverview(username, known) {
     const name = accountName(username);
     const now = Math.floor(Date.now() / 1000);
+    const supplied = known && typeof known === "object" ? known : null;
+    const accountReady = rcAccountReady(supplied && supplied.account, name);
+    const propsReady = rcPropsReady(supplied && supplied.props);
     const rcCall = name
       ? hiveRpc("rc_api.find_rc_accounts", { accounts: [name] }, true).catch(() => null)
       : Promise.resolve(null);
-    const accountCall = name
-      ? hiveRpc("condenser_api.get_accounts", [[name]], true).catch(() => null)
-      : Promise.resolve(null);
+    const accountCall =
+      !name || accountReady
+        ? Promise.resolve(accountReady ? [supplied.account] : null)
+        : hiveRpc("condenser_api.get_accounts", [[name]], true).catch(() => null);
+    const propsCall = propsReady
+      ? Promise.resolve(supplied.props)
+      : hiveRpc("condenser_api.get_dynamic_global_properties", [], true);
     const [params, pools, props, statsWrap, rcResult, accounts] = await Promise.all([
       hiveRpc("rc_api.get_resource_params", {}, true),
       hiveRpc("rc_api.get_resource_pool", {}, true),
-      hiveRpc("condenser_api.get_dynamic_global_properties", [], true),
+      propsCall,
       hiveRpc("rc_api.get_rc_stats", {}, true),
       rcCall,
       accountCall,

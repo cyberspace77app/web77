@@ -29105,7 +29105,11 @@ let CS77_FILTER_LOW_REP = 20;
       if (!window.HiveApi || typeof HiveApi.operationRcOverview !== "function") {
         throw new Error("Could not load the resource credit cost.");
       }
-      const overview = await HiveApi.operationRcOverview(user);
+      const wallet = profileState.wallet;
+      const overview = await HiveApi.operationRcOverview(user, {
+        account: wallet && wallet.account,
+        props: wallet && wallet.props,
+      });
       if (gen !== rcOverviewGen) return;
       const ov = $("#rcOverlay");
       if (!ov || ov.hidden) return;
