@@ -4544,7 +4544,7 @@ let CS77_FILTER_LOW_REP = 20;
     const reason = isLowReputation(node && node.author_reputation)
       ? "content hidden due to low reputation"
       : "content hidden due to moderation";
-    return `<p class="muted-notice"><span>${reason}</span><span class="show-muted">${label}</span></p>`;
+    return `<p class="muted-notice"><span>${reason}</span><button type="button" class="show-muted">${label}</button></p>`;
   }
 
   function revealMuted(btn) {
@@ -5029,6 +5029,108 @@ let CS77_FILTER_LOW_REP = 20;
     return overlay.querySelector("[role='dialog'], .overlay-card") || overlay;
   }
 
+  // The highest open .overlay stays active. Every other body child is inert,
+  // so Tab cannot leave the dialog. A dialog stacked on another one, such as
+  // the sign dialog over Send, takes the layer underneath out with the page.
+  function dialogZ(el) {
+    const z = parseInt(getComputedStyle(el).zIndex, 10);
+    return Number.isFinite(z) ? z : 0;
+  }
+
+  function topOpenDialog() {
+    const open = [];
+    document.querySelectorAll(".overlay").forEach((el) => {
+      if (!el.hidden) open.push(el);
+    });
+    if (!open.length) return null;
+    open.sort((a, b) => {
+      const dz = dialogZ(a) - dialogZ(b);
+      if (dz) return dz;
+      if (a === b) return 0;
+      return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+    });
+    return open[open.length - 1];
+  }
+
+  function releaseDialogInert(node) {
+    if (!node || !node.hasAttribute("data-dialog-inert")) return;
+    node.inert = node.getAttribute("data-dialog-inert") === "1";
+    node.removeAttribute("data-dialog-inert");
+  }
+
+  function syncDialogInert() {
+    const body = document.body;
+    if (!body) return;
+    const top = topOpenDialog();
+    const kids = body.children;
+    for (let i = 0; i < kids.length; i++) {
+      const node = kids[i];
+      if (!node || node.id === "errorBanner" || node.tagName === "SCRIPT") continue;
+      if (!top || node === top) {
+        releaseDialogInert(node);
+        continue;
+      }
+      if (node.hasAttribute("data-dialog-inert")) {
+        node.inert = true;
+        continue;
+      }
+      node.setAttribute("data-dialog-inert", node.inert ? "1" : "0");
+      node.inert = true;
+    }
+  }
+
+  function dialogTabbables(root) {
+    const list = [];
+    const nodes = root.querySelectorAll("a[href], button, input, select, textarea, [tabindex]");
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (el.disabled) continue;
+      if (el.getAttribute("tabindex") === "-1") continue;
+      if (el.closest("[hidden]") || el.closest("[inert]")) continue;
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") continue;
+      list.push(el);
+    }
+    return list;
+  }
+
+  // inert keeps the page out of the tab order. Tab still steps onto body at
+  // the ends, so the top dialog wraps instead.
+  function trapDialogTab(e) {
+    if (e.key !== "Tab" || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    const top = topOpenDialog();
+    if (!top) return;
+    const items = dialogTabbables(top);
+    if (!items.length) {
+      e.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    const inside = Boolean(active && holds(top, active));
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey) {
+      if (!inside || active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+      return;
+    }
+    if (!inside || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  function watchDialogInert() {
+    if (!document.body || document.body.dataset.dialogInertWatch === "1") return;
+    document.body.dataset.dialogInertWatch = "1";
+    const observer = new MutationObserver(() => syncDialogInert());
+    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    document.addEventListener("keydown", trapDialogTab);
+    syncDialogInert();
+  }
+
   function holds(layer, node) {
     return Boolean(layer && node && (node === layer || layer.contains(node)));
   }
@@ -5057,6 +5159,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function focusDialog(overlay, from) {
     if (!overlay || overlay.hidden) return;
+    syncDialogInert();
     if (!dialogReturn.has(overlay)) dialogReturn.set(overlay, outsideEl(from, overlay));
     const active = document.activeElement;
     if (active && active !== document.body && holds(overlay, active)) return;
@@ -5069,8 +5172,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  // The close calls this before hidden. Focus is still inside, or a backdrop
-  // click has already moved it to the body without choosing another control.
+  // hideDialog hides the dialog and clears inert before this runs. Hiding the
+  // focused control moves focus to the body, and restoring first would fail
+  // while the page is still inert. A backdrop click blurs to the body too.
   function restoreDialog(overlay) {
     if (!overlay || !dialogReturn.has(overlay)) return;
     const saved = dialogReturn.get(overlay);
@@ -5092,8 +5196,16 @@ let CS77_FILTER_LOW_REP = 20;
 
   function hideDialog(el) {
     if (!el) return;
-    restoreDialog(el);
+    const wasOpen = !el.hidden;
     el.hidden = true;
+    syncDialogInert();
+    restoreDialog(el);
+    if (!wasOpen) return;
+    const top = topOpenDialog();
+    if (!top) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== document.documentElement && holds(top, active)) return;
+    focusDialog(top);
   }
 
   function focusNotificationsPanel() {
@@ -13603,7 +13715,7 @@ let CS77_FILTER_LOW_REP = 20;
         ? `<img class="card-thumb" src="${HiveMd.escapeHtml(cardThumbSrc(img))}" alt="">`
         : "";
       const thumbLink = thumb
-        ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>`
+        ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}" tabindex="-1">${thumb}</a>`
         : "";
       const videoKind = video ? feedPlayerKind(video) : "";
       const videoHtml = video
@@ -23145,22 +23257,10 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(card && target && typeof target.nodeType === "number" && card.contains(target));
   }
 
-  // The question is the only layer that takes input. The zap dialog and the feed stay inert.
-  function holdZapPayPage(on) {
-    const pay = $("#zapPayOverlay");
-    const nodes = document.body ? document.body.children : [];
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (!node || node === pay) continue;
-      if (on) {
-        if (node.hasAttribute("data-zap-pay-inert")) continue;
-        node.setAttribute("data-zap-pay-inert", node.inert ? "1" : "0");
-        node.inert = true;
-      } else if (node.hasAttribute("data-zap-pay-inert")) {
-        node.inert = node.getAttribute("data-zap-pay-inert") === "1";
-        node.removeAttribute("data-zap-pay-inert");
-      }
-    }
+  // The question is the only layer that takes input. syncDialogInert covers the
+  // zap dialog and the page. pointer-events on those layers stays in CSS.
+  function holdZapPayPage() {
+    syncDialogInert();
   }
 
   function releaseZapPayPage() {
@@ -38786,6 +38886,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function boot() {
     if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    watchDialogInert();
     bindRootLinks();
     bindLogoSpin();
     bindEmbedLogoSpin();

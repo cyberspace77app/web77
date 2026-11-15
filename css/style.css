@@ -2224,12 +2224,28 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 
 .show-muted {
   flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
   color: var(--gray);
   cursor: pointer;
 }
 
-.show-muted:hover {
+.show-muted:hover,
+.show-muted:focus-visible {
   color: var(--yellow);
+}
+
+.show-muted:focus {
+  outline: none;
+}
+
+.show-muted:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .comment.is-muted {
