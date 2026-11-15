@@ -7004,9 +7004,9 @@ let CS77_FILTER_LOW_REP = 20;
   function rcLinkCaption() {
     const user = observer();
     if (!user || !accountState.loaded || accountState.user !== user || accountState.rc == null) {
-      return "Resource credits";
+      return "resource credits";
     }
-    return formatResourcePercent(accountState.rc) + " Resource credits";
+    return formatResourcePercent(accountState.rc) + " resource credits";
   }
 
   function paintRcLinkCaption() {
