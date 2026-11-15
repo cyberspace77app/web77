@@ -29028,7 +29028,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  const RC_OVERVIEW_NOTE = "Current RC prices for typical operations on the hive blockchain.";
+  const RC_OVERVIEW_NOTE = "Current RC prices for common operations on the hive blockchain.";
 
   function formatRcLabel(value) {
     const parts = delegationRcParts(value);
