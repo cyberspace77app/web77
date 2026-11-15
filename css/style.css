@@ -52,8 +52,7 @@
 
 h1[tabindex="-1"]:focus,
 h2[tabindex="-1"]:focus {
-  outline: 1px solid var(--yellow);
-  outline-offset: 3px;
+  outline: none;
 }
 
 *,
