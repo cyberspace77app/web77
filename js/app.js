@@ -662,6 +662,7 @@ let CS77_FILTER_LOW_REP = 20;
     check: 0,
     feeGen: 0,
   };
+  let rcOverviewGen = 0;
   const delegationView = {
     loadGen: 0,
     account: "",
@@ -6192,6 +6193,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeConvertOverlay();
           closeCreateAccountOverlay();
           closeClaimTokensOverlay();
+          closeRcOverlay();
         }
       }
     }
@@ -6202,6 +6204,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeRcOverlay();
       closeLightningDialog({ skipHistory: true });
       stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
       closeProfileQrDialog({ skipHistory: true });
@@ -6628,6 +6631,7 @@ let CS77_FILTER_LOW_REP = 20;
     downvoteMana: null,
     voteValue: null,
     rc: null,
+    rcAt: 0,
     social: null,
     loaded: false,
     loadedAt: 0,
@@ -6645,6 +6649,7 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.downvoteMana = null;
     accountState.voteValue = null;
     accountState.rc = null;
+    accountState.rcAt = 0;
     accountState.social = null;
     accountState.loaded = false;
     accountState.loadedAt = 0;
@@ -6996,8 +7001,60 @@ let CS77_FILTER_LOW_REP = 20;
     stat.classList.toggle("is-low", pct <= 20);
   }
 
+  function rcLinkCaption() {
+    const user = observer();
+    if (!user || !accountState.loaded || accountState.user !== user || accountState.rc == null) {
+      return "Resource credits";
+    }
+    return formatResourcePercent(accountState.rc) + " Resource credits";
+  }
+
+  function paintRcLinkCaption() {
+    const link = document.querySelector(".wallet-rc-link");
+    if (!link) return;
+    const text = rcLinkCaption();
+    if (link.textContent !== text) link.textContent = text;
+  }
+
+  let walletRcRefresh = 0;
+
+  function waitMs(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  // Resource credits change when the transaction is in a block. Read again
+  // across a few blocks if the rounded percent is still the old one.
+  // This does not reload the account, so a local balance update stays put.
+  async function refreshWalletRc() {
+    const user = observer();
+    if (!user || !accountState.loaded || accountState.user !== user) return;
+    const gen = ++walletRcRefresh;
+    const before = accountState.rc;
+    const waits = [0, 3000, 3000, 3000];
+    for (let i = 0; i < waits.length; i++) {
+      if (waits[i]) await waitMs(waits[i]);
+      if (gen !== walletRcRefresh || observer() !== user || accountState.user !== user) return;
+      let pct = null;
+      try {
+        if (!window.HiveApi || typeof HiveApi.accountRcPercent !== "function") return;
+        pct = await HiveApi.accountRcPercent(user);
+      } catch {
+        pct = null;
+      }
+      if (gen !== walletRcRefresh || observer() !== user || accountState.user !== user) return;
+      if (pct == null || pct === before) continue;
+      accountState.rc = pct;
+      accountState.rcAt = Date.now();
+      paintAccountResources();
+      return;
+    }
+  }
+
   function paintAccountResources() {
     paintSessionAvatar();
+    paintRcLinkCaption();
     const el = $("#sessionAccountStats");
     if (!el) return;
     const mana = el.querySelector("[data-stat='mana']");
@@ -7036,6 +7093,8 @@ let CS77_FILTER_LOW_REP = 20;
     const metadata = metadataFromAccount(account);
     const profileImage = profileImageFromMetadata(metadata);
     const sameUser = accountState.user === user;
+    const loadStarted = accountLoad && accountLoad.user === user ? accountLoad.started : 0;
+    const keepRc = Boolean(sameUser && accountState.rcAt && loadStarted && accountState.rcAt > loadStarted);
     accountState.user = user;
     accountState.account = account;
     accountState.metadata = metadata;
@@ -7044,7 +7103,12 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.votingMana = info.votingMana;
     accountState.downvoteMana = info.downvoteMana == null ? null : info.downvoteMana;
     accountState.voteValue = info.voteValue;
-    accountState.rc = info.rc;
+    if (keepRc) {
+      /* This load started before a wallet operation refreshed resource credits. */
+    } else {
+      accountState.rc = info.rc;
+      if (!sameUser) accountState.rcAt = 0;
+    }
     if (!sameUser) accountState.social = null;
     accountState.loaded = true;
     accountState.loadedAt = Date.now();
@@ -7064,6 +7128,7 @@ let CS77_FILTER_LOW_REP = 20;
     accountState.downvoteMana = null;
     accountState.voteValue = null;
     accountState.rc = null;
+    accountState.rcAt = 0;
     accountState.social = null;
     accountState.loaded = false;
     accountState.loadedAt = 0;
@@ -7080,7 +7145,7 @@ let CS77_FILTER_LOW_REP = 20;
     const promise = new Promise((resolve) => {
       resolveLoad = resolve;
     });
-    accountLoad = { user, gen, promise };
+    accountLoad = { user, gen, promise, started: Date.now() };
     (async () => {
       try {
         const info = await HiveApi.getAccountResources(user);
@@ -8109,6 +8174,11 @@ let CS77_FILTER_LOW_REP = 20;
     const claimOv = $("#claimTokensOverlay");
     if (claimOv && !claimOv.hidden) {
       closeClaimTokensOverlay();
+      return;
+    }
+    const rcOv = $("#rcOverlay");
+    if (rcOv && !rcOv.hidden) {
+      closeRcOverlay();
       return;
     }
     const convertOv = $("#convertOverlay");
@@ -27421,6 +27491,9 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="button" class="btn-primary btn-compact wallet-create-account-btn">Create account</button>
           <a class="btn-ghost btn-compact wallet-tools-keys" href="${appHref("/settings/keys")}">Generate Keys</a>
         </div>
+        <p class="wallet-note wallet-tools-rc">
+          <button type="button" class="wallet-rc-link">${rcLinkCaption()}</button>
+        </p>
       </section>`;
   }
 
@@ -27947,6 +28020,7 @@ let CS77_FILTER_LOW_REP = 20;
         },
       });
       closeWalletOverlay();
+      refreshWalletRc();
       if (kind === "stake-hive" || kind === "stake-hbd") {
         // Drop a refresh that started before this signature so it cannot
         // paint the pre-stake account over the balances just applied.
@@ -28352,6 +28426,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeSendOverlay();
       resourceGen += 1;
       applyWalletSend(profileState.wallet, asset, amount);
+      refreshWalletRc();
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
       setSendStatus(
@@ -28600,6 +28675,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       resourceGen += 1;
       applyWalletConvert(profileState.wallet, asset, amount, requestId);
+      refreshWalletRc();
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
       setConvertStatus(
@@ -28848,6 +28924,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeClaimTokensOverlay();
       resourceGen += 1;
       applyWalletClaimTokens(profileState.wallet, count);
+      refreshWalletRc();
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
       setClaimStatus(
@@ -28856,6 +28933,213 @@ let CS77_FILTER_LOW_REP = 20;
       );
       claimDialogBusy(false);
     }
+  }
+
+  const RC_OVERVIEW_NOTE =
+    "Current pool prices for a typical upvote, a normal article, a short reply, a typical transfer, and one Splinterlands battle. A battle is a find match and a team submit.";
+
+  function formatRcLabel(value) {
+    const parts = delegationRcParts(value);
+    return parts.value + " " + parts.unit;
+  }
+
+  function formatRcRecharge(seconds) {
+    const total = Number(seconds);
+    if (!Number.isFinite(total)) return "";
+    if (total <= 0) return "Fully recharged.";
+    if (total < 60) return "Recharged in less than a minute.";
+    const minute = 60;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    let left = Math.floor(total);
+    const parts = [];
+    const days = Math.floor(left / day);
+    left -= days * day;
+    const hours = Math.floor(left / hour);
+    left -= hours * hour;
+    const minutes = Math.floor(left / minute);
+    if (days) parts.push(days + " day" + (days === 1 ? "" : "s"));
+    if (hours) parts.push(hours + " hour" + (hours === 1 ? "" : "s"));
+    if (minutes) parts.push(minutes + " minute" + (minutes === 1 ? "" : "s"));
+    if (!parts.length) return "Recharged in less than a minute.";
+    if (parts.length === 1) return "Recharged in " + parts[0] + ".";
+    const last = parts.pop();
+    return "Recharged in " + parts.join(" ") + " and " + last + ".";
+  }
+
+  function setRcStatus(msg, isError) {
+    const el = $("#rcStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
+  }
+
+  function rcLeftLabel(current, cost) {
+    let mana;
+    let price;
+    try {
+      mana = BigInt(String(current));
+      price = BigInt(String(cost));
+    } catch {
+      return "";
+    }
+    if (price <= 0n || mana < 0n) return "";
+    if (mana < price) return "0";
+    const left = mana / price;
+    const shown =
+      left > BigInt(Number.MAX_SAFE_INTEGER)
+        ? left.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+        : formatGroupedNumber(Number(left), 0);
+    return "about " + shown;
+  }
+
+  function rcOverviewTable(rows, current) {
+    const table = document.createElement("table");
+    table.className = "rc-cost-table";
+    const head = document.createElement("tr");
+    const labels = ["Operation", "Cost"];
+    if (current != null) labels.push("Left");
+    labels.forEach((label, i) => {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = label;
+      if (i > 0) th.className = "rc-cost-num";
+      head.append(th);
+    });
+    const thead = document.createElement("thead");
+    thead.append(head);
+    const tbody = document.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const name = document.createElement("td");
+      name.textContent = row && row.label ? row.label : "";
+      const cost = document.createElement("td");
+      cost.className = "rc-cost-num rc-cost-amt";
+      cost.textContent = formatRcLabel(row && row.cost);
+      tr.append(name, cost);
+      if (current != null) {
+        const left = document.createElement("td");
+        left.className = "rc-cost-num";
+        left.textContent = rcLeftLabel(current, row && row.cost);
+        tr.append(left);
+      }
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    return table;
+  }
+
+  function paintRcOverview(overview) {
+    const lead = $("#rcLead");
+    const note = $("#rcNote");
+    const host = $("#rcTable");
+    const rows = overview && Array.isArray(overview.rows) ? overview.rows : [];
+    if (!rows.length) {
+      if (lead) lead.textContent = "";
+      if (note) note.textContent = "";
+      const recharge = $("#rcRecharge");
+      if (recharge) recharge.textContent = "";
+      if (host) host.replaceChildren();
+      setRcStatus("Could not load the resource credit cost.", true);
+      return;
+    }
+    const hasMana = overview.current != null && overview.max != null && overview.percent != null;
+    if (lead) {
+      if (hasMana) {
+        lead.innerHTML =
+          '<span class="rc-balance-amt">' +
+          roundedResourcePercent(overview.percent) +
+          "%</span> available. " +
+          '<span class="rc-balance-amt">' +
+          formatRcLabel(overview.current) +
+          "</span> of " +
+          '<span class="rc-balance-amt">' +
+          formatRcLabel(overview.max) +
+          "</span>.";
+      } else {
+        lead.textContent = "Current pool prices for a typical transaction.";
+      }
+    }
+    if (note) note.textContent = RC_OVERVIEW_NOTE;
+    const recharge = $("#rcRecharge");
+    if (recharge) {
+      recharge.textContent = hasMana ? formatRcRecharge(overview.rechargeSeconds) : "";
+    }
+    if (host) host.replaceChildren(rcOverviewTable(rows, hasMana ? overview.current : null));
+    setRcStatus("");
+  }
+
+  function closeRcOverlay() {
+    hideDialog($("#rcOverlay"));
+    rcOverviewGen += 1;
+    const lead = $("#rcLead");
+    if (lead) lead.textContent = "";
+    const host = $("#rcTable");
+    if (host) host.replaceChildren();
+    const note = $("#rcNote");
+    if (note) note.textContent = "";
+    const recharge = $("#rcRecharge");
+    if (recharge) recharge.textContent = "";
+    setRcStatus("");
+  }
+
+  async function loadRcOverview() {
+    const gen = ++rcOverviewGen;
+    const user = observer();
+    const lead = $("#rcLead");
+    if (lead) lead.textContent = "Loading resource credits\u2026";
+    const host = $("#rcTable");
+    if (host) host.replaceChildren();
+    const note = $("#rcNote");
+    if (note) note.textContent = "";
+    const recharge = $("#rcRecharge");
+    if (recharge) recharge.textContent = "";
+    setRcStatus("");
+    try {
+      if (!window.HiveApi || typeof HiveApi.operationRcOverview !== "function") {
+        throw new Error("Could not load the resource credit cost.");
+      }
+      const overview = await HiveApi.operationRcOverview(user);
+      if (gen !== rcOverviewGen) return;
+      const ov = $("#rcOverlay");
+      if (!ov || ov.hidden) return;
+      paintRcOverview(overview);
+    } catch (err) {
+      if (gen !== rcOverviewGen) return;
+      const ov = $("#rcOverlay");
+      if (!ov || ov.hidden) return;
+      if (lead) lead.textContent = "";
+      if (note) note.textContent = "";
+      const recharge = $("#rcRecharge");
+      if (recharge) recharge.textContent = "";
+      if (host) host.replaceChildren();
+      setRcStatus((err && err.message) || "Could not load the resource credit cost.", true);
+    }
+  }
+
+  function openRcOverlay() {
+    const wallet = profileState.wallet;
+    if (!wallet || !isOwnAuthor(profileState.author)) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    const focusFrom = document.activeElement;
+    const ov = $("#rcOverlay");
+    if (!ov) return;
+    const lead = $("#rcLead");
+    if (lead) lead.textContent = "Loading resource credits\u2026";
+    const host = $("#rcTable");
+    if (host) host.replaceChildren();
+    const note = $("#rcNote");
+    if (note) note.textContent = "";
+    const recharge = $("#rcRecharge");
+    if (recharge) recharge.textContent = "";
+    setRcStatus("");
+    ov.hidden = false;
+    focusDialog(ov, focusFrom);
+    loadRcOverview();
   }
 
   function hiveAccountNameOk(name) {
@@ -29198,6 +29482,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (profileState.wallet === wallet) {
           resourceGen += 1;
           applyWalletCreateAccount(wallet, choice);
+          refreshWalletRc();
         }
       }
       if (!live()) return;
@@ -29818,6 +30103,7 @@ let CS77_FILTER_LOW_REP = 20;
       } else {
         applyRcDelegation(target, prevRc, nextRc);
       }
+      refreshWalletRc();
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
       setDelegateStatus(
@@ -29865,6 +30151,7 @@ let CS77_FILTER_LOW_REP = 20;
       .then(() => {
         if (profileState.wallet !== wallet) return;
         animateClaimRewards(wallet);
+        refreshWalletRc();
       })
       .catch((err) => {
         if (profileState.author !== name) return;
@@ -38006,6 +38293,7 @@ let CS77_FILTER_LOW_REP = 20;
           closeConvertOverlay();
           closeCreateAccountOverlay();
           closeClaimTokensOverlay();
+          closeRcOverlay();
         }
       }
     }
@@ -38016,6 +38304,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeConvertOverlay();
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
+      closeRcOverlay();
       closeLightningDialog({ skipHistory: true });
       stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
       closeProfileQrDialog({ skipHistory: true });
@@ -39674,6 +39963,12 @@ let CS77_FILTER_LOW_REP = 20;
         openCreateAccountOverlay();
         return;
       }
+      const rcLink = e.target.closest(".wallet-rc-link");
+      if (rcLink && inInteractiveSurface(rcLink)) {
+        e.preventDefault();
+        openRcOverlay();
+        return;
+      }
       const delegatedToggle = e.target.closest(".wallet-delegated-toggle");
       if (delegatedToggle && inInteractiveSurface(delegatedToggle)) {
         e.preventDefault();
@@ -40476,6 +40771,18 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && createAccountOverlay.contains(active)) return;
         closeCreateAccountOverlay();
+      });
+    }
+
+    const rcOverlay = $("#rcOverlay");
+    if (rcOverlay) {
+      const rcClose = $("#rcClose");
+      if (rcClose) rcClose.addEventListener("click", closeRcOverlay);
+      rcOverlay.addEventListener("click", (e) => {
+        if (e.target !== rcOverlay) return;
+        const active = document.activeElement;
+        if (active && rcOverlay.contains(active)) return;
+        closeRcOverlay();
       });
     }
 

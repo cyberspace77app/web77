@@ -5296,6 +5296,32 @@ p.wallet-tools-tokens {
   margin: 0 0 0.9rem;
 }
 
+p.wallet-tools-rc {
+  margin: 1rem 0;
+}
+
+button.wallet-rc-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--gray);
+  cursor: pointer;
+  text-align: left;
+}
+
+button.wallet-rc-link:hover,
+button.wallet-rc-link:focus-visible {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+button.wallet-rc-link:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
 .wallet-tools-line {
   display: flex;
   flex-wrap: wrap;
@@ -6250,6 +6276,7 @@ a.wallet-tx-time:hover {
 #convertStatus:empty,
 #claimTokensStatus:empty,
 #createAccountStatus:empty,
+#rcStatus:empty,
 #proposalCreateStatus:empty,
 #proposalCancelStatus:empty,
 #proxyStatus:empty,
@@ -6262,6 +6289,7 @@ a.wallet-tx-time:hover {
 #convertStatus.is-error,
 #claimTokensStatus.is-error,
 #createAccountStatus.is-error,
+#rcStatus.is-error,
 #proposalCreateStatus.is-error,
 #proposalCancelStatus.is-error,
 #proxyStatus.is-error,
@@ -6599,6 +6627,69 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   overscroll-behavior: contain;
 }
 
+#rcOverlay .overlay-card {
+  margin-bottom: 0;
+  max-height: calc(100dvh - 3rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#rcLead:empty,
+#rcNote:empty,
+#rcRecharge:empty {
+  display: none;
+}
+
+#rcRecharge {
+  margin-top: -0.45rem;
+}
+
+#rcOverlay .rc-balance-amt {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+#rcOverlay .rc-cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+#rcOverlay .rc-cost-table th {
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--gray);
+  text-align: left;
+  padding: 0 0.75rem 0.45rem 0;
+}
+
+#rcOverlay .rc-cost-table th.rc-cost-num,
+#rcOverlay .rc-cost-table td.rc-cost-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#rcOverlay .rc-cost-table td {
+  padding: 0.48rem 0.75rem 0.48rem 0;
+  border-top: 1px solid var(--border);
+  vertical-align: baseline;
+  color: var(--gray);
+}
+
+#rcOverlay .rc-cost-table td.rc-cost-amt {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+#rcOverlay .rc-cost-table td:last-child,
+#rcOverlay .rc-cost-table th:last-child {
+  padding-right: 0;
+}
+
 #createAccountOverlay .subspace-key-line {
   margin-bottom: 0.45rem;
 }
@@ -6621,7 +6712,8 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
 }
 
 @media (max-width: 720px) {
-  #createAccountOverlay .overlay-card {
+  #createAccountOverlay .overlay-card,
+  #rcOverlay .overlay-card {
     max-height: calc(100dvh - 1.5rem - env(safe-area-inset-bottom, 0px));
   }
 }

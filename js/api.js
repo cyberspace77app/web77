@@ -818,6 +818,18 @@
     return Array.isArray(list) && list.length ? list[0] : null;
   }
 
+  // Same rounded percent as the header. preserveBig keeps mana above 2^53 exact.
+  async function accountRcPercent(username) {
+    const name = accountName(username);
+    if (!name) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const result = await hiveRpc("rc_api.find_rc_accounts", { accounts: [name] }, true);
+    const list = result && result.rc_accounts;
+    const rcAccount = Array.isArray(list) && list.length ? list[0] : null;
+    if (!rcAccount) return null;
+    return manabarPercent(rcAccount.rc_manabar, intBig(rcAccount.max_rc), now);
+  }
+
   async function getAccountReputation(username) {
     const name = accountName(username);
     if (!name) return null;
@@ -1624,6 +1636,243 @@
     return { pending: pending, max: max };
   }
 
+  // Signed sizes for one operation and one signature. Vote and transfer sizes
+  // are the chain's latest single-op daily averages. A post is a normal root
+  // article (median of the newest bridge page: about 2.9 KB, 35-character
+  // permlink). A comment is a short reply (about 400 bytes, 32-character
+  // permlink). State and execution still come from live size_info.
+  const RC_VOTE_HISTORY_BYTES = 141;
+  const RC_POST_HISTORY_BYTES = 2911;
+  const RC_POST_PERMLINK_CHARS = 35;
+  const RC_COMMENT_HISTORY_BYTES = 403;
+  const RC_COMMENT_PERMLINK_CHARS = 32;
+  const RC_TRANSFER_HISTORY_BYTES = 190;
+  const RC_CUSTOM_JSON_OP_ID = 18;
+  const RC_BATTLE_ACCOUNT_CHARS = 12;
+  // A ranked Splinterlands battle broadcasts these two posting custom_json
+  // operations. The JSON is a representative payload. A few extra bytes barely
+  // move the price. Each broadcast is priced on its own.
+  const RC_FIND_MATCH_ID = "sm_find_match";
+  const RC_FIND_MATCH_JSON = JSON.stringify({
+    match_type: "Ranked",
+    app: "splinterlands/0.7.60",
+    n: "abcdefghij",
+  });
+  const RC_SUBMIT_TEAM_ID = "sm_submit_team";
+  const RC_SUBMIT_TEAM_JSON = JSON.stringify({
+    trx_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    team_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    app: "splinterlands/0.7.60",
+    n: "abcdefghij",
+  });
+
+  function utf8ByteLength(text) {
+    const s = String(text == null ? "" : text);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(s).length;
+    return unescape(encodeURIComponent(s)).length;
+  }
+
+  function packedStringBytes(text) {
+    const n = utf8ByteLength(text);
+    return varintBytes(n) + n;
+  }
+
+  function signedSingleOpTxBytes(opBytes) {
+    return 2 + 4 + 4 + varintBytes(1) + opBytes + varintBytes(0) + varintBytes(1) + CLAIM_SIGNATURE_BYTES;
+  }
+
+  function customJsonTxBytes(id, json, accountChars) {
+    const nameLen = accountChars > 0 ? accountChars : 0;
+    const op =
+      varintBytes(RC_CUSTOM_JSON_OP_ID) +
+      varintBytes(0) +
+      varintBytes(1) +
+      varintBytes(nameLen) +
+      nameLen +
+      packedStringBytes(id) +
+      packedStringBytes(json);
+    return signedSingleOpTxBytes(op);
+  }
+
+  // resource_weights are not in get_resource_pool. get_rc_stats.share is the
+  // popularity split in basis points at the start of the archived day, in
+  // resource_names order. The chain prices resource i with
+  // regen * share[i] / 10000. new_accounts is always another full share and
+  // these operations do not use it. Pools and regen are live.
+  function rcShareByName(statsWrap, names) {
+    const stats = statsWrap && (statsWrap.rc_stats || statsWrap);
+    const share = stats && stats.share;
+    if (!Array.isArray(names) || !Array.isArray(share) || share.length !== names.length) {
+      throw new Error("Could not load the resource credit cost.");
+    }
+    const out = {};
+    for (let i = 0; i < names.length; i++) {
+      const bp = Number(share[i]);
+      if (!Number.isFinite(bp) || bp < 0) throw new Error("Could not load the resource credit cost.");
+      out[names[i]] = BigInt(Math.floor(bp));
+    }
+    return out;
+  }
+
+  function rcSizeNumber(info, key) {
+    if (!info || info[key] == null || info[key] === "") {
+      throw new Error("Could not load the resource credit cost.");
+    }
+    return intBig(info[key]);
+  }
+
+  function operationResourceCounts(sizeInfo, spec) {
+    const stateInfo = sizeInfo && sizeInfo.resource_state_bytes;
+    const execInfo = sizeInfo && sizeInfo.resource_execution_time;
+    const hours = BigInt(CLAIM_TX_EXPIRATION_HOURS);
+    let state = rcSizeNumber(stateInfo, "transaction_base_size") * hours;
+    if (spec.state === "vote") state += rcSizeNumber(stateInfo, "vote_size");
+    else if (spec.state === "comment") {
+      state += rcSizeNumber(stateInfo, "comment_base_size");
+      state += rcSizeNumber(stateInfo, "comment_permlink_char_size") * BigInt(spec.permlink || 0);
+    }
+    const exec =
+      rcSizeNumber(execInfo, spec.exec) +
+      rcSizeNumber(execInfo, "transaction_time") +
+      rcSizeNumber(execInfo, "verify_authority_time");
+    return {
+      resource_history_bytes: BigInt(spec.history),
+      resource_new_accounts: 0n,
+      resource_market_bytes: BigInt(spec.market || 0),
+      resource_state_bytes: state,
+      resource_execution_time: exec,
+    };
+  }
+
+  function pricedOperationRc(params, poolRoot, regen, shareByName, counts) {
+    const names = params && params.resource_names;
+    const curves = params && params.resource_params;
+    const pools = poolRoot && poolRoot.resource_pool;
+    if (!Array.isArray(names) || !curves || !pools) {
+      throw new Error("Could not load the resource credit cost.");
+    }
+    let total = 0n;
+    for (let i = 0; i < names.length; i++) {
+      const key = names[i];
+      const row = curves[key];
+      const dynamics = row && row.resource_dynamics_params;
+      const unit = intBig(dynamics && dynamics.resource_unit);
+      if (!row || unit <= 0n) throw new Error("Could not load the resource credit cost.");
+      const count = (counts[key] || 0n) * unit;
+      const pool = intBig(pools[key] && pools[key].pool);
+      const share = shareByName[key] || 0n;
+      const slice = (regen * share) / 10000n;
+      total += rcCurveCost(row.price_curve_params, pool, count, slice);
+    }
+    return total;
+  }
+
+  function rcManaSnapshot(rcResult, nowSec) {
+    const list = rcResult && rcResult.rc_accounts;
+    const rcAccount = Array.isArray(list) && list.length ? list[0] : null;
+    if (!rcAccount) return { current: null, max: null, percent: null };
+    const max = intBig(rcAccount.max_rc);
+    const current = rcCurrentMana(rcAccount, nowSec);
+    let percent = 0;
+    let rechargeSeconds = null;
+    if (max > 0n) {
+      percent = Number((current * 100n + max / 2n) / max);
+      if (!Number.isFinite(percent) || percent <= 0) percent = 0;
+      else if (percent >= 100) percent = 100;
+      if (current >= max) rechargeSeconds = 0;
+      else {
+        const regen = BigInt(HIVE_RC_REGEN_TIME);
+        const missing = max - current;
+        const seconds = (missing * regen + max - 1n) / max;
+        rechargeSeconds =
+          seconds > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(seconds);
+      }
+    }
+    return {
+      current: current.toString(),
+      max: max.toString(),
+      percent: percent,
+      rechargeSeconds: rechargeSeconds,
+    };
+  }
+
+  // Current resource credits, when a name is given, and the RC price of a
+  // typical upvote, post, comment, transfer, and Splinterlands battle.
+  async function operationRcOverview(username) {
+    const name = accountName(username);
+    const now = Math.floor(Date.now() / 1000);
+    const rcCall = name
+      ? hiveRpc("rc_api.find_rc_accounts", { accounts: [name] }, true).catch(() => null)
+      : Promise.resolve(null);
+    const [params, pools, props, statsWrap, rcResult] = await Promise.all([
+      hiveRpc("rc_api.get_resource_params", {}, true),
+      hiveRpc("rc_api.get_resource_pool", {}, true),
+      hiveRpc("condenser_api.get_dynamic_global_properties", [], true),
+      hiveRpc("rc_api.get_rc_stats", {}, true),
+      rcCall,
+    ]);
+    if (!props) throw new Error("Could not load the resource credit cost.");
+    const names = params && params.resource_names;
+    const shareByName = rcShareByName(statsWrap, names);
+    const regenDiv = BigInt(Math.floor(HIVE_RC_REGEN_TIME / HIVE_BLOCK_INTERVAL));
+    const regen = regenDiv > 0n ? vestAmountRaw(props.total_vesting_shares) / regenDiv : 0n;
+    if (regen <= 0n) throw new Error("Could not load the resource credit cost.");
+    const sizeInfo = params && params.size_info;
+    const costOf = function (spec) {
+      return pricedOperationRc(params, pools, regen, shareByName, operationResourceCounts(sizeInfo, spec));
+    };
+    const findBytes = customJsonTxBytes(RC_FIND_MATCH_ID, RC_FIND_MATCH_JSON, RC_BATTLE_ACCOUNT_CHARS);
+    const submitBytes = customJsonTxBytes(RC_SUBMIT_TEAM_ID, RC_SUBMIT_TEAM_JSON, RC_BATTLE_ACCOUNT_CHARS);
+    const battle =
+      costOf({ history: findBytes, state: "tx", exec: "custom_json_time" }) +
+      costOf({ history: submitBytes, state: "tx", exec: "custom_json_time" });
+    const mana = rcManaSnapshot(rcResult, now);
+    return {
+      current: mana.current,
+      max: mana.max,
+      percent: mana.percent,
+      rechargeSeconds: mana.rechargeSeconds,
+      rows: [
+        {
+          id: "upvote",
+          label: "Upvote",
+          cost: costOf({ history: RC_VOTE_HISTORY_BYTES, state: "vote", exec: "vote_time" }).toString(),
+        },
+        {
+          id: "post",
+          label: "Post",
+          cost: costOf({
+            history: RC_POST_HISTORY_BYTES,
+            state: "comment",
+            permlink: RC_POST_PERMLINK_CHARS,
+            exec: "comment_time",
+          }).toString(),
+        },
+        {
+          id: "comment",
+          label: "Comment",
+          cost: costOf({
+            history: RC_COMMENT_HISTORY_BYTES,
+            state: "comment",
+            permlink: RC_COMMENT_PERMLINK_CHARS,
+            exec: "comment_time",
+          }).toString(),
+        },
+        {
+          id: "transfer",
+          label: "Transfer",
+          cost: costOf({
+            history: RC_TRANSFER_HISTORY_BYTES,
+            market: RC_TRANSFER_HISTORY_BYTES,
+            state: "tx",
+            exec: "transfer_time",
+          }).toString(),
+        },
+        { id: "battle", label: "Splinterlands battle", cost: battle.toString() },
+      ],
+    };
+  }
+
   const POLLS_API = "https://polls.hivehub.dev";
 
   function pollsQueryValue(value) {
@@ -1882,8 +2131,10 @@
     getIncomingHpDelegations,
     getIncomingRcDelegations,
     findRcAccount,
+    accountRcPercent,
     rcDelegable,
     claimAccountQuote,
+    operationRcOverview,
     parseAsset,
     accountName,
     validAccountName,
