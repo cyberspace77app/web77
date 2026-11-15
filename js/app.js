@@ -28973,6 +28973,12 @@ let CS77_FILTER_LOW_REP = 20;
     el.classList.toggle("is-error", Boolean(isError) && Boolean(msg));
   }
 
+  function rcAboutCount(count) {
+    const n = Number(count);
+    if (!Number.isFinite(n) || n <= 0) return "0";
+    return "about " + formatGroupedNumber(Math.floor(n), 0);
+  }
+
   function rcLeftLabel(current, cost) {
     let mana;
     let price;
@@ -29019,7 +29025,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (current != null) {
         const left = document.createElement("td");
         left.className = "rc-cost-num";
-        left.textContent = rcLeftLabel(current, row && row.cost);
+        left.textContent =
+          row && row.left != null ? rcAboutCount(row.left) : rcLeftLabel(current, row && row.cost);
         tr.append(left);
       }
       tbody.append(tr);

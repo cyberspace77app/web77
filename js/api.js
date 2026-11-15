@@ -1584,6 +1584,39 @@
     return total;
   }
 
+  // Same caps as the claim dialog: pending token room, the subsidy pool, and
+  // a signed transaction of at most 65536 bytes.
+  function claimAccountCap(account, props, nameLength) {
+    const pendingRaw = Number(account && account.pending_claimed_accounts);
+    const pending = Number.isFinite(pendingRaw) && pendingRaw > 0 ? Math.floor(pendingRaw) : 0;
+    const room = Math.max(0, HIVE_PENDING_CLAIMED_ACCOUNTS_MAX - pending);
+    const subsidies = intBig(props && props.available_account_subsidies);
+    const subsidySlots =
+      subsidies > 0n ? Number(subsidies / BigInt(HIVE_ACCOUNT_SUBSIDY_PRECISION)) : 0;
+    const sizeCap = maxClaimOpsForSize(nameLength > 0 ? nameLength : 0);
+    let cap = room;
+    if (subsidySlots < cap) cap = subsidySlots;
+    if (sizeCap < cap) cap = sizeCap;
+    return { pending: pending, cap: cap };
+  }
+
+  // How many zero-fee claims of this creator fit in one transaction.
+  function claimAccountsAffordable(mana, cap, nameLength, params, pools, regen) {
+    if (!(cap > 0) || mana <= 0n || regen <= 0n) return 0;
+    const costOf = function (n) {
+      return claimTxRcCost(n, nameLength, params, pools, regen);
+    };
+    if (costOf(1) > mana) return 0;
+    let lo = 1;
+    let hi = cap;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2);
+      if (costOf(mid) <= mana) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
   // How many zero-fee claim_account operations the current RC mana can pay,
   // also limited by the subsidy pool, the uint16 token field, and transaction size.
   async function claimAccountQuote(username) {
@@ -1601,39 +1634,15 @@
     if (!account || accountName(account.name) !== name || !props) {
       throw new Error("Could not load the resource credit cost.");
     }
-    const pendingRaw = Number(account.pending_claimed_accounts);
-    const pending = Number.isFinite(pendingRaw) && pendingRaw > 0 ? Math.floor(pendingRaw) : 0;
-    const room = Math.max(0, HIVE_PENDING_CLAIMED_ACCOUNTS_MAX - pending);
-    const subsidies = intBig(props.available_account_subsidies);
-    const subsidySlots =
-      subsidies > 0n ? Number(subsidies / BigInt(HIVE_ACCOUNT_SUBSIDY_PRECISION)) : 0;
-    const sizeCap = maxClaimOpsForSize(name.length);
-    let cap = room;
-    if (subsidySlots < cap) cap = subsidySlots;
-    if (sizeCap < cap) cap = sizeCap;
+    const limit = claimAccountCap(account, props, name.length);
     const rcList = rcResult && rcResult.rc_accounts;
     const rcAccount = Array.isArray(rcList) && rcList.length ? rcList[0] : null;
     const mana = rcCurrentMana(rcAccount, now);
     const regenDiv = BigInt(Math.floor(HIVE_RC_REGEN_TIME / HIVE_BLOCK_INTERVAL));
     const regen = regenDiv > 0n ? vestAmountRaw(props.total_vesting_shares) / regenDiv : 0n;
     if (regen <= 0n) throw new Error("Could not load the resource credit cost.");
-    let max = 0;
-    if (cap > 0 && mana > 0n) {
-      const costOf = function (n) {
-        return claimTxRcCost(n, name.length, params, pools, regen);
-      };
-      if (costOf(1) <= mana) {
-        let lo = 1;
-        let hi = cap;
-        while (lo < hi) {
-          const mid = Math.floor((lo + hi + 1) / 2);
-          if (costOf(mid) <= mana) lo = mid;
-          else hi = mid - 1;
-        }
-        max = lo;
-      }
-    }
-    return { pending: pending, max: max };
+    const max = claimAccountsAffordable(mana, limit.cap, name.length, params, pools, regen);
+    return { pending: limit.pending, max: max };
   }
 
   // Signed sizes for one operation and one signature. Vote and transfer sizes
@@ -1797,19 +1806,23 @@
   }
 
   // Current resource credits, when a name is given, and the RC price of a
-  // typical upvote, post, comment, transfer, and Splinterlands battle.
+  // typical upvote, post, comment, transfer, account creation, and Splinterlands battle.
   async function operationRcOverview(username) {
     const name = accountName(username);
     const now = Math.floor(Date.now() / 1000);
     const rcCall = name
       ? hiveRpc("rc_api.find_rc_accounts", { accounts: [name] }, true).catch(() => null)
       : Promise.resolve(null);
-    const [params, pools, props, statsWrap, rcResult] = await Promise.all([
+    const accountCall = name
+      ? hiveRpc("condenser_api.get_accounts", [[name]], true).catch(() => null)
+      : Promise.resolve(null);
+    const [params, pools, props, statsWrap, rcResult, accounts] = await Promise.all([
       hiveRpc("rc_api.get_resource_params", {}, true),
       hiveRpc("rc_api.get_resource_pool", {}, true),
       hiveRpc("condenser_api.get_dynamic_global_properties", [], true),
       hiveRpc("rc_api.get_rc_stats", {}, true),
       rcCall,
+      accountCall,
     ]);
     if (!props) throw new Error("Could not load the resource credit cost.");
     const names = params && params.resource_names;
@@ -1826,7 +1839,25 @@
     const battle =
       costOf({ history: findBytes, state: "tx", exec: "custom_json_time" }) +
       costOf({ history: submitBytes, state: "tx", exec: "custom_json_time" });
+    // One zero-fee claim_account. Full regen, same as the claim dialog.
+    // The other rows use the share split and do not create accounts.
+    const creatorChars = name ? name.length : RC_BATTLE_ACCOUNT_CHARS;
+    const accountCost = claimTxRcCost(1, creatorChars, params, pools, regen);
+    const accountList = Array.isArray(accounts) ? accounts[0] : null;
+    const creator = accountList && name && accountName(accountList.name) === name ? accountList : null;
+    const accountCap = claimAccountCap(creator, props, creatorChars);
     const mana = rcManaSnapshot(rcResult, now);
+    const accountLeft =
+      mana.current == null
+        ? null
+        : claimAccountsAffordable(
+            BigInt(mana.current),
+            accountCap.cap,
+            creatorChars,
+            params,
+            pools,
+            regen
+          );
     return {
       current: mana.current,
       max: mana.max,
@@ -1867,6 +1898,12 @@
             state: "tx",
             exec: "transfer_time",
           }).toString(),
+        },
+        {
+          id: "account",
+          label: "Account creation",
+          cost: accountCost.toString(),
+          left: accountLeft,
         },
         { id: "battle", label: "Splinterlands battle", cost: battle.toString() },
       ],
