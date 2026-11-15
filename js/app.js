@@ -28935,8 +28935,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  const RC_OVERVIEW_NOTE =
-    "Current pool prices for a typical upvote, a normal article, a short reply, a typical transfer, and one Splinterlands battle. A battle is a find match and a team submit.";
+  const RC_OVERVIEW_NOTE = "Current RC prices for typical operations on the hive blockchain.";
 
   function formatRcLabel(value) {
     const parts = delegationRcParts(value);
