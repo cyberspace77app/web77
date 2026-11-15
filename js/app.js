@@ -471,6 +471,8 @@ let CS77_FILTER_LOW_REP = 20;
   const SEARCH_COMMUNITY_LIMIT = 100;
   let searchGen = 0;
   let searchBox = "";
+  // Set when / opens Search, so the box is focused after the route paints.
+  let focusSearchFromKey = false;
   // Spaces directory search. Same state shape and fill path as /search/spaces.
   const spaceTagSearch = {
     box: "",
@@ -16500,16 +16502,25 @@ let CS77_FILTER_LOW_REP = 20;
     paintSearchResults();
     maybeLoadMoreSearch();
     if (page === "spaces") resumeSpaceSearch("page");
+    const fromKey = focusSearchFromKey;
+    focusSearchFromKey = false;
+    focusSearchInput(fromKey);
+  }
+
+  // A link to Search focuses the box on a wide window. / focuses it there too,
+  // including a narrow window, because that key is a request to type.
+  function focusSearchInput(fromKey) {
     const input = $("#searchInput");
-    if (input && !isMobileViewport()) {
-      input.focus();
-      const end = input.value.length;
-      try {
-        input.setSelectionRange(end, end);
-      } catch {
-        /* unsupported input type */
-      }
+    if (!input) return false;
+    if (!fromKey && isMobileViewport()) return false;
+    input.focus();
+    const end = input.value.length;
+    try {
+      input.setSelectionRange(end, end);
+    } catch {
+      /* unsupported input type */
     }
+    return document.activeElement === input;
   }
 
   /* ─── Post + comments ─── */
@@ -39082,6 +39093,7 @@ let CS77_FILTER_LOW_REP = 20;
   // An open post has no feed list, so z uses the article stats-bar bolt instead.
   // n opens the notification panel and focuses it, and n again closes it.
   // p opens the publish dialog. A second p does nothing while that dialog is open.
+  // / opens Search and focuses the box. On Search already, it only focuses that box.
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
@@ -39412,10 +39424,29 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  // Same path as the Search link. A Search page that is already open keeps its tab.
+  function feedKeySearch() {
+    setSessionMenuOpen(false);
+    setAccountMenuOpen(false);
+    closeLogoMenu();
+    if (openSlider) hideVoteSlider();
+    if (parseRoute().name === "search" && $("#searchInput")) {
+      return focusSearchInput(true);
+    }
+    focusSearchFromKey = true;
+    navigate(appHref("/search"));
+    const landed = parseRoute().name === "search";
+    if (!landed) focusSearchFromKey = false;
+    return landed;
+  }
+
   function onFeedKeyDown(e) {
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    const slash = e.key === "/";
+    if (e.shiftKey && !slash) return;
     const key = String(e.key || "").toLowerCase();
     if (
+      !slash &&
       key !== "j" &&
       key !== "k" &&
       key !== "l" &&
@@ -39426,9 +39457,15 @@ let CS77_FILTER_LOW_REP = 20;
     ) {
       return;
     }
-    if (e.repeat && (key === "l" || key === "z" || key === "n" || key === "p" || key === "enter")) return;
+    if (e.repeat && (slash || key === "l" || key === "z" || key === "n" || key === "p" || key === "enter")) return;
     if (feedKeyDialogOpen()) return;
     if (feedKeyTyping(e) && !feedKeySliderFocused(e)) return;
+    if (slash) {
+      if (!feedKeySearch()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (key === "n") {
       if (!feedKeyNotifications()) return;
       e.preventDefault();
