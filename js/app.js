@@ -1959,10 +1959,68 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="content-more-item content-more-downvote" role="menuitem">${label}</button>`;
   }
 
+  function accessPlain(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  // A post title tells repeated controls apart. A comment with no title uses @author.
+  function accessTarget(post) {
+    const title = accessPlain(post && post.title);
+    if (title) return title;
+    const author = accessPlain(post && post.author).replace(/^@/, "");
+    return author ? "@" + author : "";
+  }
+
+  function accessTargetFor(author, permlink) {
+    const post = displayedContent(author, permlink) || findContentNode(author, permlink);
+    if (post) {
+      const fromPost = accessTarget(post);
+      if (fromPost) return fromPost;
+    }
+    const name = accessPlain(author).replace(/^@/, "");
+    return name ? "@" + name : "";
+  }
+
+  function accessOn(target) {
+    const text = accessPlain(target);
+    return text ? " on " + text : "";
+  }
+
+  function accessAction(action, target) {
+    return accessPlain(action) + accessOn(target);
+  }
+
+  function accessCount(n, one, many, target) {
+    const count = Math.max(0, Number(n) || 0);
+    return count + " " + (count === 1 ? one : many) + accessOn(target);
+  }
+
+  function reputationHtml(rep) {
+    const n = Math.floor(Number(rep) || 0);
+    return `<span class="meta-rep"><span class="sr-only">reputation </span>${n}</span>`;
+  }
+
+  function commentCountText(n, target) {
+    return accessCount(n, "comment", "comments", target);
+  }
+
+  function writeCommentCount(el, n) {
+    if (!el) return;
+    const count = Math.max(0, Number(n) || 0);
+    el.textContent = "C " + count;
+    el.setAttribute("aria-label", commentCountText(count, el.getAttribute("data-access-target") || ""));
+  }
+
+  function reblogButtonLabel(mine, count, target) {
+    const action = mine ? "Undo reblog" : "Reblog";
+    return action + ", " + accessCount(count, "reblog", "reblogs", target);
+  }
+
   function contentMoreHtml(author, permlink, kind, children, offerCrossPost, node) {
     const name = String(author || "").replace(/^@/, "");
     const link = String(permlink || "");
     if (!name || !link) return "";
+    const moreTarget = accessTarget(node) || "@" + name;
     const safeKind = kind === "comment" || kind === "post" ? kind : "card";
     const items = [];
     if (isOwnAuthor(name)) {
@@ -1985,7 +2043,7 @@ let CS77_FILTER_LOW_REP = 20;
     );
     return `
       <div class="content-more" data-author="${HiveMd.escapeHtml(name)}" data-permlink="${HiveMd.escapeHtml(link)}" data-content-kind="${safeKind}">
-        <button type="button" class="content-more-btn" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
+        <button type="button" class="content-more-btn" aria-label="${HiveMd.escapeHtml(accessAction("More actions", moreTarget))}" aria-haspopup="menu" aria-expanded="false">\u00b7\u00b7\u00b7</button>
         <div class="content-more-menu" role="menu" hidden>
           ${items.join("")}
         </div>
@@ -2149,16 +2207,19 @@ let CS77_FILTER_LOW_REP = 20;
     const upClasses = ["vote-btn", pill, viewState.sign === 1 ? "is-voted" : "", user && viewState.pending ? "is-pending" : ""]
       .filter(Boolean)
       .join(" ");
-    const upLabel = viewState.sign === 1 ? "Remove upvote" : "Upvote";
+    const voteTarget = accessTarget(post);
+    const upName = HiveMd.escapeHtml(accessAction(viewState.sign === 1 ? "Remove upvote" : "Upvote", voteTarget));
+    const upCountName = HiveMd.escapeHtml(accessCount(upCount, "upvote", "upvotes", voteTarget));
+    const downCountName = HiveMd.escapeHtml(accessCount(downCount, "downvote", "downvotes", voteTarget));
     const sliders = user ? voteSliderHtml(kind, author, permlink, pct, downPct) : "";
-    const upBtn = `<button type="button" class="${upClasses}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-key="${author}/${permlink}" data-vote-kind="${kind}" data-vote-dir="up" aria-pressed="${viewState.sign === 1 ? "true" : "false"}" aria-label="${upLabel}" ${pending}>▲</button>`;
+    const upBtn = `<button type="button" class="${upClasses}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-key="${author}/${permlink}" data-vote-kind="${kind}" data-vote-dir="up" aria-pressed="${viewState.sign === 1 ? "true" : "false"}" aria-label="${upName}" ${pending}>▲</button>`;
     const downHidden = showDown ? "" : " hidden";
     const downVoted = viewState.sign === -1 ? " is-voted" : "";
-    const downPill = `<button type="button" class="vote-count-btn stat-pill vote-hit${downVoted}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down" aria-label="Downvotes"${downHidden}><span class="downvote-n">${downvoteCountLabel(downCount)}</span></button>`;
+    const downPill = `<button type="button" class="vote-count-btn stat-pill vote-hit${downVoted}" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="down" aria-label="${downCountName}"${downHidden}><span class="downvote-n">${downvoteCountLabel(downCount)}</span></button>`;
     const signAttr = ` data-vote-sign="${viewState.sign || 0}"`;
     const pendingAttr = user && viewState.pending ? ` data-vote-pending="1"` : "";
     if (variant === "pills") {
-      return `<span class="vote-wrap vote-pills" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}><span class="vote-pair">${upBtn}<button type="button" class="vote-count-btn stat-pill vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up" aria-label="Upvotes"><span class="vote-n">${upCount}</span></button></span>${downPill}${sliders}</span>`;
+      return `<span class="vote-wrap vote-pills" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}><span class="vote-pair">${upBtn}<button type="button" class="vote-count-btn stat-pill vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up" aria-label="${upCountName}"><span class="vote-n">${upCount}</span></button></span>${downPill}${sliders}</span>`;
     }
     const upCountHtml = `▲ <span class="vote-n vote-hit" data-vote-author="${author}" data-vote-permlink="${permlink}" data-vote-dir="up">${upCount}</span>`;
     return `<span class="vote-wrap" data-vote-kind="${kind}" data-vote-author="${author}" data-vote-permlink="${permlink}"${signAttr}${pendingAttr}>${upBtn.replace("▲", upCountHtml)}${downPill}${sliders}</span>`;
@@ -2182,7 +2243,9 @@ let CS77_FILTER_LOW_REP = 20;
       target +
       '" data-zap-created="' +
       HiveMd.escapeHtml(String(post.created || "")) +
-      '" aria-label="Zap">' +
+      '" aria-label="' +
+      HiveMd.escapeHtml(accessAction("Zap", accessTarget(post))) +
+      '">' +
       zapMarkSvg() +
       "</button>"
     );
@@ -2432,9 +2495,29 @@ let CS77_FILTER_LOW_REP = 20;
       const upBtn = root.querySelector(".vote-btn");
       const downBtn = root.querySelector(".downvote-btn");
       const downPill = root.querySelector('.vote-count-btn[data-vote-dir="down"]');
-      syncVoteArrow(upBtn, upvoted, pending, "Remove upvote", "Upvote");
-      syncVoteArrow(downBtn, downvoted, pending, "Remove downvote", "Downvote");
+      const voteTarget = accessTargetFor(author, permlink);
+      syncVoteArrow(
+        upBtn,
+        upvoted,
+        pending,
+        accessAction("Remove upvote", voteTarget),
+        accessAction("Upvote", voteTarget)
+      );
+      syncVoteArrow(
+        downBtn,
+        downvoted,
+        pending,
+        accessAction("Remove downvote", voteTarget),
+        accessAction("Downvote", voteTarget)
+      );
       syncDownvotePillVote(downPill, downvoted);
+      const upCountBtn = root.querySelector('.vote-count-btn[data-vote-dir="up"]');
+      if (upCountBtn) {
+        upCountBtn.setAttribute("aria-label", accessCount(state.upCount, "upvote", "upvotes", voteTarget));
+      }
+      if (downPill) {
+        downPill.setAttribute("aria-label", accessCount(state.downCount, "downvote", "downvotes", voteTarget));
+      }
       root.querySelectorAll(".vote-n").forEach((el) => {
         el.textContent = String(state.upCount);
       });
@@ -3665,7 +3748,7 @@ let CS77_FILTER_LOW_REP = 20;
       btn.classList.toggle("is-pending", pending);
       btn.disabled = pending;
       btn.setAttribute("aria-pressed", mine ? "true" : "false");
-      btn.setAttribute("aria-label", mine ? "Undo reblog" : "Reblog");
+      btn.setAttribute("aria-label", reblogButtonLabel(mine, count, accessTargetFor(author, permlink)));
       const n = btn.querySelector(".reblog-n");
       if (n) n.textContent = count;
     });
@@ -4609,9 +4692,11 @@ let CS77_FILTER_LOW_REP = 20;
     return appHref(`/@${post.author}/${post.permlink}`);
   }
 
-  function commentCountHtml(count, href) {
+  function commentCountHtml(count, href, target) {
     const n = Number(count) || 0;
-    return `<a class="comment-n comment-count-link" href="${HiveMd.escapeHtml(href)}">C ${n}</a>`;
+    const name = accessPlain(target);
+    const stored = name ? ` data-access-target="${HiveMd.escapeHtml(name)}"` : "";
+    return `<a class="comment-n comment-count-link" href="${HiveMd.escapeHtml(href)}"${stored} aria-label="${HiveMd.escapeHtml(commentCountText(n, name))}">C ${n}</a>`;
   }
 
   function eventElement(target) {
@@ -5206,6 +5291,55 @@ let CS77_FILTER_LOW_REP = 20;
     const active = document.activeElement;
     if (active && active !== document.body && active !== document.documentElement && holds(top, active)) return;
     focusDialog(top);
+  }
+
+  // Route changes replace the page without a document load. Land on the
+  // heading so a screen reader announces the new page. A text field keeps
+  // focus, and a scroll restore is put back if the browser scrolls anyway.
+  function focusForReading(el) {
+    if (!el || !isDisplayed(el)) return;
+    if (topOpenDialog()) return;
+    const active = document.activeElement;
+    if (active && active !== el && active.closest && active.closest("input, textarea, select")) return;
+    if (el.getAttribute("tabindex") !== "0" && el.tabIndex < 0) el.setAttribute("tabindex", "-1");
+    const y = scrollYNow();
+    try {
+      el.focus({ preventScroll: true });
+    } catch (err) {
+      return;
+    }
+    if (scrollYNow() !== y) scrollWindowInstant(y);
+  }
+
+  function routeHeadingEl() {
+    if (postLayer.open) {
+      const postRoot = postViewEl();
+      const postHeading = postRoot && postRoot.querySelector("article.article h1, h1, h2");
+      if (postHeading) return postHeading;
+    }
+    const welcome = document.getElementById("welcomeTitle");
+    if (welcome && document.body.classList.contains("has-welcome") && isDisplayed(welcome)) {
+      return welcome;
+    }
+    if (!view) return null;
+    return (
+      view.querySelector("h1, h2.page-title, h2.tag-feed-title, h2.about-title, h2.imprint-title") ||
+      view.querySelector(".empty-state h2, h2")
+    );
+  }
+
+  function focusRouteHeading() {
+    const heading = routeHeadingEl();
+    if (!heading || document.activeElement === heading) return;
+    focusForReading(heading);
+  }
+
+  function focusOpenPost() {
+    if (!postLayer.open) return;
+    const root = postViewEl();
+    const heading = root && root.querySelector("article.article h1, h1, h2");
+    if (!heading || document.activeElement === heading) return;
+    focusForReading(heading);
   }
 
   function focusNotificationsPanel() {
@@ -8346,6 +8480,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (h2) h2.textContent = comment ? "Edit comment" : editing ? "Edit post" : "New post";
     if (submit) submit.textContent = editing ? "Save" : "Publish";
     if (dest) dest.hidden = editing;
+    const titleLabel = $("#publishTitleLabel");
+    const bodyLabel = $("#publishBodyLabel");
+    const tagLabel = $("#publishTagLabel");
+    if (titleLabel) titleLabel.hidden = comment;
+    if (tagLabel) tagLabel.hidden = comment;
+    if (bodyLabel) bodyLabel.textContent = comment ? "Comment" : "Post";
     if (title) {
       title.hidden = comment;
       title.maxLength = PUBLISH_TITLE_MAX;
@@ -12719,7 +12859,7 @@ let CS77_FILTER_LOW_REP = 20;
       .filter(Boolean)
       .join(" ");
     const pending = viewState.pending ? "disabled" : "";
-    const label = viewState.mine ? "Undo reblog" : "Reblog";
+    const label = HiveMd.escapeHtml(reblogButtonLabel(viewState.mine, viewState.count, accessTarget(post)));
     return `<span class="reblog-wrap" data-reblog-author="${author}" data-reblog-permlink="${permlink}"><button type="button" class="${classes}" data-reblog-author="${author}" data-reblog-permlink="${permlink}" aria-pressed="${viewState.mine ? "true" : "false"}" aria-label="${label}" ${pending}>${reblogIconHtml()}<span class="reblog-n">${viewState.count}</span></button><span class="reblog-confirm-panel" hidden><p class="reblog-confirm-caption">Reblog this post?</p><p class="reblog-confirm-status" hidden></p><span class="reblog-confirm-actions"><button type="button" class="reblog-confirm" data-reblog-author="${author}" data-reblog-permlink="${permlink}">Reblog</button><button type="button" class="reblog-cancel">Cancel</button><button type="button" class="reblog-list">List</button></span></span></span>`;
   }
 
@@ -13690,7 +13830,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="card-meta">
           ${authorLinkHtml(shown.author, "small", muted ? { avatar: false } : null)}
           <span class="meta-sep">·</span>
-          <span>${rep}</span>
+          ${reputationHtml(rep)}
           ${community}
           ${metaTimeHtml(shown.created, postPath(shown))}
         </div>`;
@@ -13743,7 +13883,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
           ${zapStatHtml(shown)}
-          ${commentCountHtml(shown.children, postPath(shown))}
+          ${commentCountHtml(shown.children, postPath(shown), accessTarget(shown))}
           ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
           ${contentMoreHtml(shown.author, shown.permlink, "card", shown.children, isRootPost(shown), shown)}
@@ -13752,6 +13892,17 @@ let CS77_FILTER_LOW_REP = 20;
     `;
     }
     return `<div class="feed-item">${share}${card}</div>`;
+  }
+
+  function navCurrent(on) {
+    return on ? ' class="is-active" aria-current="page"' : "";
+  }
+
+  function feedSortHeading(sort) {
+    if (sort === "trending") return "Trending";
+    if (sort === "hot") return "Hot";
+    if (sort === "feed") return "Feed";
+    return "Latest";
   }
 
   function feedNavHtml(sort, tag) {
@@ -13767,14 +13918,14 @@ let CS77_FILTER_LOW_REP = 20;
       ? `<div class="tag-feed-head">
           <h2 class="tag-feed-title">#${HiveMd.escapeHtml(t)}</h2>
         </div>`
-      : "";
+      : `<h1 class="sr-only">${HiveMd.escapeHtml(feedSortHeading(sort))}</h1>`;
     return `
       ${tagHead}
       <nav class="feed-nav" aria-label="Feed sort">
         ${items
           .map(
             ([id, label, href]) =>
-              `<a href="${href}" class="${id === sort ? "is-active" : ""}">${label}</a>`
+              `<a href="${href}"${navCurrent(id === sort)}>${label}</a>`
           )
           .join("")}
       </nav>
@@ -14490,10 +14641,10 @@ let CS77_FILTER_LOW_REP = 20;
       <section class="cs77-page communities-page">
         <h2 class="page-title">Subspaces</h2>
         <nav class="feed-nav subpage-nav" aria-label="Subspaces">
-          <a href="${searchHref}" class="${page === "search" ? "is-active" : ""}">Search</a>
-          <a href="${browseHref}" class="${page === "browse" ? "is-active" : ""}">Browse</a>
-          <a href="${newestHref}" class="${page === "newest" ? "is-active" : ""}">Newest</a>
-          <a href="${createHref}" class="${page === "create" ? "is-active" : ""}">Create...</a>
+          <a href="${searchHref}"${navCurrent(page === "search")}>Search</a>
+          <a href="${browseHref}"${navCurrent(page === "browse")}>Browse</a>
+          <a href="${newestHref}"${navCurrent(page === "newest")}>Newest</a>
+          <a href="${createHref}"${navCurrent(page === "create")}>Create...</a>
         </nav>
         <div id="subspacesPanel"></div>
       </section>
@@ -16242,9 +16393,9 @@ let CS77_FILTER_LOW_REP = 20;
       <section class="cs77-page">
         <h2 class="page-title">Search</h2>
         <nav class="feed-nav subpage-nav" aria-label="Search">
-          <a href="${usersHref}" class="${page === "users" ? "is-active" : ""}">Users</a>
-          <a href="${spacesHref}" class="${page === "spaces" ? "is-active" : ""}">Spaces</a>
-          <a href="${subspacesHref}" class="${page === "subspaces" ? "is-active" : ""}">Subspaces</a>
+          <a href="${usersHref}"${navCurrent(page === "users")}>Users</a>
+          <a href="${spacesHref}"${navCurrent(page === "spaces")}>Spaces</a>
+          <a href="${subspacesHref}"${navCurrent(page === "subspaces")}>Subspaces</a>
         </nav>
         <form class="tags-add search-form" id="searchForm">
           <input id="searchInput" type="text" maxlength="80" placeholder="Search" value="${value}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search">
@@ -16661,7 +16812,7 @@ let CS77_FILTER_LOW_REP = 20;
     return `
       <div class="comment-composer" data-parent-author="${author}" data-parent-permlink="${permlink}"${editAttrs}>
         <div class="composer-drop-layer" aria-hidden="true">Drop image to upload</div>
-        <textarea class="composer-input" rows="4" placeholder="${HiveMd.escapeHtml(placeholder)}">${HiveMd.escapeHtml(body)}</textarea>
+        <textarea class="composer-input" rows="4" aria-label="${HiveMd.escapeHtml(placeholder)}" placeholder="${HiveMd.escapeHtml(placeholder)}">${HiveMd.escapeHtml(body)}</textarea>
         <input class="composer-file" type="file" accept="image/*" multiple hidden>
         <div class="composer-bar">
           <button type="button" class="composer-attach" title="Attach image">Attach image</button>
@@ -16671,7 +16822,7 @@ let CS77_FILTER_LOW_REP = 20;
             <button type="button" class="btn-primary btn-compact composer-submit">${HiveMd.escapeHtml(submit)}</button>
           </span>
         </div>
-        <p class="composer-status" hidden></p>
+        <p class="composer-status" role="status" hidden></p>
       </div>
     `;
   }
@@ -16696,7 +16847,7 @@ let CS77_FILTER_LOW_REP = 20;
     const head = `
         <div class="comment-head">
           ${authorLinkHtml(node.author, "small")}
-          <span>· ${Math.floor(HiveMd.displayReputation(node.author_reputation))}</span>
+          <span>· ${reputationHtml(HiveMd.displayReputation(node.author_reputation))}</span>
           <span>· ${metaTimeHtml(node.created, commentPath(node))}</span>
         </div>`;
     if (isMutedHidden(node)) {
@@ -16793,7 +16944,7 @@ let CS77_FILTER_LOW_REP = 20;
       const link = String(el.getAttribute("href") || "").toLowerCase();
       if (link.indexOf(needle) === -1) return;
       const cur = Number(String(el.textContent || "").replace(/[^0-9]/g, "")) || 0;
-      el.textContent = "C " + Math.max(0, cur + delta);
+      writeCommentCount(el, cur + delta);
     });
     const item = findLoadedPost(author, permlink);
     if (item && item.children != null) {
@@ -19025,11 +19176,11 @@ let CS77_FILTER_LOW_REP = 20;
         <h1>${articleTitleHtml(root)}</h1>
         <div class="article-byline">
           ${authorLinkHtml(root.author, "medium")}
-          <span>· ${Math.floor(HiveMd.displayReputation(root.author_reputation))}</span>
+          <span>· ${reputationHtml(HiveMd.displayReputation(root.author_reputation))}</span>
           <span>· ${metaTimeHtml(root.created, postPath(root))}</span>
           <div class="article-stats">
             ${voteControlHtml(root, "plain")}
-            ${commentCountHtml(commentCount, "#comments")}
+            ${commentCountHtml(commentCount, "#comments", accessTarget(root))}
             ${payoutHtml(root, false)}
             ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root), root)}
           </div>
@@ -19040,7 +19191,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
           ${zapStatHtml(root, "post")}
-          ${commentCountHtml(commentCount, "#comments")}
+          ${commentCountHtml(commentCount, "#comments", accessTarget(root))}
           ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
           ${contentMoreHtml(root.author, root.permlink, "post", commentCount, isRootPost(root), root)}
@@ -19065,6 +19216,7 @@ let CS77_FILTER_LOW_REP = 20;
     const pv = postViewEl();
     if (!pv) return;
     pv.innerHTML = html;
+    focusOpenPost();
   }
 
   function pageMetaDefaults() {
@@ -19428,7 +19580,7 @@ let CS77_FILTER_LOW_REP = 20;
     const article = section.closest(".article");
     if (article) {
       article.querySelectorAll(".comment-n").forEach((el) => {
-        el.textContent = "C " + n;
+        writeCommentCount(el, n);
       });
     }
     syncDeleteOffers(
@@ -19530,6 +19682,7 @@ let CS77_FILTER_LOW_REP = 20;
     stampAvatars(pv);
     setPostTitle(root);
     restoreCommentDraft();
+    focusOpenPost();
     return true;
   }
 
@@ -19700,6 +19853,7 @@ let CS77_FILTER_LOW_REP = 20;
     postLayer.open = true;
     updateScrollTopBtn();
     queueFeedVideoSync();
+    focusOpenPost();
     return layer;
   }
 
@@ -19938,9 +20092,8 @@ let CS77_FILTER_LOW_REP = 20;
     card.querySelectorAll(".payout").forEach((el) => {
       applyPayoutEl(el, post);
     });
-    const label = "C " + commentCount;
     card.querySelectorAll(".comment-n").forEach((el) => {
-      el.textContent = label;
+      writeCommentCount(el, commentCount);
     });
     syncDeleteOffers(post.author, post.permlink, commentCount);
   }
@@ -20410,7 +20563,9 @@ let CS77_FILTER_LOW_REP = 20;
       '<button type="button" class="profile-zap-btn' +
       (ready ? " has-lightning" : "") +
       zapped +
-      '" aria-label="Zap">' +
+      '" aria-label="' +
+      HiveMd.escapeHtml(accessAction("Zap", name ? "@" + name : "")) +
+      '">' +
       zapMarkSvg() +
       "</button>"
     );
@@ -24861,7 +25016,7 @@ let CS77_FILTER_LOW_REP = 20;
         ${items
           .map(
             ([id, label, href]) =>
-              `<a href="${href}" class="${id === page ? "is-active" : ""}">${label}</a>`
+              `<a href="${href}"${navCurrent(id === page)}>${label}</a>`
           )
           .join("")}
       </nav>
@@ -24952,7 +25107,7 @@ let CS77_FILTER_LOW_REP = 20;
     const followBtn = own
       ? ""
       : `<button type="button" class="btn-primary btn-compact profile-follow-btn" data-author="${HiveMd.escapeHtml(author)}" data-followed="${profileState.followed ? "1" : "0"}"${followBusy ? " disabled" : ""}>${profileFollowLabel()}</button>`;
-    const handle = `<p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>`;
+    const handle = `<p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep"><span class="sr-only">reputation </span><span class="meta-rep-n">${rep}</span></span></p>`;
     const title = own
       ? `<div class="profile-title-line"><h1>${HiveMd.escapeHtml(display)}</h1>${profileMoreHtml(author)}${profileBitcoinHtml()}${profileQrHtml()}</div>`
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
@@ -25073,7 +25228,10 @@ let CS77_FILTER_LOW_REP = 20;
     const el = view.querySelector(".profile-banner .profile-rep");
     const profile = profileState.profile;
     if (!el || !profile) return;
-    el.textContent = String(Math.floor(HiveMd.displayReputation(profile.reputation || 0)));
+    const n = Math.floor(HiveMd.displayReputation(profile.reputation || 0));
+    const num = el.querySelector(".meta-rep-n");
+    if (num) num.textContent = String(n);
+    else el.textContent = String(n);
   }
 
   function profileCardHtml(post) {
@@ -29930,7 +30088,10 @@ let CS77_FILTER_LOW_REP = 20;
       const ids = ["posts", "comments", "replies", "wallet"];
       const links = nav.querySelectorAll("a");
       for (let i = 0; i < links.length; i++) {
-        links[i].classList.toggle("is-active", ids[i] === page);
+        const on = ids[i] === page;
+        links[i].classList.toggle("is-active", on);
+        if (on) links[i].setAttribute("aria-current", "page");
+        else links[i].removeAttribute("aria-current");
       }
     }
     paintPeopleCounts();
@@ -30698,7 +30859,7 @@ let CS77_FILTER_LOW_REP = 20;
         ${items
           .map(
             ([id, label, href]) =>
-              `<a href="${href}" class="${id === page ? "is-active" : ""}">${label}</a>`
+              `<a href="${href}"${navCurrent(id === page)}>${label}</a>`
           )
           .join("")}
       </nav>
@@ -30807,7 +30968,9 @@ let CS77_FILTER_LOW_REP = 20;
       zapped +
       '" data-community="' +
       HiveMd.escapeHtml(id) +
-      '" aria-label="Zap">' +
+      '" aria-label="' +
+      HiveMd.escapeHtml(accessAction("Zap", communityTitleOf(communityState.info, id) || id)) +
+      '">' +
       zapMarkSvg() +
       "</button>"
     );
@@ -34253,7 +34416,10 @@ let CS77_FILTER_LOW_REP = 20;
       const ids = ["latest", "trending", "about", "members"];
       const links = nav.querySelectorAll("a");
       for (let i = 0; i < links.length; i++) {
-        links[i].classList.toggle("is-active", ids[i] === page);
+        const on = ids[i] === page;
+        links[i].classList.toggle("is-active", on);
+        if (on) links[i].setAttribute("aria-current", "page");
+        else links[i].removeAttribute("aria-current");
       }
     }
     paintPeopleCounts();
@@ -34483,10 +34649,10 @@ let CS77_FILTER_LOW_REP = 20;
       <section class="cs77-page settings-page">
         <h2 class="page-title">Settings</h2>
         <nav class="feed-nav subpage-nav" aria-label="Settings">
-          <a href="${generalHref}" class="${page === "general" ? "is-active" : ""}">General</a>
-          <a href="${profileHref}" class="${page === "profile" ? "is-active" : ""}">Profile</a>
-          <a href="${keysHref}" class="${page === "keys" ? "is-active" : ""}">Keys</a>
-          <a href="${nodesHref}" class="${page === "nodes" ? "is-active" : ""}">Nodes</a>
+          <a href="${generalHref}"${navCurrent(page === "general")}>General</a>
+          <a href="${profileHref}"${navCurrent(page === "profile")}>Profile</a>
+          <a href="${keysHref}"${navCurrent(page === "keys")}>Keys</a>
+          <a href="${nodesHref}"${navCurrent(page === "nodes")}>Nodes</a>
         </nav>
         <div id="settingsPanel"></div>
       </section>
@@ -36759,15 +36925,30 @@ let CS77_FILTER_LOW_REP = 20;
         ) {
           return;
         }
+        const voteTarget = accessTargetFor(
+          rec.author || voteRoot.getAttribute("data-vote-author"),
+          rec.permlink || voteRoot.getAttribute("data-vote-permlink")
+        );
         if (rec.upCount != null) {
           voteRoot.querySelectorAll(".vote-n").forEach((el) => {
             el.textContent = String(rec.upCount);
           });
+          const upCountBtn = voteRoot.querySelector('.vote-count-btn[data-vote-dir="up"]');
+          if (upCountBtn) {
+            upCountBtn.setAttribute("aria-label", accessCount(rec.upCount, "upvote", "upvotes", voteTarget));
+          }
         }
         if (rec.downCount != null) {
           voteRoot.querySelectorAll(".downvote-n").forEach((el) => {
             el.textContent = downvoteCountLabel(rec.downCount);
           });
+          const downCountBtn = voteRoot.querySelector('.vote-count-btn[data-vote-dir="down"]');
+          if (downCountBtn) {
+            downCountBtn.setAttribute(
+              "aria-label",
+              accessCount(rec.downCount, "downvote", "downvotes", voteTarget)
+            );
+          }
         }
         if (rec.voteSign == null) return;
         voteRoot.setAttribute("data-vote-sign", String(rec.voteSign || 0));
@@ -36780,14 +36961,20 @@ let CS77_FILTER_LOW_REP = 20;
           up.classList.remove("is-pending");
           up.disabled = false;
           up.setAttribute("aria-pressed", rec.voteSign === 1 ? "true" : "false");
-          up.setAttribute("aria-label", rec.voteSign === 1 ? "Remove upvote" : "Upvote");
+          up.setAttribute(
+            "aria-label",
+            accessAction(rec.voteSign === 1 ? "Remove upvote" : "Upvote", voteTarget)
+          );
         }
         if (down) {
           down.classList.toggle("is-voted", rec.voteSign === -1);
           down.classList.remove("is-pending");
           down.disabled = false;
           down.setAttribute("aria-pressed", rec.voteSign === -1 ? "true" : "false");
-          down.setAttribute("aria-label", rec.voteSign === -1 ? "Remove downvote" : "Downvote");
+          down.setAttribute(
+            "aria-label",
+            accessAction(rec.voteSign === -1 ? "Remove downvote" : "Downvote", voteTarget)
+          );
         }
         syncDownvotePillVote(downPill, rec.voteSign === -1);
       });
@@ -36813,9 +37000,8 @@ let CS77_FILTER_LOW_REP = 20;
       });
     }
     if (rec.children != null) {
-      const label = "C " + rec.children;
       scope.querySelectorAll(".comment-n").forEach((el) => {
-        el.textContent = label;
+        writeCommentCount(el, rec.children);
       });
       const section = scope.querySelector("#comments");
       if (
@@ -36848,17 +37034,19 @@ let CS77_FILTER_LOW_REP = 20;
         }
         const btn = wrap.querySelector(".reblog-btn");
         if (!btn) return;
-        if (rec.reblogs != null) {
-          const n = btn.querySelector(".reblog-n");
-          if (n) n.textContent = String(rec.reblogs);
-        }
+        const n = btn.querySelector(".reblog-n");
+        if (rec.reblogs != null && n) n.textContent = String(rec.reblogs);
+        const mine = rec.reblogMine != null ? Boolean(rec.reblogMine) : btn.getAttribute("aria-pressed") === "true";
         if (rec.reblogMine != null) {
           btn.classList.toggle("is-reblogged", Boolean(rec.reblogMine));
           btn.classList.remove("is-pending");
           btn.disabled = false;
           btn.setAttribute("aria-pressed", rec.reblogMine ? "true" : "false");
-          btn.setAttribute("aria-label", rec.reblogMine ? "Undo reblog" : "Reblog");
         }
+        btn.setAttribute(
+          "aria-label",
+          reblogButtonLabel(mine, n ? n.textContent : "0", accessTargetFor(rec.author, rec.permlink))
+        );
       });
     }
   }
@@ -37510,7 +37698,7 @@ let CS77_FILTER_LOW_REP = 20;
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
     const avatar = avatarImgHtml(name, "small");
     const community = embedCommunityHtml(post);
-    return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span><span>${rep}</span>${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
+    return `<div class="card-meta"><span class="embed-meta"><span class="author-link">${avatar}<span class="author-name">@${HiveMd.escapeHtml(name)}</span></span><span class="meta-sep">·</span>${reputationHtml(rep)}${community}${metaTimeHtml(post.created, "")}</span>${embedMarkHtml()}</div>`;
   }
 
   // Same pills as a feed card. Spans, not buttons: the card is one link to the post.
@@ -37532,7 +37720,7 @@ let CS77_FILTER_LOW_REP = 20;
     const bits = [
       `<span class="vote-wrap vote-pills"><span class="vote-pair"><span class="vote-btn stat-pill${upVoted}">▲</span><span class="vote-count-btn stat-pill"><span class="vote-n">${viewState.upCount}</span></span></span><span class="vote-count-btn stat-pill${downVoted}" data-vote-dir="down"${downHidden}><span class="downvote-n">${downvoteCountLabel(viewState.downCount)}</span></span></span>`,
       `<span class="zap-stat-btn stat-pill${zapped}">${zapMarkSvg()}</span>`,
-      `<span class="comment-n comment-count-link">C ${comments}</span>`,
+      `<span class="comment-n comment-count-link"><span class="sr-only">${HiveMd.escapeHtml(accessCount(comments, "comment", "comments", ""))}</span><span aria-hidden="true">C ${comments}</span></span>`,
     ];
     if (isRootPost(post)) {
       const reblogs = reblogView(post);
@@ -37762,6 +37950,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function route() {
+    const announceFocus = !initialPageLoad;
     if (zapPayConfirmOpen()) return;
     if (editHistoryOn) {
       editHistoryOn = false;
@@ -37965,6 +38154,10 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     hidePublishOverlay();
+    function showRouteFocus() {
+      if (!announceFocus || !routeStill(key)) return;
+      focusRouteHeading();
+    }
     if (sameView) {
       applyRouteTitle(r);
       if (fromAccountMenu) {
@@ -37988,6 +38181,7 @@ let CS77_FILTER_LOW_REP = 20;
         // under this id, so Back and the logo find the same list.
         liveFeedNav = nav;
       }
+      showRouteFocus();
       return;
     }
 
@@ -38006,6 +38200,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!routeStill(key)) return;
       currentViewKey = key;
       liveFeedNav = nav;
+      showRouteFocus();
       return;
     }
     if (r.name === "feed") {
@@ -38021,6 +38216,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!routeStill(key)) return;
       currentViewKey = key;
       liveFeedNav = nav;
+      showRouteFocus();
       return;
     }
     if (r.name === "profile") {
@@ -38040,6 +38236,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!routeStill(key)) return;
       currentViewKey = key;
       liveFeedNav = isProfileListKey(key) ? nav : 0;
+      showRouteFocus();
       return;
     }
     if (r.name === "community") {
@@ -38063,6 +38260,7 @@ let CS77_FILTER_LOW_REP = 20;
         scrollWindowInstant(tabPark.scrollY);
         if (tabPark.feed && tabPark.feed.loading) resumeParkedFeedLoad();
         else queueFeedInfinite();
+        showRouteFocus();
         return;
       }
       currentViewKey = key;
@@ -38073,6 +38271,7 @@ let CS77_FILTER_LOW_REP = 20;
       currentViewKey = key;
       liveFeedNav = nav;
       lastCommittedNav = nav;
+      showRouteFocus();
       return;
     }
     if (r.name === "tags") {
@@ -38081,6 +38280,7 @@ let CS77_FILTER_LOW_REP = 20;
       await renderTagsPage();
       if (!routeStill(key)) return;
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "communities") {
@@ -38095,6 +38295,7 @@ let CS77_FILTER_LOW_REP = 20;
       await renderCommunitiesPage(r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "settings") {
@@ -38109,6 +38310,7 @@ let CS77_FILTER_LOW_REP = 20;
       await renderSettings(r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "search") {
@@ -38123,12 +38325,14 @@ let CS77_FILTER_LOW_REP = 20;
       renderSearchPage(r.page);
       if (!routeStill(key)) return;
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "about") {
       liveFeedNav = 0;
       renderAbout();
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "dao") {
@@ -38137,12 +38341,14 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (isDaoRoute(r)) {
       await renderDao(r, key);
+      if (routeStill(key)) showRouteFocus();
       return;
     }
     if (r.name === "imprint") {
       liveFeedNav = 0;
       renderImprint();
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     if (r.name === "embed") {
@@ -38151,12 +38357,14 @@ let CS77_FILTER_LOW_REP = 20;
       await renderEmbed(r.author, r.permlink);
       if (!routeStill(key)) return;
       currentViewKey = key;
+      showRouteFocus();
       return;
     }
     setPageMeta("Not found — CyberSpace77");
     liveFeedNav = 0;
     view.innerHTML = notFoundHtml();
     currentViewKey = "notfound";
+    showRouteFocus();
   }
 
   function updateScrollTopBtn() {
