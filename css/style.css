@@ -6730,7 +6730,7 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   overscroll-behavior: contain;
 }
 
-#proposalOverlay .overlay-card input:has(+ .login-hint) {
+#proposalOverlay .overlay-card input:has(+ .dialog-hint) {
   margin-bottom: 0.35rem;
 }
 
@@ -6880,7 +6880,7 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   margin-bottom: 0.85rem;
 }
 
-.login-card .login-hint {
+.overlay-card .dialog-hint {
   margin-top: 0;
   margin-bottom: 0.85rem;
   font-size: 0.72rem;
