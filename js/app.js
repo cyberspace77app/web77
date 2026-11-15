@@ -7033,6 +7033,7 @@ let CS77_FILTER_LOW_REP = 20;
     const gen = ++walletRcRefresh;
     const before = accountState.rc;
     const waits = [0, 3000, 3000, 3000];
+    let latest = null;
     for (let i = 0; i < waits.length; i++) {
       if (waits[i]) await waitMs(waits[i]);
       if (gen !== walletRcRefresh || observer() !== user || accountState.user !== user) return;
@@ -7044,17 +7045,25 @@ let CS77_FILTER_LOW_REP = 20;
         pct = null;
       }
       if (gen !== walletRcRefresh || observer() !== user || accountState.user !== user) return;
-      if (pct == null || pct === before) continue;
+      if (pct == null) continue;
+      latest = pct;
+      if (pct === before) continue;
       accountState.rc = pct;
       accountState.rcAt = Date.now();
       paintAccountResources();
+      paintRcLinkCaption();
       return;
+    }
+    if (latest != null && gen === walletRcRefresh && observer() === user && accountState.user === user) {
+      paintRcLinkCaption();
     }
   }
 
   function paintAccountResources() {
     paintSessionAvatar();
-    paintRcLinkCaption();
+    // The tools line keeps the percent from when the wallet was opened.
+    // refreshWalletRc paints it after a wallet operation. This refresh
+    // still updates the header percent.
     const el = $("#sessionAccountStats");
     if (!el) return;
     const mana = el.querySelector("[data-stat='mana']");
