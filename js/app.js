@@ -27714,8 +27714,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // convert pays hive later, at the median price. collateralized_convert pays
-  // hbd immediately. That payout depends on the min history price, so a local
-  // hive→hbd note does not invent a received amount.
+  // hbd in the same block. That amount is filled in by settleHiveToHbdPayout.
   function applyWalletConvert(wallet, asset, amount, requestId) {
     if (!wallet || wallet !== profileState.wallet) return;
     applyWalletSend(wallet, asset, amount);
@@ -27730,6 +27729,82 @@ let CS77_FILTER_LOW_REP = 20;
     });
     sortWalletConversions(wallet.conversions);
     paintWalletBalanceNotes(wallet);
+  }
+
+  function findWalletConversion(wallet, kind, requestId) {
+    const rows = wallet && Array.isArray(wallet.conversions) ? wallet.conversions : [];
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].kind === kind && rows[i].requestId === requestId) return rows[i];
+    }
+    return null;
+  }
+
+  // Credit or correct liquid hbd after a hive→hbd convert. A positive change
+  // counts up. A chain correction paints at once so it does not flash as income.
+  function applyWalletHbdDelta(wallet, delta, requestId) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const moved = roundAsset(delta, 3);
+    if (!moved) return;
+    cancelWalletBalanceAnim();
+    paintWalletBalanceAmounts(wallet);
+    const from = walletBalanceSnapshot(wallet);
+    wallet.hbd = roundAsset(Math.max(0, (Number(wallet.hbd) || 0) + moved), 3);
+    wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
+    const accounts = walletAccounts(wallet);
+    for (let i = 0; i < accounts.length; i++) accounts[i].hbd_balance = wallet.hbdStr;
+    const row = findWalletConversion(wallet, "hive-hbd", requestId);
+    if (row) {
+      const applied = row.received == null ? 0 : Number(row.received) || 0;
+      row.received = roundAsset(applied + moved, 3);
+      paintWalletBalanceNotes(wallet);
+    }
+    if (moved > 0) animateWalletBalances(wallet, from, walletBalanceSnapshot(wallet), ["hbd"]);
+    else paintWalletBalanceAmounts(wallet);
+  }
+
+  // The min feed can move between the signature and the block, so the first
+  // credit uses current_min_history and a later read of converted_amount
+  // corrects it. The request is not on chain until the transaction is in a block.
+  async function settleHiveToHbdPayout(wallet, amount, requestId, feedPromise) {
+    if (!wallet || wallet !== profileState.wallet) return;
+    const user = wallet.name;
+    let priced = 0;
+    try {
+      const feed = await (feedPromise || HiveApi.getFeedHistory());
+      priced = HiveApi.collateralizedHbdPayout(amount, feed && feed.current_min_history);
+    } catch {
+      priced = 0;
+    }
+    if (wallet === profileState.wallet && priced >= 0.001) applyWalletHbdDelta(wallet, priced, requestId);
+    const waits = [0, 3000, 3000, 3000];
+    for (let i = 0; i < waits.length; i++) {
+      if (waits[i]) await waitMs(waits[i]);
+      if (wallet !== profileState.wallet || observer() !== user) return;
+      let list = [];
+      try {
+        list = await HiveApi.getCollateralizedConversionRequests(user);
+      } catch {
+        list = [];
+      }
+      if (wallet !== profileState.wallet) return;
+      const raw = Array.isArray(list) ? list : [];
+      let match = null;
+      for (let j = 0; j < raw.length; j++) {
+        if (conversionRequestId(raw[j]) === requestId) {
+          match = raw[j];
+          break;
+        }
+      }
+      if (!match) continue;
+      const parsed = parseHiveToHbd(match);
+      const chain = parsed ? roundAsset(parsed.received, 3) : 0;
+      if (!(chain >= 0.001)) return;
+      const row = findWalletConversion(wallet, "hive-hbd", requestId);
+      const applied = row && row.received != null ? roundAsset(row.received, 3) : 0;
+      const delta = roundAsset(chain - applied, 3);
+      if (delta) applyWalletHbdDelta(wallet, delta, requestId);
+      return;
+    }
   }
 
   function walletMaxFor(kind, wallet) {
@@ -28647,6 +28722,12 @@ let CS77_FILTER_LOW_REP = 20;
         },
       ],
     ];
+    const feedPromise =
+      asset === "hive"
+        ? HiveApi.getFeedHistory().catch(function () {
+            return null;
+          })
+        : null;
     const copy = {
       title: "Sign convert",
       lead:
@@ -28674,8 +28755,11 @@ let CS77_FILTER_LOW_REP = 20;
       });
       closeConvertOverlay();
       resourceGen += 1;
-      applyWalletConvert(profileState.wallet, asset, amount, requestId);
+      const open = profileState.wallet;
+      if (!open || open.name !== user) return;
+      applyWalletConvert(open, asset, amount, requestId);
       refreshWalletRc();
+      if (asset === "hive") settleHiveToHbdPayout(open, amount, requestId, feedPromise);
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
       setConvertStatus(

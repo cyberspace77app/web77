@@ -680,6 +680,85 @@
     return hiveRpc("condenser_api.get_current_median_history_price", []);
   }
 
+  async function getFeedHistory() {
+    const result = await hiveRpc("condenser_api.get_feed_history", []);
+    return result && typeof result === "object" ? result : null;
+  }
+
+  // Smallest units. A number is a whole asset (3 decimals). An NAI amount is already sats.
+  function assetSats(val, places) {
+    const p = places == null ? 3 : places;
+    if (typeof val === "bigint") return val;
+    if (typeof val === "number") {
+      if (!Number.isFinite(val)) return 0n;
+      return assetSats(val.toFixed(p), p);
+    }
+    if (val && typeof val === "object" && val.amount != null && val.nai) {
+      const raw = String(val.amount).trim();
+      if (!/^-?\d+$/.test(raw)) return 0n;
+      return BigInt(raw);
+    }
+    const s = String(val == null ? "" : val).trim();
+    const m = s.match(/-?\d+(?:\.\d+)?/);
+    if (!m) return 0n;
+    const neg = m[0].charAt(0) === "-";
+    const body = neg ? m[0].slice(1) : m[0];
+    const parts = body.split(".");
+    const whole = parts[0] || "0";
+    if (!/^\d+$/.test(whole) || whole.length > 15) return 0n;
+    let frac = parts[1] || "";
+    if (!/^\d*$/.test(frac)) return 0n;
+    if (frac.length > p) frac = frac.slice(0, p);
+    while (frac.length < p) frac += "0";
+    const n = BigInt(whole + frac);
+    return neg ? -n : n;
+  }
+
+  function priceAssetSymbol(val) {
+    if (val && typeof val === "object" && val.nai) {
+      const nai = String(val.nai);
+      if (nai === "@@000000013") return "HBD";
+      if (nai === "@@000000021") return "HIVE";
+      return "";
+    }
+    return assetSymbol(val);
+  }
+
+  // collateralized_convert pays HBD in the same block the HIVE is locked.
+  // Half the HIVE, at current_min_history, with the 5% fee on the HIVE side:
+  //   half = hive_sats * 10000 / 20000
+  //   hbd  = half * hbd_sats * 10000 / (hive_quote_sats * 10500)
+  // Matches hive::protocol::multiply_with_fee for the published 4000 HIVE
+  // example (424 HBD / 1000 HIVE → 807.619 HBD).
+  const COLLATERAL_PERCENT = 10000n;
+  const COLLATERAL_RATIO = 20000n;
+  const COLLATERAL_FEE = 500n;
+
+  function collateralizedHbdPayout(hiveAmount, price) {
+    if (!price) return 0;
+    const hiveSats = assetSats(hiveAmount, 3);
+    const baseSym = priceAssetSymbol(price.base);
+    const quoteSym = priceAssetSymbol(price.quote);
+    let hbdSats = 0n;
+    let quoteSats = 0n;
+    if (baseSym === "HBD" && quoteSym === "HIVE") {
+      hbdSats = assetSats(price.base, 3);
+      quoteSats = assetSats(price.quote, 3);
+    } else if (baseSym === "HIVE" && quoteSym === "HBD") {
+      hbdSats = assetSats(price.quote, 3);
+      quoteSats = assetSats(price.base, 3);
+    } else {
+      return 0;
+    }
+    if (hiveSats <= 0n || hbdSats <= 0n || quoteSats <= 0n) return 0;
+    const half = (hiveSats * COLLATERAL_PERCENT) / COLLATERAL_RATIO;
+    if (half <= 0n) return 0;
+    const out =
+      (half * hbdSats * COLLATERAL_PERCENT) / (quoteSats * (COLLATERAL_PERCENT + COLLATERAL_FEE));
+    if (out <= 0n) return 0;
+    return Number(out) / 1000;
+  }
+
   const VOTE_MANA_REGEN_SECONDS = 5 * 24 * 60 * 60;
   const VOTE_DUST_RSHARES = 50000000n;
 
@@ -2176,6 +2255,8 @@
     getContent,
     getRewardFund,
     getMedianHistoryPrice,
+    getFeedHistory,
+    collateralizedHbdPayout,
     estimateVoteRshares,
     rsharesToHbd,
     getAccountResources,
