@@ -35579,7 +35579,7 @@ let CS77_FILTER_LOW_REP = 20;
     { id: "github", label: "GitHub", mode: "handle" },
     { id: "instagram", label: "Instagram", mode: "handle" },
     { id: "linkedin", label: "LinkedIn", mode: "handle" },
-    { id: "nftshowroom", label: "NFTShowroom", mode: "handle" },
+    { id: "nftshowroom", label: "NFT Showroom", mode: "handle" },
     { id: "nostr", label: "Nostr", mode: "nostr" },
     { id: "patreon", label: "Patreon", mode: "handle" },
     { id: "signal", label: "Signal", mode: "signal" },
