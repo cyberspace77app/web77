@@ -31077,10 +31077,19 @@ let CS77_FILTER_LOW_REP = 20;
       .join("")}</ul>`;
   }
 
+  function profileAboutWebsiteSection(raw) {
+    const site = profileWebsiteLink(raw);
+    if (!site) return "";
+    return communityAboutSection(
+      "Website",
+      `<div class="post-body"><p>${profileAboutLinkHtml(site.href, site.label)}</p></div>`
+    );
+  }
+
   function profileAboutHtml(profile) {
     const info = profilePostingInfo(profile);
     const about = String(info.about || "").trim();
-    const site = profileWebsiteLink(info.website);
+    const websiteSection = profileAboutWebsiteSection(info.website);
     const social = socialRowsFromObject(profileAboutSocial(profile));
     const coverHtml = communityAboutCoverHtml(info.cover_image);
     const sections = [];
@@ -31089,14 +31098,7 @@ let CS77_FILTER_LOW_REP = 20;
         communityAboutSection("About", `<div class="post-body">${HiveMd.renderMarkdown(about)}</div>`)
       );
     }
-    if (site) {
-      sections.push(
-        communityAboutSection(
-          "Website",
-          `<div class="post-body"><p>${profileAboutLinkHtml(site.href, site.label)}</p></div>`
-        )
-      );
-    }
+    if (websiteSection) sections.push(websiteSection);
     if (social.length) {
       sections.push(communityAboutSection("Social", profileSocialListHtml(social)));
     }
@@ -31647,22 +31649,25 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Description and rules come from the community. Language does too.
   // Beneficiary and preferred spaces (profile.topics) live on the subspace account.
-  // Social links are posting profile.social on that same account, already loaded here.
+  // Social links and the website are posting profile fields on that same account.
   async function communityAboutExtras(name, info) {
     const id = normalizeCommunityName(name);
     const settings = communitySettingsObject(info);
     let metadata = null;
     let social = null;
+    let website = "";
     try {
       const rows = await HiveApi.getAccounts([id]);
       const account = rows && rows[0];
       if (account && normalizeCommunityName(account.name) === id) {
         metadata = metadataFromAccount(account);
         social = socialFromPosting(account);
+        website = communityWebsiteField(communityPostingMetadata(account));
       }
     } catch {
       metadata = null;
       social = null;
+      website = "";
     }
     return {
       beneficiary: metadata
@@ -31670,6 +31675,7 @@ let CS77_FILTER_LOW_REP = 20;
         : { beneficiary_account: "", beneficiary_percent: "" },
       tags: communityAboutTags(metadata, settings),
       cover: communityCoverUrl(info, metadata),
+      website: website,
       social: social,
     };
   }
@@ -31682,6 +31688,7 @@ let CS77_FILTER_LOW_REP = 20;
     const account = beneficiary.beneficiary_account || "";
     const percent = beneficiary.beneficiary_percent || "";
     const tags = (extras && extras.tags) || [];
+    const websiteSection = profileAboutWebsiteSection(extras && extras.website);
     const social = socialRowsFromObject(extras && extras.social);
     const coverHtml = communityAboutCoverHtml(extras && extras.cover);
     const sections = [];
@@ -31690,6 +31697,7 @@ let CS77_FILTER_LOW_REP = 20;
         communityAboutSection("About", `<div class="post-body">${HiveMd.renderMarkdown(description)}</div>`)
       );
     }
+    if (websiteSection) sections.push(websiteSection);
     if (rules) {
       sections.push(
         communityAboutSection("Rules", `<div class="post-body">${HiveMd.renderMarkdown(rules)}</div>`)
@@ -32048,7 +32056,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // account_update2 replaces posting_json_metadata. The owner custom JSON is
   // that object minus the picture, beneficiary, preferred-space, Lightning
-  // address, and social keys this form writes itself. Other wallet keys stay.
+  // address, website, and social keys this form writes itself. Other wallet keys stay.
   // Legacy json_metadata is not included.
   function communityOwnerCustomObject(metadata) {
     const out = copyJsonKeys(metadata, { profile: true, beneficiary: true });
@@ -32064,6 +32072,7 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary: true,
       preferred_tags: true,
       wallet: true,
+      website: true,
       social: true,
     });
     if (Object.prototype.hasOwnProperty.call(profile, "wallet")) {
@@ -32320,11 +32329,18 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: beneficiary.beneficiary_account,
       beneficiary_percent: beneficiary.beneficiary_percent,
       tags: communityPreferredTags(metadata, settings),
+      website: ready ? communityWebsiteField(posting) : "",
       social: ready
         ? socialEditorRows(posting && plainObject(posting.profile) ? posting.profile.social : null)
         : socialEditorRows(null),
       owner_custom: formatSettingsCustom(posting ? communityOwnerCustomObject(posting) : {}),
     };
+  }
+
+  function communityWebsiteField(posting) {
+    const profile = posting && plainObject(posting.profile) ? posting.profile : null;
+    const raw = profile && profile.website;
+    return typeof raw === "string" ? raw.trim() : "";
   }
 
   function communityLightningField(posting) {
@@ -32505,6 +32521,10 @@ let CS77_FILTER_LOW_REP = 20;
               <input id="communityTagInput" type="text" maxlength="24" placeholder="${communityEditTags.length >= COMMUNITY_MAX_SPACES ? "Tag limit reached" : "Add a space"}" autocomplete="off" spellcheck="false"${ownerLock}${communityEditTags.length >= COMMUNITY_MAX_SPACES ? " disabled" : ""}>
             </div>
           </div>
+          <div class="settings-field">
+            <label class="settings-label" for="communityWebsite">Website</label>
+            <input id="communityWebsite" name="website" type="text" inputmode="url" autocomplete="url" placeholder="https://" value="${esc(fields.website || "")}"${ownerLock}>
+          </div>
           ${socialEditorHtml(fields.social, !ownerReady)}
           <div class="settings-field">
             <label class="settings-label" for="communityOwnerCustom">Custom</label>
@@ -32566,6 +32586,7 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: ($("#communityBeneficiary") && $("#communityBeneficiary").value) || "",
       beneficiary_percent: ($("#communityBeneficiaryPercent") && $("#communityBeneficiaryPercent").value) || "",
       tags: communityEditTags.slice(),
+      website: ($("#communityWebsite") && $("#communityWebsite").value) || "",
       social: readSocialEditor(socialEditorField($("#communityEditForm"))),
       owner_custom: ($("#communityOwnerCustom") && $("#communityOwnerCustom").value) || "",
     };
@@ -32594,6 +32615,7 @@ let CS77_FILTER_LOW_REP = 20;
     set("#communityType", fields.type_id ? String(fields.type_id) : "");
     set("#communityBeneficiary", fields.beneficiary_account || "");
     set("#communityBeneficiaryPercent", fields.beneficiary_percent || "");
+    set("#communityWebsite", fields.website || "");
     set("#communityOwnerCustom", fields.owner_custom || "{}");
     const nsfw = $("#communityNsfw");
     if (nsfw) nsfw.checked = Boolean(fields.nsfw);
@@ -32716,7 +32738,9 @@ let CS77_FILTER_LOW_REP = 20;
     const percent = $("#communityBeneficiaryPercent");
     const ownerCustom = $("#communityOwnerCustom");
     const lightning = $("#communityLightning");
+    const website = $("#communityWebsite");
     if (lightning) lightning.disabled = communityEditBusy || !ownerReady;
+    if (website) website.disabled = communityEditBusy || !ownerReady;
     if (account) account.disabled = communityEditBusy || !ownerReady;
     if (percent) percent.disabled = communityEditBusy || !ownerReady;
     if (ownerCustom) ownerCustom.disabled = communityEditBusy || !ownerReady;
@@ -32853,6 +32877,7 @@ let CS77_FILTER_LOW_REP = 20;
       beneficiary_account: normalizeLoginUser(raw && raw.beneficiary_account),
       beneficiary_percent: communityPercentText(raw && raw.beneficiary_percent),
       tags: tags,
+      website: String(raw && raw.website != null ? raw.website : "").trim(),
       social: socialFormRows(raw && raw.social),
       owner_custom: String(raw && raw.owner_custom != null ? raw.owner_custom : "").trim(),
     };
@@ -33011,6 +33036,7 @@ let CS77_FILTER_LOW_REP = 20;
       fields.beneficiary_account !== (base.beneficiary_account || "") ||
       fields.beneficiary_percent !== (base.beneficiary_percent || "") ||
       !communitySameTags(fields.tags, base.tags) ||
+      (fields.website || "") !== (base.website || "") ||
       socialFilledKey(fields.social) !== socialFilledKey(base && base.social) ||
       !communitySameCustom(fields.owner_custom, base.owner_custom)
     );
@@ -33052,6 +33078,9 @@ let CS77_FILTER_LOW_REP = 20;
       else if (ownerReadyNow || communityStoredPicture(storedBefore, "cover_url")) delete posting.profile.cover_image;
       if (ownerReadyNow) {
         applyLightningAddress(posting.profile, fields.lightning || "");
+        const website = String(fields.website || "").trim();
+        if (website) posting.profile.website = website;
+        else delete posting.profile.website;
         const social = socialObjectFromRows(fields.social);
         if (social) posting.profile.social = social;
         else delete posting.profile.social;
@@ -33074,6 +33103,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (ownerReadyNow) {
         patch.lightning = fields.lightning || "";
         rememberCommunityZapWallet(communityState.name, fields.lightning || "");
+        patch.website = String(fields.website || "").trim();
         patch.social = socialFormRows(fields.social);
       }
       patch.beneficiary_account = fields.beneficiary_account;
@@ -33100,7 +33130,8 @@ let CS77_FILTER_LOW_REP = 20;
   // both set profile.version to 2 so the image servers use that profile.
   // When the account loaded, the owner custom JSON is the rest of
   // posting_json_metadata, and an empty picture field clears that image.
-  // Social links are profile.social on that same account. When it did not
+  // Social links are profile.social on that same account. The website is
+  // profile.website, the same field a profile stores. When it did not
   // load, posting metadata is kept. An empty field clears an image only when
   // hivemind already showed that URL in the form. A picture that stayed on
   // the account and was never shown is left in place.
@@ -33115,6 +33146,7 @@ let CS77_FILTER_LOW_REP = 20;
         delete meta.profile.version;
         delete meta.profile.beneficiary;
         delete meta.profile.preferred_tags;
+        delete meta.profile.website;
         delete meta.profile.social;
       }
     }
@@ -33140,6 +33172,9 @@ let CS77_FILTER_LOW_REP = 20;
       if (fields.tags.length) profile.preferred_tags = fields.tags.slice();
       else delete profile.preferred_tags;
       applyLightningAddress(profile, String(fields.lightning == null ? "" : fields.lightning).trim());
+      const website = String(fields.website == null ? "" : fields.website).trim();
+      if (website) profile.website = website;
+      else delete profile.website;
       const social = socialObjectFromRows(fields.social);
       if (social) profile.social = social;
       else delete profile.social;
@@ -35146,7 +35181,7 @@ let CS77_FILTER_LOW_REP = 20;
       bindCommunityEdit();
       if (!communityOwnerReady(communityState.name) && $("#communityEditForm")) {
         setCommunityEditStatus(
-          "Could not load the subspace account. The Bitcoin Lightning address, social links, beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
+          "Could not load the subspace account. The Bitcoin Lightning address, website, social links, beneficiary, preferred spaces, and owner custom settings stay unchanged until it loads.",
           true
         );
       }
