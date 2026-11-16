@@ -10131,11 +10131,17 @@ min-height: 0;
   display: none;
 }
 
-#settingsProfileForm .settings-social-field {
+.settings-social-field {
   margin-top: 1.85rem;
 }
 
-#settingsProfileForm h2.settings-label {
+.settings-social-field h2.settings-label {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
   margin: 0 0 0.4rem;
 }
 
@@ -10146,13 +10152,13 @@ min-height: 0;
   margin-bottom: 0.55rem;
 }
 
-.settings-form .settings-social-row select {
-  flex: 0 0 9.75rem;
-  width: 9.75rem;
+.settings-form .settings-social-row .settings-social-type {
+  flex: 0 0 calc(20ch + 1.9rem + 2px);
+  width: calc(20ch + 1.9rem + 2px);
   min-width: 0;
 }
 
-.settings-form .settings-social-row input {
+.settings-form .settings-social-row .settings-social-value {
   flex: 1 1 auto;
   width: auto;
   min-width: 0;
@@ -10163,7 +10169,7 @@ min-height: 0;
     flex-wrap: wrap;
   }
 
-  .settings-form .settings-social-row select {
+  .settings-form .settings-social-row .settings-social-type {
     flex: 1 1 100%;
     width: 100%;
   }
