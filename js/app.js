@@ -5000,6 +5000,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "comments";
     if (page === "replies") return "replies";
     if (page === "wallet") return "wallet";
+    if (page === "about") return "about";
     return "";
   }
 
@@ -6781,6 +6782,28 @@ let CS77_FILTER_LOW_REP = 20;
     if (wallet) profile.metadata.profile.wallet = wallet;
     else delete profile.metadata.profile.wallet;
     profile.walletLoaded = true;
+  }
+
+  // The About tab reads cover, about, website, and social from posting
+  // metadata. Bridge get_profile keeps the standard fields and drops social.
+  // A posting profile clears a standard field it does not set, the same way
+  // metadataFromAccount does for the signed-in account.
+  function stampProfileChainFields(profile, account) {
+    stampProfileReceiveWallet(profile, account);
+    if (!profile || !account) return;
+    const posting = postingMetadataFromAccount(account);
+    const postingProfile = plainObject(posting.profile) ? posting.profile : null;
+    if (!postingProfile) return;
+    if (!plainObject(profile.metadata)) profile.metadata = {};
+    if (!plainObject(profile.metadata.profile)) profile.metadata.profile = {};
+    const info = profile.metadata.profile;
+    PROFILE_FIELDS.forEach((key) => {
+      const value = postingProfile[key];
+      if (typeof value === "string") info[key] = value;
+      else delete info[key];
+    });
+    if (Object.prototype.hasOwnProperty.call(postingProfile, "social")) info.social = postingProfile.social;
+    else delete info.social;
   }
 
   // LUD-16 Lightning Address: name@domain. Not a BOLT11 invoice, LNURL, or URL.
@@ -25079,6 +25102,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (page === "comments") return "Comments · " + a + " — CyberSpace77";
     if (page === "replies") return "Replies · " + a + " — CyberSpace77";
     if (page === "wallet") return "Wallet · " + a + " — CyberSpace77";
+    if (page === "about") return "About · " + a + " — CyberSpace77";
     return a + " — CyberSpace77";
   }
 
@@ -25100,6 +25124,7 @@ let CS77_FILTER_LOW_REP = 20;
       ["comments", "Comments", profileHref(author, "comments")],
       ["replies", "Replies", profileHref(author, "replies")],
       ["wallet", "Wallet", profileHref(author, "wallet")],
+      ["about", "About", profileHref(author, "about")],
     ];
     return `
       <nav class="feed-nav profile-nav" aria-label="Profile">
@@ -30465,7 +30490,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // The banner stays when this author is already on screen. A new profile
-  // still loads the account first, then the posts, comments, replies, or wallet.
+  // still loads the account first, then posts, comments, replies, wallet, or about.
   function profileBannerReady(name) {
     if (profileState.author !== name || !profileState.profile) return false;
     const banner = view.querySelector(".profile-banner");
@@ -30486,7 +30511,7 @@ let CS77_FILTER_LOW_REP = 20;
   function paintProfileNavActive(page) {
     const nav = view.querySelector(".profile-nav");
     if (nav) {
-      const ids = ["posts", "comments", "replies", "wallet"];
+      const ids = ["posts", "comments", "replies", "wallet", "about"];
       const links = nav.querySelectorAll("a");
       for (let i = 0; i < links.length; i++) {
         const on = ids[i] === page;
@@ -31011,10 +31036,102 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
+  function profilePostingInfo(profile) {
+    const meta = (profile && (profile.metadata || profile.posting_json_metadata)) || {};
+    if (!meta || typeof meta.profile !== "object" || Array.isArray(meta.profile)) return {};
+    return meta.profile;
+  }
+
+  // Social is posting-only. The signed-in metadata merge can still carry a
+  // legacy social object, so the open account wins when it is this profile.
+  function profileAboutSocial(profile) {
+    const name = String((profile && profile.name) || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (
+      name &&
+      accountState.loaded &&
+      accountState.account &&
+      String(accountState.user || "").toLowerCase() === name
+    ) {
+      return socialFromPosting(accountState.account, profile && profile.metadata);
+    }
+    return profilePostingInfo(profile).social;
+  }
+
+  function profileAboutLinkHtml(href, label) {
+    const text = HiveMd.escapeHtml(label);
+    if (!href) return text;
+    const external = /^https?:/i.test(href);
+    const attrs = external ? ' target="_blank" rel="noopener noreferrer"' : "";
+    return `<a href="${HiveMd.escapeHtml(href)}"${attrs}>${text}</a>`;
+  }
+
+  function profileSocialListHtml(rows) {
+    return `<ul class="profile-about-links">${rows
+      .map((row) => {
+        const link = socialPublicLink(row.type, row.value);
+        if (!link) return "";
+        return `<li><span class="profile-about-kind">${HiveMd.escapeHtml(socialLabel(row.type))}</span><span class="profile-about-value">${profileAboutLinkHtml(link.href, link.label)}</span></li>`;
+      })
+      .join("")}</ul>`;
+  }
+
+  function profileAboutHtml(profile) {
+    const info = profilePostingInfo(profile);
+    const about = String(info.about || "").trim();
+    const site = profileWebsiteLink(info.website);
+    const social = socialRowsFromObject(profileAboutSocial(profile));
+    const coverHtml = communityAboutCoverHtml(info.cover_image);
+    const sections = [];
+    if (about) {
+      sections.push(
+        communityAboutSection("About", `<div class="post-body">${HiveMd.renderMarkdown(about)}</div>`)
+      );
+    }
+    if (site) {
+      sections.push(
+        communityAboutSection(
+          "Website",
+          `<div class="post-body"><p>${profileAboutLinkHtml(site.href, site.label)}</p></div>`
+        )
+      );
+    }
+    if (social.length) {
+      sections.push(communityAboutSection("Social", profileSocialListHtml(social)));
+    }
+    if (!sections.length && !coverHtml) {
+      return `
+        <div class="community-panel community-about">
+          <div class="empty-state">
+            <h2>No about posted</h2>
+            <p>This account has not published an about yet.</p>
+          </div>
+        </div>`;
+    }
+    return `<div class="community-panel community-about">${coverHtml}${sections.join("")}</div>`;
+  }
+
+  async function fillProfileAbout(name, tab) {
+    try {
+      await HiveMd.whenMarkdownReady();
+    } catch {
+      // renderMarkdown escapes the about text when the scripts fail.
+    }
+    if (!profileRouteStill(name, tab)) return;
+    profileSectionHtml(profileAboutHtml(profileState.profile));
+    bindCommunityAboutCover();
+    releaseProfileSectionHold();
+  }
+
   async function renderProfileSection(name, tab, pageLoad) {
     if (!profileRouteStill(name, tab)) return;
     if (tab === "wallet") {
       await fillProfileWallet(name, tab, pageLoad);
+      return;
+    }
+    if (tab === "about") {
+      await fillProfileAbout(name, tab);
       return;
     }
     const status = $("#profileSectionStatus");
@@ -31174,7 +31291,7 @@ let CS77_FILTER_LOW_REP = 20;
         if (!profileRouteStill(name, tab)) return;
         profile = bridge;
         power = chain.power;
-        if (profile && chain.loaded) stampProfileReceiveWallet(profile, chain.account);
+        if (profile && chain.loaded) stampProfileChainFields(profile, chain.account);
       }
       if (!profile || !profile.name) {
         showMissingProfile();
@@ -35920,6 +36037,112 @@ let CS77_FILTER_LOW_REP = 20;
     return rows;
   }
 
+  // About-page links. A stored handle becomes that network's profile URL.
+  // The saved text is never used as the host.
+  function socialClipLabel(text) {
+    const value = String(text || "");
+    if (value.length <= 64) return value;
+    return value.slice(0, 28) + "…" + value.slice(-16);
+  }
+
+  function socialHandleHref(type, raw) {
+    if (!raw || /[\s<>"'`]/.test(raw) || /:\/\//.test(raw)) return "";
+    const enc = encodeURIComponent(raw);
+    if (type === "x") return "https://x.com/" + enc;
+    if (type === "instagram") return "https://instagram.com/" + enc;
+    if (type === "discord") {
+      if (/^[0-9]{17,20}$/.test(raw)) return "https://discord.com/users/" + enc;
+      return "https://discord.gg/" + enc;
+    }
+    if (type === "3speak") return "https://3speak.tv/@" + enc;
+    if (type === "youtube") {
+      if (/^UC[A-Za-z0-9_-]{22}$/.test(raw)) return "https://www.youtube.com/channel/" + enc;
+      return "https://www.youtube.com/@" + enc;
+    }
+    if (type === "bluesky") return "https://bsky.app/profile/" + enc;
+    if (type === "patreon") return "https://www.patreon.com/" + enc;
+    if (type === "github") return "https://github.com/" + enc;
+    if (type === "facebook") return "https://www.facebook.com/" + enc;
+    if (type === "tiktok") return "https://www.tiktok.com/@" + enc;
+    if (type === "onlyfans") return "https://onlyfans.com/" + enc;
+    if (type === "twitch") return "https://www.twitch.tv/" + enc;
+    if (type === "linkedin") {
+      const parts = raw.split("/");
+      if ((parts[0] === "company" || parts[0] === "school") && parts[1]) {
+        return (
+          "https://www.linkedin.com/" +
+          encodeURIComponent(parts[0]) +
+          "/" +
+          encodeURIComponent(parts.slice(1).join("/"))
+        );
+      }
+      return "https://www.linkedin.com/in/" + enc;
+    }
+    if (type === "reddit") {
+      if (raw.slice(0, 2) === "r/" && raw.length > 2) return "https://www.reddit.com/r/" + encodeURIComponent(raw.slice(2));
+      return "https://www.reddit.com/user/" + enc;
+    }
+    if (type === "linktree") return "https://linktr.ee/" + enc;
+    if (type === "telegram") {
+      if (/^\+[A-Za-z0-9_-]{8,64}$/.test(raw)) return "https://t.me/" + raw;
+      if (/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(raw)) return "https://t.me/" + enc;
+      if (/^[A-Za-z0-9_-]{16,64}$/.test(raw)) return "https://t.me/joinchat/" + enc;
+      return "";
+    }
+    if (type === "snapchat") return "https://www.snapchat.com/add/" + enc;
+    return "";
+  }
+
+  function socialPublicLink(type, raw) {
+    const id = socialTypeId(type);
+    const text = String(raw == null ? "" : raw).trim();
+    if (!text) return null;
+    const mode = socialMode(id);
+    if (mode === "email") return { href: "mailto:" + text, label: text };
+    if (mode === "phone") {
+      const tel = text.replace(/[^\d+]/g, "");
+      return { href: tel ? "tel:" + tel : "", label: text };
+    }
+    if (mode === "url" || ((mode === "other" || mode === "mastodon") && /^https?:\/\//i.test(text))) {
+      const site = profileWebsiteLink(text);
+      if (!site) return { href: "", label: text };
+      return { href: site.href, label: site.label };
+    }
+    if (mode === "mastodon") {
+      const acct = text.replace(/^@/, "");
+      const at = acct.lastIndexOf("@");
+      if (at > 0) {
+        const name = acct.slice(0, at);
+        const host = acct.slice(at + 1);
+        if (
+          /^[A-Za-z0-9._+-]{1,64}$/.test(name) &&
+          /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(host)
+        ) {
+          return { href: "https://" + host.toLowerCase() + "/@" + encodeURIComponent(name), label: name + "@" + host.toLowerCase() };
+        }
+      }
+      return { href: "", label: text };
+    }
+    if (mode === "nostr") {
+      const key = text.replace(/^nostr:/i, "");
+      const href = /^(npub1|nprofile1)[0-9a-z]+$/i.test(key) ? "https://njump.me/" + encodeURIComponent(key) : "";
+      return { href: href, label: socialClipLabel(text) };
+    }
+    if (mode === "signal") {
+      if (/^[a-z][a-z0-9_]{2,31}\.[0-9]{2,9}$/i.test(text)) {
+        return { href: "https://signal.me/#u/" + text.toLowerCase(), label: text.toLowerCase() };
+      }
+      const digits = text.replace(/\D/g, "");
+      if (digits.length >= 6 && digits.length <= 15) {
+        const phone = (text.trim().charAt(0) === "+" ? "+" : "") + digits;
+        return { href: "https://signal.me/#p/" + phone, label: text };
+      }
+      return { href: "", label: text };
+    }
+    if (mode === "other") return { href: "", label: text };
+    return { href: socialHandleHref(id, text), label: text };
+  }
+
   function socialEditorRows(social) {
     const saved = socialRowsFromObject(social);
     const rows = [];
@@ -36310,7 +36533,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsCover">Cover background</label>
-          <p class="settings-note">Used in other frontends.</p>
+          <p class="settings-note">Shown on the about page.</p>
           <img id="settingsCoverPreview" class="settings-cover-preview" alt="" ${coverSrc ? `src="${esc(coverSrc)}"` : "hidden"}>
           <input id="settingsCover" name="cover_image" type="text" inputmode="url" autocomplete="off" placeholder="https://" value="${esc(fields.cover_image || "")}">
           <div class="settings-media-actions">
@@ -36319,7 +36542,7 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
         </div>
         <div class="settings-field settings-social-field" id="settingsSocialField">
-          <h2 class="settings-section-title settings-section-line" id="settingsSocialHeading"><span>Social</span></h2>
+          <h2 class="settings-label" id="settingsSocialHeading">Social</h2>
           <div id="settingsSocialRows">${socialRowsHtml(fields.social)}</div>
           <button type="button" class="settings-node-add" id="settingsSocialAdd">Add</button>
         </div>

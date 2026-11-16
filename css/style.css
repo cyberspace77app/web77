@@ -4402,6 +4402,7 @@ a.tag:hover {
 
 .is-profile .feed-nav,
 .is-profile .wallet-page,
+.is-profile .community-about,
 .is-profile .feed-actions,
 .is-profile .loading-row,
 .is-profile .empty-state,
@@ -4911,6 +4912,48 @@ a.tag:hover {
 
 .community-about-beneficiary + .post-body {
   margin-top: 0.85rem;
+}
+
+.profile-about-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.profile-about-links li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.85rem;
+  row-gap: 0.15rem;
+  align-items: baseline;
+}
+
+.profile-about-kind {
+  max-width: 11rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray);
+  overflow-wrap: anywhere;
+}
+
+.profile-about-value {
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .profile-about-links li {
+    grid-template-columns: 1fr;
+  }
 }
 
 .community-panel h2 {
@@ -10092,29 +10135,8 @@ min-height: 0;
   margin-top: 1.85rem;
 }
 
-#settingsProfileForm h2.settings-section-line {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  margin: 0 0 0.85rem;
-  font-family: var(--font-display);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: none;
-  color: var(--yellow);
-  line-height: 1.45;
-}
-
-#settingsProfileForm h2.settings-section-line span {
-  white-space: nowrap;
-}
-
-#settingsProfileForm h2.settings-section-line::after {
-  content: "";
-  flex: 1 1 auto;
-  height: 0;
-  border-top: 1px solid #fff;
+#settingsProfileForm h2.settings-label {
+  margin: 0 0 0.4rem;
 }
 
 .settings-social-row {
