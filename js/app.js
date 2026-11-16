@@ -36495,6 +36495,7 @@ let CS77_FILTER_LOW_REP = 20;
     const esc = HiveMd.escapeHtml;
     const avatarSrc = settingsPictureSrc(fields.profile_image) || AVATAR_DEFAULT_LARGE;
     const coverSrc = settingsPictureSrc(fields.cover_image);
+    const lnPlaceholder = esc(lightningAddressPlaceholder(observer()));
     return `
       <form class="settings-form" id="settingsProfileForm" autocomplete="off">
         <div class="settings-field">
@@ -36515,7 +36516,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsLightning">Bitcoin Lightning Address</label>
-          <input id="settingsLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="name@domain" value="${esc(fields.lightning || "")}">
+          <input id="settingsLightning" name="lightning" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="${lnPlaceholder}" value="${esc(fields.lightning || "")}">
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsAvatar">Avatar picture</label>
