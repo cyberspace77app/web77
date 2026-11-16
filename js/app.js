@@ -35352,6 +35352,801 @@ let CS77_FILTER_LOW_REP = 20;
     if (clearLocal) clearLocal.addEventListener("click", openLocalDataDialog);
   }
 
+  // profile.social on posting_json_metadata. A network stores the handle.
+  // Website, phone, email, and an other link keep the address that was typed.
+  // Mastodon keeps the full link or name@instance, because the host varies.
+  // An empty section omits the social object.
+  const SOCIAL_TYPES = [
+    { id: "3speak", label: "3Speak", mode: "handle" },
+    { id: "bluesky", label: "Bluesky", mode: "handle" },
+    { id: "discord", label: "Discord", mode: "handle" },
+    { id: "email", label: "Email", mode: "email" },
+    { id: "facebook", label: "Facebook", mode: "handle" },
+    { id: "github", label: "GitHub", mode: "handle" },
+    { id: "instagram", label: "Instagram", mode: "handle" },
+    { id: "linkedin", label: "LinkedIn", mode: "handle" },
+    { id: "linktree", label: "Linktree", mode: "handle" },
+    { id: "mastodon", label: "Mastodon", mode: "mastodon" },
+    { id: "nostr", label: "Nostr", mode: "nostr" },
+    { id: "onlyfans", label: "OnlyFans", mode: "handle" },
+    { id: "other", label: "Other", mode: "other" },
+    { id: "patreon", label: "Patreon", mode: "handle" },
+    { id: "phone", label: "Phone", mode: "phone" },
+    { id: "reddit", label: "Reddit", mode: "handle" },
+    { id: "signal", label: "Signal", mode: "signal" },
+    { id: "snapchat", label: "Snapchat", mode: "handle" },
+    { id: "telegram", label: "Telegram", mode: "handle" },
+    { id: "tiktok", label: "TikTok", mode: "handle" },
+    { id: "twitch", label: "Twitch", mode: "handle" },
+    { id: "website", label: "Website", mode: "url" },
+    { id: "x", label: "X", mode: "handle" },
+    { id: "youtube", label: "YouTube", mode: "handle" },
+  ];
+  const SOCIAL_ROW_MAX = 24;
+  const SOCIAL_EMAIL_RE =
+    /^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+  function socialTypeId(type) {
+    const id = String(type || "")
+      .trim()
+      .toLowerCase();
+    for (let i = 0; i < SOCIAL_TYPES.length; i++) {
+      if (SOCIAL_TYPES[i].id === id) return id;
+    }
+    if (/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) return id;
+    return "other";
+  }
+
+  function socialTypeRow(type) {
+    const id = socialTypeId(type);
+    for (let i = 0; i < SOCIAL_TYPES.length; i++) {
+      if (SOCIAL_TYPES[i].id === id) return SOCIAL_TYPES[i];
+    }
+    return null;
+  }
+
+  function socialLabel(type) {
+    const row = socialTypeRow(type);
+    return row ? row.label : socialTypeId(type);
+  }
+
+  function socialMode(type) {
+    const row = socialTypeRow(type);
+    return row ? row.mode : "other";
+  }
+
+  function socialEnter(type) {
+    const label = socialLabel(type);
+    const id = socialTypeId(type);
+    const article = id === "x" || id === "onlyfans" || /^[aeiou]/i.test(label) ? "an" : "a";
+    return "Enter " + article + " " + label + " username or profile link.";
+  }
+
+  function socialHost(url) {
+    return String(url.hostname || "")
+      .toLowerCase()
+      .replace(/^(www|m|mobile|web|mbasic)\./, "");
+  }
+
+  function socialPath(url) {
+    return String(url.pathname || "")
+      .split("/")
+      .filter(Boolean)
+      .map((part) => {
+        try {
+          return decodeURIComponent(part);
+        } catch {
+          return part;
+        }
+      });
+  }
+
+  function socialAsUrl(raw) {
+    const text = String(raw || "").trim();
+    if (!text || /\s/.test(text)) return null;
+    if (/^(mailto|tel|nostr):/i.test(text)) {
+      try {
+        return new URL(text);
+      } catch {
+        return null;
+      }
+    }
+    let next = text;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(next)) {
+      if (!/^[^\s/]+\.[a-z]{2,}([/?#]|$)/i.test(next)) return null;
+      next = "https://" + next;
+    }
+    try {
+      return new URL(next);
+    } catch {
+      return null;
+    }
+  }
+
+  function socialSkip(parts, reserved, skipOnce) {
+    let index = 0;
+    if (skipOnce && parts[0] && reserved.indexOf(parts[0].toLowerCase()) !== -1) index = 1;
+    const handle = String(parts[index] || "").replace(/^@/, "");
+    if (!handle || reserved.indexOf(handle.toLowerCase()) !== -1) return "";
+    return handle;
+  }
+
+  function socialHandleFromUrl(type, url) {
+    const host = socialHost(url);
+    const parts = socialPath(url);
+    if (type === "x") {
+      if (host !== "x.com" && host !== "twitter.com") return null;
+      const screen = url.searchParams.get("screen_name");
+      if (parts[0] && parts[0].toLowerCase() === "intent" && screen) return screen;
+      return socialSkip(parts, [
+        "home",
+        "explore",
+        "search",
+        "settings",
+        "i",
+        "intent",
+        "share",
+        "hashtag",
+        "messages",
+        "compose",
+        "notifications",
+        "login",
+        "signup",
+        "tos",
+        "privacy",
+      ]);
+    }
+    if (type === "instagram") {
+      if (host !== "instagram.com") return null;
+      return socialSkip(parts, [
+        "p",
+        "reel",
+        "reels",
+        "stories",
+        "explore",
+        "accounts",
+        "direct",
+        "about",
+        "legal",
+        "directory",
+      ]);
+    }
+    if (type === "discord") {
+      if (host === "discord.gg") return parts[0] || "";
+      if (host !== "discord.com" && host !== "discordapp.com") return null;
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if (head === "invite" && parts[1]) return parts[1];
+      if (head === "users" && parts[1]) return parts[1];
+      if (head === "channels") return "";
+      return socialSkip(parts, ["login", "register", "app", "developers", "nitro", "download", "store", "invite", "channels"]);
+    }
+    if (type === "3speak") {
+      if (host !== "3speak.tv") return null;
+      const watch = url.searchParams.get("v") || "";
+      if (parts[0] && parts[0].toLowerCase() === "watch" && watch.indexOf("/") !== -1) return watch.split("/")[0];
+      if (parts[0] && parts[0].toLowerCase() === "user" && parts[1]) return parts[1];
+      if (parts[0] && parts[0].charAt(0) === "@") return parts[0].slice(1);
+      return socialSkip(parts, ["watch", "user", "login", "trending", "communities", "search", "shorts", "embed"]);
+    }
+    if (type === "youtube") {
+      if (host !== "youtube.com" && host !== "music.youtube.com") return null;
+      if (!parts.length) return "";
+      const head = parts[0].toLowerCase();
+      if (head === "watch" || head === "shorts" || head === "playlist" || head === "live" || head === "feed" || head === "results" || head === "clip") {
+        return "";
+      }
+      if (head.charAt(0) === "@") return parts[0].slice(1);
+      if ((head === "channel" || head === "c" || head === "user") && parts[1]) return parts[1];
+      return "";
+    }
+    if (type === "bluesky") {
+      if (host !== "bsky.app") return null;
+      if (parts[0] && parts[0].toLowerCase() === "profile" && parts[1]) return parts[1];
+      return "";
+    }
+    if (type === "patreon") {
+      if (host !== "patreon.com") return null;
+      if (parts[0] && parts[0].toLowerCase() === "user") return url.searchParams.get("u") || "";
+      return socialSkip(
+        parts,
+        ["login", "signup", "posts", "home", "create", "settings", "oauth2", "cw", "c", "user"],
+        true
+      );
+    }
+    if (type === "github") {
+      if (host !== "github.com") return null;
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if ((head === "orgs" || head === "organizations" || head === "users") && parts[1]) return parts[1];
+      return socialSkip(parts, [
+        "settings",
+        "orgs",
+        "organizations",
+        "features",
+        "topics",
+        "marketplace",
+        "apps",
+        "login",
+        "signup",
+        "join",
+        "explore",
+        "notifications",
+        "new",
+        "codespaces",
+        "account",
+        "sponsors",
+        "collections",
+        "events",
+        "about",
+        "pricing",
+        "customer-stories",
+        "readme",
+        "pulls",
+        "issues",
+        "search",
+        "users",
+        "org",
+      ]);
+    }
+    if (type === "facebook") {
+      if (host !== "facebook.com" && host !== "fb.com" && host !== "fb.me") return null;
+      if (host === "fb.me") return parts[0] || "";
+      if (parts[0] && parts[0].toLowerCase() === "profile.php") return url.searchParams.get("id") || "";
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if ((head === "groups" || head === "pages") && parts[1]) return parts[1];
+      return socialSkip(parts, [
+        "profile.php",
+        "pages",
+        "groups",
+        "watch",
+        "stories",
+        "share",
+        "sharer.php",
+        "login",
+        "people",
+        "photo.php",
+        "photos",
+        "events",
+        "marketplace",
+        "gaming",
+        "reel",
+        "reels",
+      ]);
+    }
+    if (type === "tiktok") {
+      if (host !== "tiktok.com") return null;
+      return socialSkip(parts, ["explore", "following", "live", "tag", "music", "legal", "about", "login", "foryou"]);
+    }
+    if (type === "onlyfans") {
+      if (host !== "onlyfans.com") return null;
+      return socialSkip(parts, ["onlyfans", "help", "terms", "privacy", "about"]);
+    }
+    if (type === "twitch") {
+      if (host !== "twitch.tv") return null;
+      return socialSkip(parts, [
+        "directory",
+        "videos",
+        "settings",
+        "subscriptions",
+        "inventory",
+        "wallet",
+        "drops",
+        "search",
+        "downloads",
+        "login",
+      ]);
+    }
+    if (type === "linkedin") {
+      if (host !== "linkedin.com") return null;
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if ((head === "in" || head === "pub") && parts[1]) return parts[1];
+      if ((head === "company" || head === "school") && parts[1]) return head + "/" + parts[1];
+      return "";
+    }
+    if (type === "reddit") {
+      if (host !== "reddit.com" && host.slice(-11) !== ".reddit.com") return null;
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if ((head === "user" || head === "u") && parts[1]) return parts[1];
+      if (head === "r" && parts[1]) return "r/" + parts[1];
+      return "";
+    }
+    if (type === "linktree") {
+      if (host !== "linktr.ee") return null;
+      return socialSkip(parts, ["admin", "login", "register", "pricing", "discover", "marketplace", "s", "sitemap"]);
+    }
+    if (type === "telegram") {
+      if (host !== "t.me" && host !== "telegram.me" && host !== "telegram.dog") return null;
+      const head = parts[0] || "";
+      if (head.toLowerCase() === "joinchat" && parts[1]) return parts[1];
+      if (head.charAt(0) === "+") return head;
+      if (head.toLowerCase() === "s" && parts[1]) return parts[1];
+      return socialSkip(parts, ["joinchat", "share", "addstickers", "addtheme", "login", "iv", "proxy", "socks"]);
+    }
+    if (type === "snapchat") {
+      if (host !== "snapchat.com") return null;
+      const head = parts[0] ? parts[0].toLowerCase() : "";
+      if (head === "add" && parts[1]) return parts[1];
+      if (parts[0] && parts[0].charAt(0) === "@") return parts[0].slice(1);
+      return socialSkip(parts, ["add", "t", "discover", "spotlight", "web", "accounts", "scan"]);
+    }
+    return null;
+  }
+
+  function socialAcceptHandle(type, handle) {
+    let value = String(handle || "").trim();
+    if (!value) return { error: socialEnter(type) };
+    if (
+      type === "x" ||
+      type === "instagram" ||
+      type === "tiktok" ||
+      type === "twitch" ||
+      type === "3speak" ||
+      type === "linkedin" ||
+      type === "reddit" ||
+      type === "linktree" ||
+      type === "snapchat"
+    ) {
+      value = value.toLowerCase();
+    }
+    if (type === "telegram") {
+      if (value.charAt(0) === "+") {
+        if (!/^\+[A-Za-z0-9_-]{8,64}$/.test(value)) return { error: socialEnter(type) };
+        return { value: value };
+      }
+      const lower = value.toLowerCase();
+      if (/^[a-z][a-z0-9_]{4,31}$/.test(lower)) return { value: lower };
+      if (/^[A-Za-z0-9_-]{16,64}$/.test(value)) return { value: value };
+      return { error: socialEnter(type) };
+    }
+    if (type === "bluesky") {
+      value = value.toLowerCase();
+      if (value.indexOf("did:") === 0) {
+        if (/^did:plc:[a-z2-7]{24}$/.test(value) || /^did:web:[a-z0-9.-]+$/.test(value)) return { value: value };
+        return { error: socialEnter(type) };
+      }
+      if (value.indexOf(".") === -1 && /^[a-z0-9-]{1,30}$/.test(value)) value = value + ".bsky.social";
+      if (
+        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value) ||
+        value.length > 253
+      ) {
+        return { error: socialEnter(type) };
+      }
+      return { value: value };
+    }
+    const rules = {
+      x: /^[a-z0-9_]{1,15}$/,
+      instagram: /^(?!.*\.\.)(?!.*\.$)(?!^\.)[a-z0-9._]{1,30}$/,
+      tiktok: /^[a-z0-9._]{2,24}$/,
+      twitch: /^[a-z0-9_]{4,25}$/,
+      "3speak": /^[a-z0-9](?:[a-z0-9.-]{1,14}[a-z0-9])$/,
+      github: /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/,
+      onlyfans: /^[A-Za-z0-9._-]{1,40}$/,
+      patreon: /^[A-Za-z0-9_-]{1,50}$/,
+      facebook: /^[A-Za-z0-9.]{1,50}$/,
+      discord: /^(?:[0-9]{17,20}|[A-Za-z0-9._-]{2,32})$/,
+      youtube: /^(?:UC[A-Za-z0-9_-]{22}|[A-Za-z0-9._-]{3,30})$/,
+      linkedin: /^(?:company\/|school\/)?[a-z0-9-]{3,100}$/,
+      reddit: /^(?:r\/)?[a-z0-9_-]{3,21}$/,
+      linktree: /^(?!.*\.\.)(?!.*\.$)(?!^\.)[a-z0-9._]{1,30}$/,
+      snapchat: /^[a-z][a-z0-9._-]{2,14}$/,
+    };
+    if (!rules[type] || !rules[type].test(value)) return { error: socialEnter(type) };
+    return { value: value };
+  }
+
+  function normalizeSocialWebsite(text) {
+    const url = socialAsUrl(text);
+    if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return { error: "Enter a website URL." };
+    if (url.username || url.password) return { error: "Enter a website URL." };
+    if (!url.hostname || url.hostname.indexOf(".") === -1) return { error: "Enter a website URL." };
+    let path = url.pathname || "";
+    if (path.length > 1) path = path.replace(/\/+$/, "");
+    if (path === "/") path = "";
+    return { value: url.protocol + "//" + url.host.toLowerCase() + path + (url.search || "") + (url.hash || "") };
+  }
+
+  function normalizeSocialEmail(text) {
+    let address = String(text || "").trim();
+    if (/^mailto:/i.test(address)) {
+      const url = socialAsUrl(address);
+      address = url ? decodeURIComponent(url.pathname).replace(/^\/+/, "") : address.replace(/^mailto:/i, "");
+      const query = address.indexOf("?");
+      if (query !== -1) address = address.slice(0, query);
+    }
+    address = address.trim().toLowerCase();
+    if (!SOCIAL_EMAIL_RE.test(address) || address.length > 254) return { error: "Enter an email address." };
+    return { value: address };
+  }
+
+  function normalizeSocialPhone(text) {
+    let number = String(text || "").trim();
+    if (/^tel:/i.test(number)) {
+      const url = socialAsUrl(number);
+      number = url ? decodeURIComponent(url.pathname) : number.replace(/^tel:/i, "");
+    }
+    number = number.trim().replace(/\s+/g, " ");
+    const digits = number.replace(/\D/g, "");
+    if (!/^\+?[0-9][0-9().\-\s]*$/.test(number) || digits.length < 6 || digits.length > 15) {
+      return { error: "Enter a phone number." };
+    }
+    return { value: number };
+  }
+
+  function normalizeSocialMastodon(text) {
+    const trimmed = String(text || "").trim();
+    if (!/^https?:/i.test(trimmed) && trimmed.indexOf("/") === -1) {
+      const acct = trimmed.replace(/^@/, "");
+      const at = acct.lastIndexOf("@");
+      if (at > 0) {
+        const name = acct.slice(0, at);
+        const host = acct.slice(at + 1).toLowerCase();
+        if (
+          /^[A-Za-z0-9._+-]{1,64}$/.test(name) &&
+          /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)
+        ) {
+          return { value: name + "@" + host };
+        }
+      }
+    }
+    const site = normalizeSocialWebsite(trimmed);
+    if (site.error || !site.value) return { error: "Enter a Mastodon link or name@instance." };
+    return site;
+  }
+
+  function normalizeSocialSignal(text) {
+    const trimmed = String(text || "").trim();
+    const url = socialAsUrl(trimmed);
+    if (url) {
+      if (socialHost(url) !== "signal.me") return { error: "Enter a Signal username or phone number." };
+      const hash = decodeURIComponent(String(url.hash || "").replace(/^#/, ""));
+      let token = "";
+      if (/^p\//i.test(hash)) token = hash.slice(2);
+      else if (/^u\//i.test(hash)) token = hash.slice(2);
+      else {
+        const parts = socialPath(url);
+        const head = parts[0] ? parts[0].toLowerCase() : "";
+        if ((head === "p" || head === "u") && parts[1]) token = parts[1];
+      }
+      if (!token) return { error: "Enter a Signal username or phone number." };
+      if (token.charAt(0) === "+" || /^\d/.test(token)) return normalizeSocialPhone(token);
+      return normalizeSocialSignal(token.replace(/^@/, ""));
+    }
+    if (/^tel:/i.test(trimmed) || /^\+?[0-9][0-9().\-\s]*$/.test(trimmed)) return normalizeSocialPhone(trimmed);
+    const value = trimmed.replace(/^@/, "").toLowerCase();
+    if (!/^[a-z][a-z0-9_]{2,31}\.[0-9]{2,9}$/.test(value)) {
+      return { error: "Enter a Signal username or phone number." };
+    }
+    return { value: value };
+  }
+
+  function normalizeSocialNostr(text) {
+    const bare = String(text || "").trim();
+    let found = "";
+    if (/^nostr:/i.test(bare)) {
+      const body = bare.slice(6).split("?")[0].trim();
+      const match = body.match(/^(npub1|nprofile1)[02-9ac-hj-np-z]+$/i);
+      if (match) found = match[0].toLowerCase();
+    } else {
+      const url = socialAsUrl(bare);
+      if (url) {
+        const parts = socialPath(url);
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (/^(npub1|nprofile1)[02-9ac-hj-np-z]+$/i.test(parts[i])) {
+            found = parts[i].toLowerCase();
+            break;
+          }
+        }
+      } else if (/^(npub1|nprofile1)[02-9ac-hj-np-z]+$/i.test(bare)) {
+        found = bare.toLowerCase();
+      }
+    }
+    if (!found || found.length < 20 || found.length > 2000) return { error: socialEnter("nostr") };
+    return { value: found };
+  }
+
+  function normalizeSocialOther(text) {
+    const trimmed = String(text || "").trim();
+    if (trimmed.length > 300) return { error: "That link is too long." };
+    const url = socialAsUrl(trimmed);
+    if (url) {
+      if (url.protocol !== "http:" && url.protocol !== "https:") return { error: "Enter a link or some text." };
+      return normalizeSocialWebsite(trimmed);
+    }
+    return { value: trimmed };
+  }
+
+  function normalizeSocialHandle(type, text) {
+    const url = socialAsUrl(text);
+    if (url) {
+      if (url.protocol !== "http:" && url.protocol !== "https:") return { error: socialEnter(type) };
+      const handle = socialHandleFromUrl(type, url);
+      if (handle == null || !handle) return { error: socialEnter(type) };
+      return socialAcceptHandle(type, handle);
+    }
+    return socialAcceptHandle(type, String(text || "").replace(/^@/, "").trim());
+  }
+
+  function normalizeSocialValue(type, raw) {
+    const id = socialTypeId(type);
+    const text = String(raw == null ? "" : raw).trim();
+    if (!text) return { value: "" };
+    const mode = socialMode(id);
+    if (mode === "email") return normalizeSocialEmail(text);
+    if (mode === "phone") return normalizeSocialPhone(text);
+    if (mode === "url") return normalizeSocialWebsite(text);
+    if (mode === "mastodon") return normalizeSocialMastodon(text);
+    if (mode === "nostr") return normalizeSocialNostr(text);
+    if (mode === "signal") return normalizeSocialSignal(text);
+    if (mode === "other") return normalizeSocialOther(text);
+    return normalizeSocialHandle(id, text);
+  }
+
+  function socialObjectFromRows(rows) {
+    const grouped = Object.create(null);
+    const order = [];
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const type = socialTypeId(row && row.type);
+      const value = String(row && row.value == null ? "" : row.value).trim();
+      if (!value) return;
+      if (!grouped[type]) {
+        grouped[type] = [];
+        order.push(type);
+      }
+      grouped[type].push(value);
+    });
+    if (!order.length) return null;
+    const social = {};
+    order.forEach((type) => {
+      const list = grouped[type];
+      social[type] = list.length === 1 ? list[0] : list.slice();
+    });
+    return social;
+  }
+
+  function socialRowsFromObject(social) {
+    if (!social || typeof social !== "object" || Array.isArray(social)) return [];
+    const rows = [];
+    Object.keys(social).forEach((key) => {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return;
+      const type = socialTypeId(key);
+      const value = social[key];
+      const list = Array.isArray(value) ? value : [value];
+      list.forEach((item) => {
+        if (typeof item !== "string") return;
+        const text = item.trim();
+        if (!text) return;
+        rows.push({ type: type, value: text });
+      });
+    });
+    return rows;
+  }
+
+  function socialEditorRows(social) {
+    const saved = socialRowsFromObject(social);
+    const rows = [];
+    const seen = Object.create(null);
+    ["x", "instagram", "discord"].forEach((type) => {
+      const found = saved.filter((row) => row.type === type);
+      if (found.length) found.forEach((row) => rows.push({ type: row.type, value: row.value }));
+      else rows.push({ type: type, value: "" });
+      seen[type] = true;
+    });
+    saved.forEach((row) => {
+      if (!seen[row.type]) rows.push({ type: row.type, value: row.value });
+    });
+    return rows;
+  }
+
+  function socialFormRows(rows) {
+    if (!Array.isArray(rows)) return socialEditorRows(null);
+    return rows.map((row) => ({
+      type: socialTypeId(row && row.type),
+      value: String(row && row.value == null ? "" : row.value),
+    }));
+  }
+
+  function socialFilledKey(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        const value = String(row && row.value || "").trim();
+        if (!value) return "";
+        return socialTypeId(row && row.type) + "\n" + value;
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function normalizeSocialFields(rows, baselineRows) {
+    const baseLeft = [];
+    (Array.isArray(baselineRows) ? baselineRows : []).forEach((row) => {
+      const value = String(row && row.value || "").trim();
+      if (!value) return;
+      baseLeft.push({ type: socialTypeId(row.type), value: value });
+    });
+    const next = [];
+    let error = "";
+    let errorIndex = -1;
+    (Array.isArray(rows) ? rows : []).forEach((row, index) => {
+      const type = socialTypeId(row && row.type);
+      const raw = String(row && row.value || "");
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        next.push({ type: type, value: "" });
+        return;
+      }
+      let kept = -1;
+      for (let i = 0; i < baseLeft.length; i++) {
+        if (baseLeft[i].type === type && baseLeft[i].value === trimmed) {
+          kept = i;
+          break;
+        }
+      }
+      if (kept >= 0) {
+        next.push({ type: type, value: baseLeft[kept].value });
+        baseLeft.splice(kept, 1);
+        return;
+      }
+      const parsed = normalizeSocialValue(type, trimmed);
+      if (parsed.error) {
+        if (!error) {
+          error = parsed.error;
+          errorIndex = index;
+        }
+        next.push({ type: type, value: raw });
+        return;
+      }
+      next.push({ type: type, value: parsed.value });
+    });
+    return { rows: next, error: error, errorIndex: errorIndex };
+  }
+
+  function socialFromPosting(account, metadata) {
+    const posting = postingMetadataFromAccount(account);
+    const postingProfile = plainObject(posting.profile) ? posting.profile : null;
+    if (postingProfile) {
+      return Object.prototype.hasOwnProperty.call(postingProfile, "social") ? postingProfile.social : null;
+    }
+    const merged = profileObject(metadata).profile;
+    if (merged && Object.prototype.hasOwnProperty.call(merged, "social")) return merged.social;
+    return null;
+  }
+
+  function socialPlaceholder(type) {
+    const mode = socialMode(type);
+    if (mode === "email") return "name@domain";
+    if (mode === "phone") return "+1 555 0100";
+    if (mode === "url" || mode === "other") return "https://";
+    if (mode === "mastodon") return "https://instance/@name";
+    if (mode === "nostr") return "npub1…";
+    if (mode === "signal") return "username or phone";
+    return "username or https://";
+  }
+
+  function socialInputMode(type) {
+    const mode = socialMode(type);
+    if (mode === "email") return "email";
+    if (mode === "phone") return "tel";
+    if (mode === "url" || mode === "mastodon" || mode === "other") return "url";
+    return "text";
+  }
+
+  function socialAutocomplete(type) {
+    const mode = socialMode(type);
+    if (mode === "email") return "email";
+    if (mode === "phone") return "tel";
+    if (mode === "url") return "url";
+    return "off";
+  }
+
+  function socialFieldLabel(type) {
+    const mode = socialMode(type);
+    if (mode === "email") return "Email address";
+    if (mode === "phone") return "Phone number";
+    if (mode === "url") return "Website URL";
+    if (mode === "mastodon") return "Mastodon link";
+    if (mode === "other") return "Link or text";
+    if (mode === "nostr") return "Nostr pubkey";
+    if (mode === "signal") return "Signal username or phone";
+    return socialLabel(type) + " username or link";
+  }
+
+  function socialTypeOptionsHtml(selected) {
+    const esc = HiveMd.escapeHtml;
+    const id = socialTypeId(selected);
+    let known = false;
+    const html = SOCIAL_TYPES.map((row) => {
+      if (row.id === id) known = true;
+      return `<option value="${esc(row.id)}"${row.id === id ? " selected" : ""}>${esc(row.label)}</option>`;
+    }).join("");
+    if (known) return html;
+    return html + `<option value="${esc(id)}" selected>${esc(id)}</option>`;
+  }
+
+  function socialRowHtml(row) {
+    const esc = HiveMd.escapeHtml;
+    const type = socialTypeId(row && row.type);
+    const value = String(row && row.value == null ? "" : row.value);
+    return `<div class="settings-social-row">
+      <select class="settings-social-type" aria-label="Social type">${socialTypeOptionsHtml(type)}</select>
+      <input class="settings-social-value" type="text" value="${esc(value)}" placeholder="${esc(socialPlaceholder(type))}" inputmode="${esc(socialInputMode(type))}" autocomplete="${esc(socialAutocomplete(type))}" spellcheck="false" autocapitalize="off" aria-label="${esc(socialFieldLabel(type))}">
+      <button type="button" class="settings-node-remove settings-social-remove" aria-label="${esc("Remove " + socialLabel(type))}">×</button>
+    </div>`;
+  }
+
+  function socialRowsHtml(rows) {
+    return socialFormRows(rows)
+      .map((row) => socialRowHtml(row))
+      .join("");
+  }
+
+  function syncSocialValueField(row) {
+    if (!row) return;
+    const select = row.querySelector(".settings-social-type");
+    const input = row.querySelector(".settings-social-value");
+    const remove = row.querySelector(".settings-social-remove");
+    const type = socialTypeId(select && select.value);
+    if (input) {
+      input.placeholder = socialPlaceholder(type);
+      input.setAttribute("inputmode", socialInputMode(type));
+      input.setAttribute("autocomplete", socialAutocomplete(type));
+      input.setAttribute("aria-label", socialFieldLabel(type));
+    }
+    if (remove) remove.setAttribute("aria-label", "Remove " + socialLabel(type));
+  }
+
+  function syncSocialAddButton() {
+    const add = $("#settingsSocialAdd");
+    const root = $("#settingsSocialRows");
+    if (!add || !root) return;
+    const full = root.querySelectorAll(".settings-social-row").length >= SOCIAL_ROW_MAX;
+    add.disabled = settingsBusy || full;
+  }
+
+  function paintSettingsSocialRows(rows) {
+    const root = $("#settingsSocialRows");
+    if (!root) return;
+    root.innerHTML = socialRowsHtml(rows);
+    syncSocialAddButton();
+  }
+
+  function readSocialRows() {
+    const root = $("#settingsSocialRows");
+    if (!root) return socialEditorRows(null);
+    const rows = [];
+    root.querySelectorAll(".settings-social-row").forEach((row) => {
+      const select = row.querySelector(".settings-social-type");
+      const input = row.querySelector(".settings-social-value");
+      rows.push({
+        type: socialTypeId(select && select.value),
+        value: input ? input.value : "",
+      });
+    });
+    return rows;
+  }
+
+  function writeSocialRowValues(rows) {
+    const list = document.querySelectorAll("#settingsSocialRows .settings-social-row");
+    (Array.isArray(rows) ? rows : []).forEach((row, index) => {
+      const el = list[index];
+      if (!el) return;
+      const select = el.querySelector(".settings-social-type");
+      const input = el.querySelector(".settings-social-value");
+      if (select) select.value = socialTypeId(row.type);
+      if (input) input.value = String(row.value || "");
+      syncSocialValueField(el);
+    });
+  }
+
+  function setSettingsSocialLocked(locked) {
+    const nodes = document.querySelectorAll(
+      "#settingsSocialRows select, #settingsSocialRows input, #settingsSocialRows button"
+    );
+    for (let i = 0; i < nodes.length; i++) nodes[i].disabled = locked;
+    const add = $("#settingsSocialAdd");
+    if (!add) return;
+    if (locked) add.disabled = true;
+    else syncSocialAddButton();
+  }
+
   function profileObject(metadata) {
     const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {};
     const profile =
@@ -35385,7 +36180,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (key === "version") return;
       // wallet.ln is the Bitcoin Lightning field. Other wallet keys stay here,
       // and only when they are already on posting_json_metadata.
-      if (key === "wallet") return;
+      if (key === "wallet" || key === "social") return;
       if (PROFILE_FIELDS.indexOf(key) !== -1 && (profile[key] == null || typeof profile[key] === "string")) {
         return;
       }
@@ -35432,6 +36227,7 @@ let CS77_FILTER_LOW_REP = 20;
     const fields = {
       custom: formatSettingsCustom(customSettingsFromMetadata(metadata, account)),
       lightning: lightningFieldFromAccount(account),
+      social: socialEditorRows(socialFromPosting(account, metadata)),
     };
     PROFILE_FIELDS.forEach((key) => {
       fields[key] = profileFieldText(profile, key);
@@ -35450,7 +36246,7 @@ let CS77_FILTER_LOW_REP = 20;
     const profile = {};
     Object.keys(src).forEach((key) => {
       if (key === "__proto__" || key === "constructor" || key === "prototype") return;
-      if (key === "version") return;
+      if (key === "version" || key === "social") return;
       if (PROFILE_FIELDS.indexOf(key) !== -1 && (src[key] == null || typeof src[key] === "string")) return;
       profile[key] = src[key];
     });
@@ -35460,6 +36256,8 @@ let CS77_FILTER_LOW_REP = 20;
     });
     profile.version = 2;
     applyLightningAddress(profile, String(fields.lightning == null ? "" : fields.lightning).trim());
+    const social = socialObjectFromRows(fields && fields.social);
+    if (social) profile.social = social;
     meta.profile = profile;
     return meta;
   }
@@ -35520,6 +36318,11 @@ let CS77_FILTER_LOW_REP = 20;
             <input id="settingsCoverFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
           </div>
         </div>
+        <div class="settings-field settings-social-field" id="settingsSocialField">
+          <h2 class="settings-section-title settings-section-line" id="settingsSocialHeading"><span>Social</span></h2>
+          <div id="settingsSocialRows">${socialRowsHtml(fields.social)}</div>
+          <button type="button" class="settings-node-add" id="settingsSocialAdd">Add</button>
+        </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsCustom">Custom</label>
           <p class="settings-note">Other settings stored in your profile. Expert mode (keep as is recommended).</p>
@@ -35557,6 +36360,7 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: ($("#settingsAvatar") && $("#settingsAvatar").value) || "",
       cover_image: ($("#settingsCover") && $("#settingsCover").value) || "",
       custom: ($("#settingsCustom") && $("#settingsCustom").value) || "",
+      social: readSocialRows(),
       legacy: ($("#settingsLegacy") && $("#settingsLegacy").value) || "",
       legacyDelete: Boolean($("#settingsLegacyDelete") && $("#settingsLegacyDelete").checked),
     };
@@ -35573,6 +36377,7 @@ let CS77_FILTER_LOW_REP = 20;
       profile_image: (fields && fields.profile_image) || "",
       cover_image: (fields && fields.cover_image) || "",
       custom: (fields && fields.custom) || "{}",
+      social: socialFormRows(fields && fields.social),
       legacy: hasLegacy ? String(fields.legacy == null ? "" : fields.legacy) : formatLegacyMetadata(settingsLegacySource(observer())),
       legacyDelete: Boolean(fields && fields.legacyDelete),
     };
@@ -35589,7 +36394,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (String((fields && fields[key]) || "") !== String(baseline[key] || "")) return true;
     }
-    return false;
+    return socialFilledKey(fields && fields.social) !== socialFilledKey(baseline && baseline.social);
   }
 
   function clearSettingsProfileScratch() {
@@ -35687,6 +36492,7 @@ let CS77_FILTER_LOW_REP = 20;
     set("#settingsAvatar", values.profile_image);
     set("#settingsCover", values.cover_image);
     set("#settingsCustom", values.custom);
+    paintSettingsSocialRows(values.social);
     set("#settingsLegacy", values.legacy);
     const legacyDelete = $("#settingsLegacyDelete");
     if (legacyDelete) legacyDelete.checked = Boolean(values.legacyDelete);
@@ -35722,6 +36528,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (avatar) avatar.disabled = locked;
     if (cover) cover.disabled = locked;
     if (legacyDelete) legacyDelete.disabled = locked;
+    setSettingsSocialLocked(locked);
   }
 
   function paintSettingsPicture(kind, url) {
@@ -35790,6 +36597,34 @@ let CS77_FILTER_LOW_REP = 20;
         resetSettingsProfile();
       });
     }
+    const addSocial = $("#settingsSocialAdd");
+    if (addSocial) {
+      addSocial.addEventListener("click", () => {
+        const root = $("#settingsSocialRows");
+        if (!root || settingsBusy) return;
+        if (root.querySelectorAll(".settings-social-row").length >= SOCIAL_ROW_MAX) return;
+        root.insertAdjacentHTML("beforeend", socialRowHtml({ type: "other", value: "" }));
+        syncSocialAddButton();
+        const rows = root.querySelectorAll(".settings-social-row");
+        const input = rows[rows.length - 1] && rows[rows.length - 1].querySelector(".settings-social-value");
+        focusDesktop(input);
+        rememberSettingsProfileDraft();
+      });
+    }
+    form.addEventListener("click", (e) => {
+      const remove = e.target && e.target.closest && e.target.closest(".settings-social-remove");
+      if (!remove || !form.contains(remove) || settingsBusy) return;
+      const row = remove.closest(".settings-social-row");
+      if (row) row.remove();
+      syncSocialAddButton();
+      rememberSettingsProfileDraft();
+    });
+    form.addEventListener("change", (e) => {
+      const select = e.target;
+      if (!select || !select.classList || !select.classList.contains("settings-social-type")) return;
+      syncSocialValueField(select.closest(".settings-social-row"));
+      rememberSettingsProfileDraft();
+    });
   }
 
   async function uploadSettingsPicture(kind, file) {
@@ -35878,6 +36713,16 @@ let CS77_FILTER_LOW_REP = 20;
       } else if (base) {
         fields.lightning = base.lightning || "";
       }
+      const socialNorm = normalizeSocialFields(fields.social, base && base.social);
+      if (socialNorm.error) {
+        setSettingsStatus(socialNorm.error, true);
+        const socialRows = document.querySelectorAll("#settingsSocialRows .settings-social-row");
+        const socialRow = socialRows[socialNorm.errorIndex];
+        focusDesktop(socialRow && socialRow.querySelector(".settings-social-value"));
+        return;
+      }
+      fields.social = socialNorm.rows;
+      writeSocialRowValues(socialNorm.rows);
       let custom;
       try {
         custom = parseSettingsCustom(fields.custom);
