@@ -31646,19 +31646,23 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Description and rules come from the community. Language does too.
-  // Beneficiary and preferred spaces (profile.topics) live on the subspace account
+  // Beneficiary and preferred spaces (profile.topics) live on the subspace account.
+  // Social links are posting profile.social on that same account, already loaded here.
   async function communityAboutExtras(name, info) {
     const id = normalizeCommunityName(name);
     const settings = communitySettingsObject(info);
     let metadata = null;
+    let social = null;
     try {
       const rows = await HiveApi.getAccounts([id]);
       const account = rows && rows[0];
       if (account && normalizeCommunityName(account.name) === id) {
         metadata = metadataFromAccount(account);
+        social = socialFromPosting(account);
       }
     } catch {
       metadata = null;
+      social = null;
     }
     return {
       beneficiary: metadata
@@ -31666,6 +31670,7 @@ let CS77_FILTER_LOW_REP = 20;
         : { beneficiary_account: "", beneficiary_percent: "" },
       tags: communityAboutTags(metadata, settings),
       cover: communityCoverUrl(info, metadata),
+      social: social,
     };
   }
 
@@ -31677,6 +31682,7 @@ let CS77_FILTER_LOW_REP = 20;
     const account = beneficiary.beneficiary_account || "";
     const percent = beneficiary.beneficiary_percent || "";
     const tags = (extras && extras.tags) || [];
+    const social = socialRowsFromObject(extras && extras.social);
     const coverHtml = communityAboutCoverHtml(extras && extras.cover);
     const sections = [];
     if (description) {
@@ -31714,6 +31720,9 @@ let CS77_FILTER_LOW_REP = 20;
           `<table class="community-about-beneficiary"><tbody><tr><td><a class="mention" href="${href}">@${HiveMd.escapeHtml(account)}</a></td><td>${reward}</td></tr></tbody></table>${shareNote}`
         )
       );
+    }
+    if (social.length) {
+      sections.push(communityAboutSection("Social", profileSocialListHtml(social)));
     }
     if (!sections.length) {
       return `
