@@ -35577,6 +35577,8 @@ let CS77_FILTER_LOW_REP = 20;
     { id: "discord", label: "Discord", mode: "handle" },
     { id: "facebook", label: "Facebook", mode: "handle" },
     { id: "github", label: "GitHub", mode: "handle" },
+    // The host is not always gitlab.com, so the saved value is the full URL.
+    { id: "gitlab", label: "GitLab", mode: "url" },
     { id: "instagram", label: "Instagram", mode: "handle" },
     { id: "linkedin", label: "LinkedIn", mode: "handle" },
     { id: "nftshowroom", label: "NFT Showroom", mode: "handle" },
@@ -36061,6 +36063,12 @@ let CS77_FILTER_LOW_REP = 20;
     return { value: npub };
   }
 
+  function normalizeSocialUrl(type, text) {
+    const parsed = normalizeSocialWebsite(text);
+    if (parsed.error) return { error: "Enter a " + socialLabel(type) + " URL." };
+    return parsed;
+  }
+
   function normalizeSocialOther(text) {
     const trimmed = String(text || "").trim();
     if (trimmed.length > 300) return { error: "That link is too long." };
@@ -36090,6 +36098,7 @@ let CS77_FILTER_LOW_REP = 20;
     const mode = socialMode(id);
     if (mode === "nostr") return normalizeSocialNostr(text);
     if (mode === "signal") return normalizeSocialSignal(text);
+    if (mode === "url") return normalizeSocialUrl(id, text);
     if (mode === "other") return normalizeSocialOther(text);
     return normalizeSocialHandle(id, text);
   }
@@ -36198,6 +36207,11 @@ let CS77_FILTER_LOW_REP = 20;
       return { href: tel ? "tel:" + tel : "", label: number || text };
     }
     const mode = socialMode(id);
+    if (mode === "url") {
+      const site = profileWebsiteLink(text);
+      if (!site) return { href: "", label: text };
+      return { href: site.href, label: site.label };
+    }
     if (mode === "other" && /^https?:\/\//i.test(text)) {
       const site = profileWebsiteLink(text);
       if (!site) return { href: "", label: text };
@@ -36351,7 +36365,7 @@ let CS77_FILTER_LOW_REP = 20;
   function socialPlaceholder(type) {
     if (!socialTypeKey(type)) return "username or link";
     const mode = socialMode(type);
-    if (mode === "other") return "https://";
+    if (mode === "url" || mode === "other") return "https://";
     if (mode === "nostr") return "npub1…";
     if (mode === "signal") return "username or phone";
     return "username";
@@ -36360,7 +36374,7 @@ let CS77_FILTER_LOW_REP = 20;
   function socialInputMode(type) {
     if (!socialTypeKey(type)) return "text";
     const mode = socialMode(type);
-    if (mode === "other") return "url";
+    if (mode === "url" || mode === "other") return "url";
     return "text";
   }
 
@@ -36371,6 +36385,7 @@ let CS77_FILTER_LOW_REP = 20;
   function socialFieldLabel(type) {
     if (!socialTypeKey(type)) return "Social link";
     const mode = socialMode(type);
+    if (mode === "url") return socialLabel(type) + " URL";
     if (mode === "other") return "Link or text";
     if (mode === "nostr") return "Nostr npub";
     if (mode === "signal") return "Signal username or phone";
