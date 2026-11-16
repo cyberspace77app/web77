@@ -36354,7 +36354,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (mode === "other") return "https://";
     if (mode === "nostr") return "npub1…";
     if (mode === "signal") return "username or phone";
-    return "username or https://";
+    return "username";
   }
 
   function socialInputMode(type) {
