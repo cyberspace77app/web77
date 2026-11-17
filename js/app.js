@@ -700,6 +700,7 @@ let CS77_FILTER_LOW_REP = 20;
   let commentDraftComposer = null;
   let commentDraftURL = "";
   let notifGen = 0;
+  let notifPaintGen = 0;
   let notifTimer = 0;
   const notifState = {
     user: "",
@@ -6608,6 +6609,7 @@ let CS77_FILTER_LOW_REP = 20;
   /* ─── Session / login ─── */
   function resetNotifs() {
     notifGen += 1;
+    notifPaintGen += 1;
     notifState.user = "";
     notifState.unread = 0;
     notifState.lastread = "";
@@ -6619,6 +6621,14 @@ let CS77_FILTER_LOW_REP = 20;
     notifState.done = false;
     notifState.loadingMore = false;
     notifState.seen = new Set();
+  }
+
+  // A switch keeps the document up, and a later poll only prepends. Drop the
+  // previous account's rows before the next paint or fetch.
+  function prepareNotifsForUser(user) {
+    if (notifState.user === user) return;
+    resetNotifs();
+    notifState.user = user;
   }
 
   let resourceGen = 0;
@@ -7545,8 +7555,6 @@ let CS77_FILTER_LOW_REP = 20;
     btn.disabled = !(notifState.loaded && notifState.unread > 0);
   }
 
-  let notifPaintGen = 0;
-
   async function paintNotifs() {
     const wrap = $("#sessionNotifs");
     if (!wrap) return;
@@ -7626,8 +7634,8 @@ let CS77_FILTER_LOW_REP = 20;
   async function loadNotifications() {
     const user = observer();
     if (!user) return;
+    prepareNotifsForUser(user);
     const gen = ++notifGen;
-    notifState.user = user;
     notifState.loadingMore = false;
     try {
       const [unread, batch] = await Promise.all([
@@ -7979,6 +7987,7 @@ let CS77_FILTER_LOW_REP = 20;
       $("#markReadBtn").addEventListener("click", markNotificationsRead);
       bindSessionAccount();
       bindNotifScroll();
+      prepareNotifsForUser(user);
       paintBadge();
       paintNotifs();
       paintAccountResources();
