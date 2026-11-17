@@ -40378,7 +40378,7 @@ let CS77_FILTER_LOW_REP = 20;
   // j and k move through the feed. Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
-  // An open post has no feed list, so z uses the article stats-bar bolt instead.
+  // An open post has no feed list, so l uses the article stats-bar upvote and z uses its bolt.
   // n opens the notification panel and focuses it, and n again closes it.
   // p opens the publish dialog. A second p does nothing while that dialog is open.
   // / opens Search and focuses the box. On Search already, it only focuses that box.
@@ -40594,21 +40594,15 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
-  function feedKeyUpvote() {
-    const items = feedKeyItems();
-    if (!items.length) return false;
-    const item = feedKeyLocked(items) || feedKeyCurrentItem(items);
-    if (!item) return false;
-    const card = item.querySelector("article.post-card");
-    const btn = card && card.querySelector(".vote-btn");
-    markFeedKeyCurrent(item);
+  // A missing button still consumes the feed key. On a post, a missing button does not.
+  function feedKeyPressUpvote(btn, missingOk) {
     if (
       !btn ||
       btn.disabled ||
       btn.classList.contains("is-pending") ||
       btn.classList.contains("is-voted")
     ) {
-      return true;
+      return Boolean(btn) || missingOk;
     }
     if (
       openSlider &&
@@ -40623,6 +40617,24 @@ let CS77_FILTER_LOW_REP = 20;
     feedKeyDockSlider = true;
     onVoteClick(btn);
     return true;
+  }
+
+  function feedKeyUpvote() {
+    const items = feedKeyItems();
+    if (!items.length) return false;
+    const item = feedKeyLocked(items) || feedKeyCurrentItem(items);
+    if (!item) return false;
+    const card = item.querySelector("article.post-card");
+    const btn = card && card.querySelector(".vote-btn");
+    markFeedKeyCurrent(item);
+    return feedKeyPressUpvote(btn, true);
+  }
+
+  function openPostVoteButton() {
+    const view = document.getElementById("postView");
+    const article = view && view.querySelector(":scope > article.article");
+    if (!article) return null;
+    return article.querySelector(":scope > .post-stats-bar .vote-btn");
   }
 
   function openPostZapButton() {
@@ -40766,8 +40778,12 @@ let CS77_FILTER_LOW_REP = 20;
       e.stopPropagation();
       return;
     }
-    if (key === "z" && document.body.classList.contains("is-post-open")) {
-      if (!feedKeyZap()) return;
+    if (
+      (key === "l" || key === "z") &&
+      document.body.classList.contains("is-post-open")
+    ) {
+      const handled = key === "l" ? feedKeyPressUpvote(openPostVoteButton(), false) : feedKeyZap();
+      if (!handled) return;
       e.preventDefault();
       e.stopPropagation();
       return;
