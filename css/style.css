@@ -10787,6 +10787,39 @@ body.is-dao #view {
   color: var(--yellow);
 }
 
+.proposal-phase {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  max-width: 40rem;
+  margin: 0 0 0.85rem;
+}
+
+.proposal-phase-label {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  color: var(--yellow);
+}
+
+.proposal-phase .proposal-support {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  width: 6.5rem;
+  height: 1.05rem;
+  cursor: default;
+}
+
+.proposal-phase:has(.proposal-support:hover),
+.proposal-phase:has(.proposal-support:focus),
+.proposal-phase:has(.proposal-support:focus-visible) {
+  position: relative;
+  z-index: 8;
+}
+
 .dao-page .tags-status {
   margin: -0.35rem 0 1rem;
 }
@@ -12012,7 +12045,10 @@ a.proposal-id:focus-visible {
 .proposal-row:has(.proposal-stake:focus-visible),
 .proposal-row:has(.proposal-approved:hover),
 .proposal-row:has(.proposal-approved:focus),
-.proposal-row:has(.proposal-approved:focus-visible) {
+.proposal-row:has(.proposal-approved:focus-visible),
+.proposal-row:has(.proposal-support:hover),
+.proposal-row:has(.proposal-support:focus),
+.proposal-row:has(.proposal-support:focus-visible) {
   position: relative;
   z-index: 8;
 }
@@ -12036,6 +12072,61 @@ a.proposal-id:focus-visible {
   margin-left: 0;
   align-self: center;
   flex: none;
+}
+
+.proposal-bottom .proposal-support {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  flex: none;
+  width: 4.25rem;
+  height: calc(0.85rem * 28 / 24);
+  cursor: default;
+}
+
+.proposal-support-track {
+  display: block;
+  width: 100%;
+  height: 0.32rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-result);
+}
+
+.proposal-support-level {
+  display: block;
+  height: 100%;
+  width: var(--support-level, 0%);
+  max-width: 100%;
+  border-radius: inherit;
+  background: var(--yellow);
+}
+
+.proposal-support.is-some .proposal-support-level {
+  min-width: 2px;
+}
+
+.proposal-support:focus {
+  outline: none;
+}
+
+.proposal-support:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.proposal-support .session-stat-tip {
+  left: 0;
+  right: auto;
+  z-index: 8;
+}
+
+.proposal-support:hover .session-stat-tip,
+.proposal-support:focus .session-stat-tip,
+.proposal-support:focus-visible .session-stat-tip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .proposal-foot {
@@ -12216,6 +12307,10 @@ a.proposal-id:focus-visible {
   .proposal-cell,
   .proposal-stake {
     font-size: 0.9rem;
+  }
+
+  .proposal-bottom .proposal-support {
+    width: 3.25rem;
   }
 
   .proposal-row.is-return .proposal-bottom {

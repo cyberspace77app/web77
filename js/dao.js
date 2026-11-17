@@ -2030,6 +2030,47 @@
     );
   }
 
+  // Support level is tenths of a percent of the return proposal, rounded.
+  // A non-zero stake below 0.05% still reads 0.1 so the bar is not an empty "0%".
+  function proposalSupportLevel(votesRaw, line) {
+    var votes = bigIntOf(votesRaw, 0n);
+    if (votes < 0n) votes = 0n;
+    if (votes === 0n) return { text: "0", width: "0", some: false };
+    var tenths = divRound(votes * 1000n, line);
+    if (tenths > 1000n) tenths = 1000n;
+    if (tenths < 1n) tenths = 1n;
+    var whole = tenths / 10n;
+    var frac = tenths % 10n;
+    var text = frac === 0n ? String(whole) : String(whole) + "." + String(frac);
+    return { text: text, width: text, some: true };
+  }
+
+  // Active or upcoming, at or below the return proposal. A full bar is that
+  // line. Strictly above it, the check replaces the bar.
+  function proposalSupportHtml(row, now, line) {
+    if (isReturnProposal(row) || line == null || line <= 0n) return "";
+    var phase = proposalPhase(row, now);
+    if (phase !== "active" && phase !== "upcoming") return "";
+    if (bigIntOf(row.total_votes, 0n) > line) return "";
+    var level = proposalSupportLevel(row.total_votes, line);
+    var label = level.text + "% of the return proposal";
+    return (
+      '<span class="proposal-support' +
+      (level.some ? " is-some" : "") +
+      '" style="--support-level:' +
+      level.width +
+      '%" tabindex="0" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+      level.width +
+      '" aria-label="' +
+      esc(label) +
+      '">' +
+      '<span class="proposal-support-track" aria-hidden="true"><span class="proposal-support-level"></span></span>' +
+      '<span class="session-stat-tip" role="tooltip">' +
+      esc(label) +
+      "</span></span>"
+    );
+  }
+
   function proposalAccountHtml(row, size) {
     var creator = accountName(row && row.creator);
     var receiver = accountName(row && row.receiver);
@@ -2220,7 +2261,7 @@
       "</div>" +
       '<div class="proposal-bottom">' +
       proposalStakeHtml(hp) +
-      (proposalApproved(row, now, line) ? proposalApprovedHtml() : "") +
+      (proposalApproved(row, now, line) ? proposalApprovedHtml() : proposalSupportHtml(row, now, line)) +
       proposalFootHtml(row, phase, filter) +
       "</div></div>" +
       '<div class="proposal-action" data-proposal-action="' +
@@ -4370,7 +4411,12 @@
       proposalStatHtml("to pay", pay.toPay, false) +
       proposalStatHtml("daily", pay.daily, false);
     var phaseEl = document.getElementById("proposalPhase");
-    if (phaseEl) phaseEl.textContent = proposalPhaseLabel(row, now);
+    if (phaseEl) {
+      var label = proposalPhaseLabel(row, now);
+      var level = proposalSupportHtml(row, now, returnVotes());
+      phaseEl.innerHTML = '<span class="proposal-phase-label">' + esc(label) + "</span>" + level;
+      phaseEl.hidden = !label;
+    }
     var standing = document.getElementById("proposalStanding");
     if (standing) {
       var note = proposalStandingNote(row);
@@ -4442,7 +4488,7 @@
             "</div>" +
             postBtn +
             "</div>" +
-            '<p class="dao-rank" id="proposalPhase"></p>' +
+            '<div class="proposal-phase" id="proposalPhase"></div>' +
             '<p class="dao-note" id="proposalStanding" hidden></p>' +
             '<div class="dao-stats proposal-stats" id="proposalFigures"></div>' +
             '<dl class="dao-facts" id="proposalFacts"></dl>' +
