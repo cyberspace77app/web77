@@ -5212,12 +5212,47 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // A more menu sits at the end of the body. Tab from its last item would
+  // leave the page for the browser chrome. Keep Tab inside the list.
+  function trapMoreMenuTab(e) {
+    if (e.key !== "Tab" || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (topOpenDialog()) return;
+    const active = document.activeElement;
+    if (!active || !active.closest) return;
+    const menu = active.closest(
+      ".content-more-menu, .profile-more-menu, .wallet-more-menu, .dao-more-menu"
+    );
+    if (!menu || menu.hidden || !isDisplayed(menu)) return;
+    const items = dialogTabbables(menu);
+    if (!items.length) {
+      e.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const backward = e.shiftKey && (active === first || active === menu);
+    const forward = !e.shiftKey && active === last;
+    if (!backward && !forward) return;
+    e.preventDefault();
+    const next = backward ? last : first;
+    try {
+      next.focus({ preventScroll: true, focusVisible: true });
+    } catch (err) {
+      try {
+        next.focus({ preventScroll: true });
+      } catch (err2) {
+        /* not focusable */
+      }
+    }
+  }
+
   function watchDialogInert() {
     if (!document.body || document.body.dataset.dialogInertWatch === "1") return;
     document.body.dataset.dialogInertWatch = "1";
     const observer = new MutationObserver(() => syncDialogInert());
     observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
     document.addEventListener("keydown", trapDialogTab);
+    document.addEventListener("keydown", trapMoreMenuTab);
     syncDialogInert();
   }
 
