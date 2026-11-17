@@ -10146,6 +10146,12 @@ min-height: 0;
   min-width: 0;
 }
 
+/* Native select text starts 4px further in. Keep the 20-character box the same width. */
+.settings-form .settings-social-row input.settings-social-type {
+  padding-left: calc(0.95rem + 4px);
+  padding-right: calc(0.95rem - 4px);
+}
+
 .settings-form .settings-social-row .settings-social-value {
   flex: 1 1 auto;
   width: auto;
