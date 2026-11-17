@@ -31141,11 +31141,9 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!sections.length && !coverHtml) {
       return `
-        <div class="community-panel community-about">
-          <div class="empty-state">
-            <h2>No about posted</h2>
-            <p>This account has not published an about yet.</p>
-          </div>
+        <div class="empty-state">
+          <h2>No about posted</h2>
+          <p>This account has not published an about yet.</p>
         </div>`;
     }
     return `<div class="community-panel community-about">${coverHtml}${sections.join("")}</div>`;

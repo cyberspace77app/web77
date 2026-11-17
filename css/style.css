@@ -5330,6 +5330,11 @@ a.tag:hover {
   margin: 0 0 0.85rem;
 }
 
+/* Section titles keep the larger gap. Empty headings use the profile empty-state gap. */
+.wallet-section .empty-state h2 {
+  margin-bottom: 0.55rem;
+}
+
 p.wallet-tools-tokens {
   margin: 0 0 0.9rem;
 }
