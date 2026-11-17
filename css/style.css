@@ -4554,45 +4554,33 @@ a.tag:hover {
   color: var(--yellow);
 }
 
-.profile-zap-btn:hover .zap-mark,
-.profile-zap-btn.has-lightning:hover .zap-mark {
+.profile-zap-btn:hover .zap-mark {
   filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
-}
-
-.profile-zap-btn.has-lightning {
-  color: var(--yellow);
 }
 
 .profile-zap-btn.is-zapped {
   color: var(--yellow);
 }
 
-.profile-zap-btn.is-zapping,
-.profile-zap-btn.has-lightning.is-zapping {
+.profile-zap-btn.is-zapping {
   color: var(--gray);
 }
 
-.profile-zap-btn.is-zapping .zap-mark,
-.profile-zap-btn.has-lightning.is-zapping .zap-mark {
+.profile-zap-btn.is-zapping .zap-mark {
   filter: none;
 }
 
 .profile-zap-btn.is-zapping.is-zap-blink,
-.profile-zap-btn.has-lightning.is-zapping.is-zap-blink,
-.profile-zap-btn.is-zap-flash,
-.profile-zap-btn.has-lightning.is-zap-flash {
+.profile-zap-btn.is-zap-flash {
   color: var(--yellow);
 }
 
 .profile-zap-btn.is-zapping.is-zap-blink .zap-mark,
-.profile-zap-btn.has-lightning.is-zapping.is-zap-blink .zap-mark,
-.profile-zap-btn.is-zap-flash .zap-mark,
-.profile-zap-btn.has-lightning.is-zap-flash .zap-mark {
+.profile-zap-btn.is-zap-flash .zap-mark {
   filter: drop-shadow(0 0 7px rgba(255, 225, 74, 0.95));
 }
 
-.profile-zap-btn.is-zap-strobe:not(.is-zap-flash),
-.profile-zap-btn.has-lightning.is-zap-strobe:not(.is-zap-flash) {
+.profile-zap-btn.is-zap-strobe:not(.is-zap-flash) {
   visibility: hidden;
 }
 

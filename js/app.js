@@ -20663,18 +20663,11 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
-  function profileHasLightning(profile) {
-    const raw = lightningAddressFromWallet(profileReceiveWallet(profile));
-    return Boolean(raw) && !normalizeLightningAddress(raw).error;
-  }
-
-  function profileZapHtml(profile, author) {
-    const ready = profileHasLightning(profile);
+  function profileZapHtml(author) {
     const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
     const zapped = name && zappedProfiles.has(name) ? " is-zapped" : "";
     return (
       '<button type="button" class="profile-zap-btn' +
-      (ready ? " has-lightning" : "") +
       zapped +
       '" aria-label="' +
       HiveMd.escapeHtml(accessAction("Zap", name ? "@" + name : "")) +
@@ -25228,7 +25221,7 @@ let CS77_FILTER_LOW_REP = 20;
       : `<h1>${HiveMd.escapeHtml(display)}</h1>`;
     const actions = own
       ? ""
-      : `<div class="profile-head-actions">${followBtn}${profileZapHtml(profile, author)}${profileMoreHtml(author)}</div>`;
+      : `<div class="profile-head-actions">${followBtn}${profileZapHtml(author)}${profileMoreHtml(author)}</div>`;
     return `
       <div class="profile-banner">
         <div class="profile-head">
@@ -31479,12 +31472,9 @@ let CS77_FILTER_LOW_REP = 20;
   function communityZapHtml(name) {
     const id = normalizeCommunityName(name);
     if (!id || isOwnAuthor(id)) return "";
-    const cached = cachedZapWallet(id);
-    const ready = Boolean(cached && cached.accepts);
     const zapped = zappedProfiles.has(id) ? " is-zapped" : "";
     return (
       '<button type="button" class="profile-zap-btn community-zap-btn' +
-      (ready ? " has-lightning" : "") +
       zapped +
       '" data-community="' +
       HiveMd.escapeHtml(id) +
@@ -31510,23 +31500,12 @@ let CS77_FILTER_LOW_REP = 20;
       wallet: Object.keys(wallet).length ? wallet : null,
       accepts: Boolean(address),
     });
-    const btn = view && view.querySelector(".community-zap-btn");
-    if (btn && normalizeCommunityName(btn.getAttribute("data-community")) === id) {
-      btn.classList.toggle("has-lightning", Boolean(address));
-    }
   }
 
   function paintCommunityZapLightning(name) {
     const id = normalizeCommunityName(name);
     if (!id || isOwnAuthor(id)) return;
-    ensureZapWallet(id)
-      .then((rec) => {
-        if (communityState.name !== id) return;
-        const btn = view && view.querySelector(".community-zap-btn");
-        if (!btn || normalizeCommunityName(btn.getAttribute("data-community")) !== id) return;
-        btn.classList.toggle("has-lightning", Boolean(rec && rec.accepts));
-      })
-      .catch(() => {});
+    ensureZapWallet(id).catch(() => {});
   }
 
   function communityBannerAvatarSrc(name) {
