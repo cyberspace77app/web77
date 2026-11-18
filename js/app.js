@@ -9,7 +9,7 @@ let CS77_FILTER_LOW_REP = 20;
   "use strict";
 
   const APP_ID = "cyberspace77.com";
-  const APP_VERSION = "0.21";
+  const APP_VERSION = "0.22";
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   // Load the next page once the third-from-last card is this close to the
@@ -21266,7 +21266,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // qr.js stays unloaded until a QR is asked for. The same helper draws a
   // lightning invoice, a lightning LNURL, or a web address, and can scan one.
-  const QR_SCRIPT = "/js/qr.js?v=0.21.2";
+  const QR_SCRIPT = "/js/qr.js?v=0.22.0";
   let qrScriptPromise = null;
 
   function loadQrScript() {
@@ -39584,7 +39584,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (daoScriptPromise) return daoScriptPromise;
     daoScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/js/dao.js?v=0.21.10";
+      script.src = "/js/dao.js?v=0.22.0";
       script.async = true;
       script.onload = () => {
         if (window.DaoPage && typeof window.DaoPage.render === "function") resolve(window.DaoPage);
