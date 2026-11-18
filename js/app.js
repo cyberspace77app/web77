@@ -3793,7 +3793,6 @@ let CS77_FILTER_LOW_REP = 20;
     });
     promise
       .then(() => {
-        localReblogs.set(key, { mine, pending: false, count: nextCount });
         const cache = reblogsCache.get(key);
         if (cache && Array.isArray(cache.names)) {
           if (undo) cache.names = cache.names.filter((n) => n !== user);
@@ -3807,6 +3806,14 @@ let CS77_FILTER_LOW_REP = 20;
         if (currentPost && samePostId(currentPost, author, permlink)) {
           currentPost.reblogs = nextCount;
         }
+        // The account may have changed while this broadcast was in flight.
+        // The count stays. The highlight belongs to whoever is signed in now.
+        if (observer() !== user) {
+          syncReblogButtons(author, permlink, reblogView(reblogPostFor(author, permlink)));
+          noteReplay(author, permlink, { reblogs: nextCount });
+          return;
+        }
+        localReblogs.set(key, { mine, pending: false, count: nextCount });
         syncReblogButtons(author, permlink, { mine, pending: false, count: nextCount });
         noteReplay(author, permlink, { reblogs: nextCount, reblogMine: mine });
         if (
@@ -3823,6 +3830,10 @@ let CS77_FILTER_LOW_REP = 20;
         }
       })
       .catch((err) => {
+        if (observer() !== user) {
+          showError(err.message || String(err));
+          return;
+        }
         if (previous) localReblogs.set(key, previous);
         else localReblogs.delete(key);
         syncReblogButtons(author, permlink, reblogView(reblogPostFor(author, permlink)));
@@ -7811,10 +7822,42 @@ let CS77_FILTER_LOW_REP = 20;
     );
   }
 
+  // Drop highlights and drafts that belong to the account being left.
+  // Vote lists and reblog names stay, because those are the chain's.
+  function forgetSwitchedSession() {
+    localVotes.clear();
+    localReblogs.clear();
+    voteRefreshGen.clear();
+    downvotePinned.clear();
+    downvotePreview.clear();
+    zappedContent.clear();
+    zappedProfiles.clear();
+    revealedMuted.clear();
+    commentSortByPost.clear();
+    freshCommentsByPost.clear();
+    postSnaps.clear();
+    replayQueue.forEach((rec) => {
+      if (!rec) return;
+      delete rec.voteSign;
+      delete rec.reblogMine;
+    });
+    pollByKey.forEach((state) => {
+      clearPollIndexWait(state);
+      clearPollVoteIndexWait(state);
+      if (state) state.gen = "";
+    });
+    pollByKey.clear();
+  }
+
+  // Set while refreshAccountView is reloading the page for a new account.
+  // An open post then refetches instead of keeping the previous account's paint.
+  let reloadOpenPost = false;
+
   // Refresh the open page for the account that is now signed in. The document
   // stays up, so the Hive node is not rolled again and the address history
   // stays put. Profile and subspace state is cleared first so the header
-  // loads again for this account.
+  // loads again for this account. An open post or comment is fetched again
+  // so its votes, payout, and actions match this account.
   async function refreshAccountView() {
     renderSession();
     hydratePublishDraftFromStorage();
@@ -7826,8 +7869,23 @@ let CS77_FILTER_LOW_REP = 20;
       if (park && park.holder) park.holder.replaceChildren();
     });
     communityTabParks.clear();
+    forgetSwitchedSession();
     currentViewKey = "";
-    await route();
+    reloadOpenPost = true;
+    try {
+      await route();
+      if (
+        reloadOpenPost &&
+        postLayer.open &&
+        postLayer.author &&
+        postLayer.permlink &&
+        parseRoute().name !== "post"
+      ) {
+        await presentPost(postLayer.author, postLayer.permlink, { fresh: true });
+      }
+    } finally {
+      reloadOpenPost = false;
+    }
   }
 
   async function switchAccount(username) {
@@ -20438,13 +20496,28 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
 
-    if (postLayer.open && postLayer.author === a && postLayer.permlink === p && pv.innerHTML.trim()) {
+    // Account switch refetches the post already on screen. The previous
+    // account's votes, composer, and menu stay until that fetch paints.
+    const reloadingOpen = Boolean(
+      options.fresh &&
+      postLayer.open &&
+      postLayer.author === a &&
+      postLayer.permlink === p &&
+      pv.innerHTML.trim()
+    );
+    if (
+      !reloadingOpen &&
+      postLayer.open &&
+      postLayer.author === a &&
+      postLayer.permlink === p &&
+      pv.innerHTML.trim()
+    ) {
       if (currentPost) setPostTitle(currentPost);
       settlePostAnchor(options, !htmlHasPendingComments(pv.innerHTML));
       return;
     }
 
-    if (postLayer.open) rememberPostSnap();
+    if (postLayer.open && !options.fresh) rememberPostSnap();
 
     const gen = ++postLayer.gen;
     postLayer.author = a;
@@ -20454,7 +20527,7 @@ let CS77_FILTER_LOW_REP = 20;
     // A gated snapshot stays hidden while NSFW is off. Turning it on skips
     // that placeholder so the body and comments render. Any other snapshot
     // is the page the reader left, with or without NSFW.
-    const useSnap = Boolean(snap && snap.html) && (!snapGated || !showNsfwContent());
+    const useSnap = !options.fresh && Boolean(snap && snap.html) && (!snapGated || !showNsfwContent());
     // Overlap the CDN scripts with the discussion request. A cached body waits
     // so author HTML is not inserted before DOMPurify is loaded. A gated body
     // is only the placeholder, so it can paint before those scripts load.
@@ -20464,8 +20537,17 @@ let CS77_FILTER_LOW_REP = 20;
     let restoreScroll = null;
     // A history return keeps the scroll from when this entry was left.
     // A fresh open still follows #comments or a comment link.
-    const keepPlace = Boolean(options.held && useSnap);
-    if (useSnap) {
+    // An account switch keeps the reader where they were on this post.
+    const keepPlace = Boolean(options.held && useSnap) || reloadingOpen;
+    const paintKeptArticle = (node, articleOpts) => {
+      const y = reloadingOpen ? scrollYNow() : null;
+      const painted = paintArticle(node, articleOpts);
+      if (y != null) scrollWindowInstant(y);
+      return painted;
+    };
+    if (reloadingOpen) {
+      // Leave the open article up until this account's discussion replaces it.
+    } else if (useSnap) {
       showPostSnap(snap);
       if (keepPlace || (!options.jumpComments && !options.anchor)) restoreScroll = Number(snap.scroll) || 0;
     } else if (known && (known.title || known.body) && (gated || HiveMd.markdownReady())) {
@@ -20484,7 +20566,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
 
     revealPostLayer();
-    scrollWindowInstant(restoreScroll != null ? restoreScroll : 0);
+    if (!reloadingOpen) scrollWindowInstant(restoreScroll != null ? restoreScroll : 0);
     const shown = postViewEl();
     const articleShown = Boolean(shown && shown.querySelector("article.article"));
     // "Opening post…" has no article yet. A cached card does, with a pending
@@ -20497,7 +20579,7 @@ let CS77_FILTER_LOW_REP = 20;
         settlePostAnchor(options, commentsReady);
       });
     };
-    if (!pendingNow) {
+    if (!pendingNow && !options.fresh) {
       finishAnchor(!shown.querySelector(".nsfw-hold-post"));
       return;
     }
@@ -20515,10 +20597,10 @@ let CS77_FILTER_LOW_REP = 20;
         if (!postStill(gen, a, p)) return;
       }
       if (preview && postNsfwGated(preview)) {
-        if (!activeArticle()) {
+        if (!activeArticle() || options.fresh) {
           await prepareAvatars([preview.author]);
           if (!postStill(gen, a, p)) return;
-          paintArticle(preview, {
+          paintKeptArticle(preview, {
             commentCount: Number(preview.children) || 0,
             commentsHtml: "",
           });
@@ -20551,7 +20633,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (root && postNsfwGated(root)) {
         await prepareAvatars([root.author]);
         if (!postStill(gen, a, p)) return;
-        paintArticle(root, {
+        paintKeptArticle(root, {
           commentCount: discussionCommentCount(discussion, root),
           commentsHtml: "",
         });
@@ -20585,8 +20667,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (!postStill(gen, a, p)) return;
       const commentsHtml = renderedCommentsHtml(root);
       const article = activeArticle();
-      if (!article) {
-        paintArticle(root, { commentCount: count, commentsHtml });
+      if (!article || options.fresh) {
+        paintKeptArticle(root, { commentCount: count, commentsHtml });
       } else {
         patchOpenArticle(prev, root);
         setCommentCount(count);
@@ -39779,7 +39861,12 @@ let CS77_FILTER_LOW_REP = 20;
       const anchor = !jumpComments ? commentHashFromLocation() : "";
       pendingCommentsScroll = false;
       hidePublishOverlay();
-      await presentPost(r.author, r.permlink, { jumpComments, anchor, held: fromPop });
+      await presentPost(r.author, r.permlink, {
+        jumpComments,
+        anchor,
+        held: fromPop,
+        fresh: reloadOpenPost,
+      });
       return;
     }
     // Park before welcome teardown scrolls the window to the top, and before a
