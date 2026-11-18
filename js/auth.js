@@ -22,7 +22,8 @@
   const STORED_KEY_ROLES = ["posting", "active", "memo"];
   // Username whose posting key a reload must still delete.
   const AUTH_LOGOUT_KEY = "cs77_auth_logout";
-  const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2/dist/index.mjs";
+  // Local signer. Absolute so a classic script on /@name still loads it.
+  const HIVE_TX_URL = "/js/tx.js?v=0.22.6";
 
   let sessionBytes = null;
   let sessionUser = "";
@@ -248,23 +249,12 @@
     return new Uint8Array(plain);
   }
 
-  function hiveNodes() {
-    if (global.HiveApi && typeof HiveApi.getNodes === "function") {
-      return HiveApi.getNodes();
-    }
-    return ["https://api.hive.blog"];
-  }
-
   function loadHiveTx() {
     if (hiveTxMod) return Promise.resolve(hiveTxMod);
     if (!hiveTxPromise) {
       hiveTxPromise = import(HIVE_TX_URL)
         .then((mod) => {
           hiveTxMod = mod;
-          if (mod.config && Array.isArray(mod.config.nodes)) {
-            const nodes = hiveNodes();
-            mod.config.nodes = [...new Set(nodes.concat(mod.config.nodes))];
-          }
           return mod;
         })
         .catch((err) => {
@@ -713,9 +703,6 @@
       throw new Error("Invalid blockchain operation.");
     }
     const lib = await loadHiveTx();
-    if (lib.config && Array.isArray(lib.config.nodes)) {
-      lib.config.nodes = hiveNodes();
-    }
     const pk = lib.PrivateKey.from(keyBytes);
     try {
       const tx = new lib.Transaction();
@@ -852,7 +839,7 @@
   }
 
   // Encrypt a Hive memo with a memo key or master password. The text must
-  // start with #. hive-tx strips that flag, encrypts the rest for the
+  // start with #. Memo.encode strips that flag, encrypts the rest for the
   // recipient memo key, and returns # plus base58. The secret is checked
   // against the account, used once, and wiped.
   async function encodeMemo(username, secret, recipientMemoKey, memo) {
