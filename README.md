@@ -7,9 +7,12 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 ## Features
 
 - Decentralized social media app
+- Zap content creators with bitcoin lightning
 - Powered by the hive blockchain
 - Lightweight and ultra-fast browser-based SPA
 - Core features supported: posting, upvoting, commenting, feed, profiles, tags, communities
+- Wallet integration: send, delegate, convert hbd, stake/unstake, account creation tools
+- Block producers (Witness) and Proposals explorer
 - Supports Hive Keychain and login with your Posting key on mobile
 - Can be run locally on your own PC
 - Open source (MIT license)
@@ -38,7 +41,7 @@ Then open 127.0.0.1:8777 in your web browser.
 
 ## Dependencies
 
-hive-tx, marked, DOMPurify, cdn.jsdelivr.net, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
+hive-tx, marked, DOMPurify, cdn.jsdelivr.net, esm.sh/@getalby/sdk, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
 
 ## Hive
 
