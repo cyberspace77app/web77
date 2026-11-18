@@ -133,18 +133,27 @@ class ByteBuffer {
   }
 
   writeInt16(n) {
+    if (!Number.isInteger(n) || n < -32768 || n > 32767) {
+      throw new Error("Int16 out of range");
+    }
     this.#ensure(2);
     this.view.setInt16(this.offset, n, true);
     this.offset += 2;
   }
 
   writeUint16(n) {
+    if (!Number.isInteger(n) || n < 0 || n > 65535) {
+      throw new Error("UInt16 out of range");
+    }
     this.#ensure(2);
     this.view.setUint16(this.offset, n, true);
     this.offset += 2;
   }
 
   writeUint32(n) {
+    if (!Number.isInteger(n) || n < 0 || n > 4294967295) {
+      throw new Error("UInt32 out of range");
+    }
     this.#ensure(4);
     this.view.setUint32(this.offset, n, true);
     this.offset += 4;
@@ -263,14 +272,22 @@ class Asset {
   }
 
   static from(value) {
-    const [amountString, symbol] = String(value).split(" ");
-    if (!SYMBOLS.has(symbol)) {
-      throw new Error("Invalid asset symbol: " + symbol);
+    if (typeof value !== "string") throw new Error("Expected asset");
+    const match = /^(\d+)\.(\d+) ([A-Z]+)$/.exec(value);
+    if (!match) throw new Error("Invalid asset: " + value);
+    const whole = match[1];
+    const fraction = match[2];
+    const symbol = match[3];
+    if (!SYMBOLS.has(symbol)) throw new Error("Invalid asset symbol: " + symbol);
+    if (whole.length > 1 && whole.charCodeAt(0) === 48) {
+      throw new Error("Invalid asset amount: " + value);
     }
-    const amount = Number.parseFloat(amountString);
-    if (!Number.isFinite(amount)) {
-      throw new Error("Invalid asset amount: " + amountString);
+    const precision = symbol === "VESTS" ? 6 : 3;
+    if (fraction.length !== precision) {
+      throw new Error("Invalid asset precision: " + value);
     }
+    const amount = BigInt(whole + fraction);
+    if (amount > 9223372036854775807n) throw new Error("Invalid asset amount: " + value);
     return new Asset(amount, symbol);
   }
 
@@ -282,6 +299,9 @@ class Asset {
 
 class PublicKey {
   constructor(key, prefix) {
+    if (!(key instanceof Uint8Array) || key.length !== 33) {
+      throw new Error("Expected 33-byte public key");
+    }
     this.key = key;
     this.prefix = prefix ?? config.address_prefix;
   }
@@ -446,9 +466,8 @@ function DateSerializer(buffer, data) {
 
 function AssetSerializer(buffer, data) {
   const asset = Asset.from(data);
-  const precision = asset.getPrecision();
-  buffer.writeInt64(Math.round(asset.amount * Math.pow(10, precision)));
-  buffer.writeUint8(precision);
+  buffer.writeInt64(asset.amount);
+  buffer.writeUint8(asset.getPrecision());
   const symbol = asset.symbol;
   for (let i = 0; i < 7; i++) buffer.writeUint8(symbol.charCodeAt(i) || 0);
 }
