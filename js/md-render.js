@@ -84,29 +84,31 @@
     return String(s || "").replace(/\\(.)/g, "$1");
   }
 
-  function skipMdWs(s, i) {
-    while (i < s.length && (s.charAt(i) === " " || s.charAt(i) === "\t" || s.charAt(i) === "\n" || s.charAt(i) === "\r")) i++;
+  function skipMdWs(s, i, end) {
+    if (end == null) end = s.length;
+    while (i < end && (s.charAt(i) === " " || s.charAt(i) === "\t" || s.charAt(i) === "\n" || s.charAt(i) === "\r")) i++;
     return i;
   }
 
-  function parseMdDestination(s, i) {
-    i = skipMdWs(s, i);
-    if (i >= s.length) return null;
+  function parseMdDestination(s, i, end) {
+    if (end == null) end = s.length;
+    i = skipMdWs(s, i, end);
+    if (i >= end) return null;
     if (s.charAt(i) === "<") {
       var j = i + 1;
-      while (j < s.length && s.charAt(j) !== ">" && s.charAt(j) !== "\n") {
-        if (s.charAt(j) === "\\" && j + 1 < s.length) j += 2;
+      while (j < end && s.charAt(j) !== ">" && s.charAt(j) !== "\n") {
+        if (s.charAt(j) === "\\" && j + 1 < end) j += 2;
         else j++;
       }
-      if (s.charAt(j) !== ">") return null;
+      if (j >= end || s.charAt(j) !== ">") return null;
       var angled = unescapeMd(s.slice(i + 1, j)).trim();
       return angled ? { url: angled, next: j + 1 } : null;
     }
     var k = i;
     var depth = 0;
-    while (k < s.length) {
+    while (k < end) {
       var c = s.charAt(k);
-      if (c === "\\" && k + 1 < s.length) {
+      if (c === "\\" && k + 1 < end) {
         k += 2;
         continue;
       }
@@ -129,15 +131,16 @@
     return url ? { url: url, next: k } : null;
   }
 
-  function parseMdTitle(s, i) {
-    var start = skipMdWs(s, i);
-    if (start >= s.length) return { title: "", next: i };
+  function parseMdTitle(s, i, end) {
+    if (end == null) end = s.length;
+    var start = skipMdWs(s, i, end);
+    if (start >= end) return { title: "", next: i };
     var q = s.charAt(start);
     if (q !== '"' && q !== "'" && q !== "(") return { title: "", next: i };
     var close = q === "(" ? ")" : q;
     var j = start + 1;
-    while (j < s.length) {
-      if (s.charAt(j) === "\\" && j + 1 < s.length) {
+    while (j < end) {
+      if (s.charAt(j) === "\\" && j + 1 < end) {
         j += 2;
         continue;
       }
@@ -148,13 +151,14 @@
     return { title: "", next: i };
   }
 
-  function parseMarkdownImageAt(s, i) {
-    if (s.charAt(i) !== "!" || s.charAt(i + 1) !== "[") return null;
+  function parseMarkdownImageAt(s, i, end) {
+    if (end == null) end = s.length;
+    if (i >= end || s.charAt(i) !== "!" || i + 1 >= end || s.charAt(i + 1) !== "[") return null;
     var j = i + 2;
     var alt = "";
     var depth = 0;
-    while (j < s.length) {
-      if (s.charAt(j) === "\\" && j + 1 < s.length) {
+    while (j < end) {
+      if (s.charAt(j) === "\\" && j + 1 < end) {
         alt += s.charAt(j + 1);
         j += 2;
         continue;
@@ -176,34 +180,35 @@
       alt += s.charAt(j);
       j++;
     }
-    if (s.charAt(j) !== "]") return null;
+    if (j >= end || s.charAt(j) !== "]") return null;
     j++;
-    if (s.charAt(j) !== "(") return null;
+    if (j >= end || s.charAt(j) !== "(") return null;
     j++;
-    var dest = parseMdDestination(s, j);
+    var dest = parseMdDestination(s, j, end);
     if (!dest) return null;
     j = dest.next;
-    var title = parseMdTitle(s, j);
+    var title = parseMdTitle(s, j, end);
     j = title.next;
-    j = skipMdWs(s, j);
-    if (s.charAt(j) !== ")") return null;
+    j = skipMdWs(s, j, end);
+    if (j >= end || s.charAt(j) !== ")") return null;
     return { alt: alt, url: dest.url, title: title.title, start: i, end: j + 1 };
   }
 
-  function parseLinkedMarkdownImageAt(s, i) {
-    if (s.charAt(i) !== "[") return null;
-    var img = parseMarkdownImageAt(s, i + 1);
-    if (!img || s.charAt(img.end) !== "]") return null;
+  function parseLinkedMarkdownImageAt(s, i, end) {
+    if (end == null) end = s.length;
+    if (i >= end || s.charAt(i) !== "[") return null;
+    var img = parseMarkdownImageAt(s, i + 1, end);
+    if (!img || img.end >= end || s.charAt(img.end) !== "]") return null;
     var j = img.end + 1;
-    if (s.charAt(j) !== "(") return null;
+    if (j >= end || s.charAt(j) !== "(") return null;
     j++;
-    var dest = parseMdDestination(s, j);
+    var dest = parseMdDestination(s, j, end);
     if (!dest) return null;
     j = dest.next;
-    var title = parseMdTitle(s, j);
+    var title = parseMdTitle(s, j, end);
     j = title.next;
-    j = skipMdWs(s, j);
-    if (s.charAt(j) !== ")") return null;
+    j = skipMdWs(s, j, end);
+    if (j >= end || s.charAt(j) !== ")") return null;
     return { alt: img.alt, url: img.url, title: img.title, href: dest.url, start: i, end: j + 1 };
   }
 
@@ -228,15 +233,16 @@
     return html + ">" + inner + "</a>";
   }
 
-  function parseMarkdownLinkAt(s, i) {
-    if (s.charAt(i) !== "[") return null;
+  function parseMarkdownLinkAt(s, i, end) {
+    if (end == null) end = s.length;
+    if (i >= end || s.charAt(i) !== "[") return null;
     if (i > 0 && s.charAt(i - 1) === "!") return null;
-    if (s.charAt(i + 1) === "!" && s.charAt(i + 2) === "[") return null;
+    if (i + 2 < end && s.charAt(i + 1) === "!" && s.charAt(i + 2) === "[") return null;
     var j = i + 1;
     var text = "";
     var depth = 0;
-    while (j < s.length) {
-      if (s.charAt(j) === "\\" && j + 1 < s.length) {
+    while (j < end) {
+      if (s.charAt(j) === "\\" && j + 1 < end) {
         text += s.charAt(j + 1);
         j += 2;
         continue;
@@ -258,36 +264,39 @@
       text += s.charAt(j);
       j++;
     }
-    if (s.charAt(j) !== "]") return null;
+    if (j >= end || s.charAt(j) !== "]") return null;
     j++;
-    if (s.charAt(j) !== "(") return null;
+    if (j >= end || s.charAt(j) !== "(") return null;
     j++;
-    var dest = parseMdDestination(s, j);
+    var dest = parseMdDestination(s, j, end);
     if (!dest) return null;
     j = dest.next;
-    var title = parseMdTitle(s, j);
+    var title = parseMdTitle(s, j, end);
     j = title.next;
-    j = skipMdWs(s, j);
-    if (s.charAt(j) !== ")") return null;
+    j = skipMdWs(s, j, end);
+    if (j >= end || s.charAt(j) !== ")") return null;
     return { text: text, url: dest.url, title: title.title, end: j + 1 };
   }
 
-  function parseHtmlTagAt(s, i) {
-    if (s.charAt(i) !== "<") return null;
-    if (s.startsWith("<!--", i) || s.startsWith("<!", i) || s.startsWith("<?", i)) return null;
+  function parseHtmlTagAt(s, i, end) {
+    if (end == null) end = s.length;
+    if (i >= end || s.charAt(i) !== "<") return null;
+    if (i + 4 <= end && s.startsWith("<!--", i)) return null;
+    if (i + 2 <= end && (s.startsWith("<!", i) || s.startsWith("<?", i))) return null;
     var j = i + 1;
     var closing = false;
-    if (s.charAt(j) === "/") {
+    if (j < end && s.charAt(j) === "/") {
       closing = true;
       j++;
     }
-    var nameMatch = /^[A-Za-z][A-Za-z0-9]*/.exec(s.slice(j));
+    var nameMatch = /^[A-Za-z][A-Za-z0-9]*/.exec(s.slice(j, end));
     if (!nameMatch) return null;
     var name = nameMatch[0];
     j += name.length;
+    if (j > end) return null;
     var quote = "";
     var selfClosing = false;
-    for (; j < s.length; j++) {
+    for (; j < end; j++) {
       var ch = s.charAt(j);
       if (quote) {
         if (ch === quote) quote = "";
@@ -297,7 +306,7 @@
         quote = ch;
         continue;
       }
-      if (ch === "/" && s.charAt(j + 1) === ">") {
+      if (ch === "/" && j + 1 < end && s.charAt(j + 1) === ">") {
         selfClosing = true;
         j += 2;
         break;
@@ -307,7 +316,7 @@
         break;
       }
     }
-    if (quote || s.charAt(j - 1) !== ">") return null;
+    if (j > end || quote || s.charAt(j - 1) !== ">") return null;
     return {
       name: name,
       raw: s.slice(i, j),
@@ -317,27 +326,41 @@
     };
   }
 
-  // One Map per top-level search. A failed nested search used to rescan
-  // the same suffix for every unclosed tag (~2^k). The close rules stay
-  // the same: skip a nest that does close, and do not skip one that does not.
-  function findCloseTag(s, from, name) {
-    var memo = new Map();
+  // End index of a comment that starts at i, or -1 when i is not inside
+  // an opener in this range. An unclosed comment stops at the range end.
+  function htmlCommentEnd(s, i, end) {
+    if (i + 4 > end || !s.startsWith("<!--", i)) return -1;
+    var close = s.indexOf("-->", i + 4);
+    if (close < 0 || close + 3 > end) return end;
+    return close + 3;
+  }
+
+  // One Map for this source string and every range cut from it. The key is
+  // the start, the tag name, and the limit: a close that sits past a parent
+  // tag belongs to the wider search only. A miss is reused, so a stack of
+  // unclosed tags does not scan that suffix again. A different string
+  // (a joined paragraph, quote, list, cell, or link label) gets its own Map.
+  // Skip a nest that does close, so a </div> inside <pre>…</pre> cannot end
+  // the div that wraps that pre. An unclosed nest is not skipped.
+  function findCloseTag(s, from, name, memo, limit) {
+    if (memo == null) memo = new Map();
+    if (limit == null) limit = s.length;
     function search(start, want) {
-      var key = start + "\0" + want;
+      var key = start + "\0" + want + "\0" + limit;
       if (memo.has(key)) return memo.get(key);
       var i = start;
       var found = null;
-      while (i < s.length) {
-        if (s.startsWith("<!--", i)) {
-          var end = s.indexOf("-->", i + 4);
-          i = end < 0 ? s.length : end + 3;
+      while (i < limit) {
+        var comment = htmlCommentEnd(s, i, limit);
+        if (comment >= 0) {
+          i = comment;
           continue;
         }
         if (s.charAt(i) !== "<") {
           i++;
           continue;
         }
-        var tag = parseHtmlTagAt(s, i);
+        var tag = parseHtmlTagAt(s, i, limit);
         if (!tag) {
           i++;
           continue;
@@ -347,9 +370,6 @@
           found = { start: i, end: tag.end, raw: tag.raw };
           break;
         }
-        // Skip a nested element that does close, so a </div> inside
-        // <pre>…</pre> cannot end the div that wraps that pre.
-        // An unclosed nest is not skipped: <script> must not swallow the post.
         if (!tag.closing && !tag.selfClosing) {
           var nested = search(tag.end, tagName);
           if (nested) {
@@ -365,13 +385,14 @@
     return search(from, name.toLowerCase());
   }
 
-  function readCodeSpan(s, i) {
+  function readCodeSpan(s, i, end) {
+    if (end == null) end = s.length;
     var n = 0;
-    while (s.charAt(i + n) === "`") n++;
+    while (i + n < end && s.charAt(i + n) === "`") n++;
     if (!n) return null;
     var j = i + n;
     var newlines = 0;
-    while (j < s.length) {
+    while (j < end) {
       if (s.charAt(j) === "\n") {
         newlines++;
         if (newlines > 1) return null;
@@ -383,7 +404,7 @@
         continue;
       }
       var k = 0;
-      while (s.charAt(j + k) === "`") k++;
+      while (j + k < end && s.charAt(j + k) === "`") k++;
       if (k === n) return { text: s.slice(i + n, j), end: j + k };
       j += k;
     }
@@ -542,8 +563,9 @@
     return out;
   }
 
-  function parseAutolink(s, i) {
-    var m = /^<(https?:\/\/[^>\s]+|mailto:[^>\s]+)>/i.exec(s.slice(i));
+  function parseAutolink(s, i, end) {
+    if (end == null) end = s.length;
+    var m = /^<(https?:\/\/[^>\s]+|mailto:[^>\s]+)>/i.exec(s.slice(i, end));
     if (!m) return null;
     var dest = m[1];
     if (!isSafePostUrl(/^mailto:/i.test(dest) ? dest : dest, "href")) return null;
@@ -554,8 +576,9 @@
     };
   }
 
-  function parseRefLink(s, i, defs) {
-    var m = /^\[([^\]]+)\]\[([^\]]*)\]/.exec(s.slice(i));
+  function parseRefLink(s, i, defs, end) {
+    if (end == null) end = s.length;
+    var m = /^\[([^\]]+)\]\[([^\]]*)\]/.exec(s.slice(i, end));
     if (!m) return null;
     var key = (m[2] || m[1]).toLowerCase();
     if (!defs || !defs[key]) return null;
@@ -565,77 +588,82 @@
     };
   }
 
-  function finishElement(src, tag, defs) {
+  function finishElement(src, tag, defs, memo, limit) {
+    if (memo == null) memo = new Map();
+    if (limit == null) limit = src.length;
     var name = tag.name.toLowerCase();
     if (tag.selfClosing) return { html: tag.raw, end: tag.end };
-    var close = findCloseTag(src, tag.end, tag.name);
-    var inner;
+    var close = findCloseTag(src, tag.end, tag.name, memo, limit);
+    var innerFrom = tag.end;
+    var innerTo;
     var end;
     var closeRaw;
     if (close) {
-      inner = src.slice(tag.end, close.start);
+      innerTo = close.start;
       end = close.end;
       closeRaw = close.raw;
     } else if (BLOCK_TAGS[name] || INLINE_TAGS[name]) {
       // A missing close keeps the element open through this container.
       // Unknown names, typos, and raw skips still fail so the "<" is text.
-      inner = src.slice(tag.end);
-      end = src.length;
+      innerTo = limit;
+      end = limit;
       closeRaw = "</" + name + ">";
     } else {
       return null;
     }
     var html;
     if (SKIP_TAGS[name]) {
-      html = tag.raw + inner + closeRaw;
+      html = tag.raw + src.slice(innerFrom, innerTo) + closeRaw;
     } else if (BLOCK_TAGS[name]) {
-      html = tag.raw + unwrapSingleParagraph(renderBlocks(inner, defs, true)) + closeRaw;
+      html = tag.raw + unwrapSingleParagraph(renderBlocks(src, defs, true, memo, innerFrom, innerTo)) + closeRaw;
     } else if (INLINE_TAGS[name] || name === "a") {
       // <a> is not a styling tag: an unclosed one stays text. A closed
       // one parses its label, so ![alt](url) inside the anchor is an image.
-      html = tag.raw + renderInline(inner, defs) + closeRaw;
+      html = tag.raw + renderInline(src, defs, memo, innerFrom, innerTo) + closeRaw;
     } else {
-      html = tag.raw + renderMixed(inner, defs) + closeRaw;
+      html = tag.raw + renderMixed(src, defs, memo, innerFrom, innerTo) + closeRaw;
     }
     return { html: html, end: end };
   }
 
-  function renderMixed(src, defs) {
+  function renderMixed(src, defs, memo, from, to) {
+    if (memo == null) memo = new Map();
+    if (from == null) from = 0;
+    if (to == null) to = src.length;
     var out = "";
-    var i = 0;
-    while (i < src.length) {
-      if (src.startsWith("<!--", i)) {
-        var end = src.indexOf("-->", i + 4);
-        var to = end < 0 ? src.length : end + 3;
-        out += src.slice(i, to);
-        i = to;
+    var i = from;
+    while (i < to) {
+      var comment = htmlCommentEnd(src, i, to);
+      if (comment >= 0) {
+        out += src.slice(i, comment);
+        i = comment;
         continue;
       }
       if (src.charAt(i) !== "<") {
         var next = src.indexOf("<", i);
-        var stop = next < 0 ? src.length : next;
+        var stop = next < 0 || next >= to ? to : next;
         out += src.slice(i, stop);
         i = stop;
         continue;
       }
-      var auto = parseAutolink(src, i);
+      var auto = parseAutolink(src, i, to);
       if (auto) {
         out += auto.html;
         i = auto.end;
         continue;
       }
-      var stray = strayCloseEnd(src, i);
+      var stray = strayCloseEnd(src, i, to);
       if (stray > i) {
         i = stray;
         continue;
       }
-      var tag = parseHtmlTagAt(src, i);
+      var tag = parseHtmlTagAt(src, i, to);
       if (!tag || tag.closing) {
         out += src.charAt(i);
         i++;
         continue;
       }
-      var el = finishElement(src, tag, defs);
+      var el = finishElement(src, tag, defs, memo, to);
       if (!el) {
         out += src.charAt(i);
         i++;
@@ -647,10 +675,13 @@
     return out;
   }
 
-  function renderInline(src, defs) {
+  function renderInline(src, defs, memo, from, to) {
+    if (memo == null) memo = new Map();
+    if (from == null) from = 0;
+    if (to == null) to = src.length;
     var parts = [];
     var text = "";
-    var i = 0;
+    var i = from;
 
     function pushText() {
       if (!text) return;
@@ -663,23 +694,23 @@
       if (html) parts.push({ html: html });
     }
 
-    while (i < src.length) {
+    while (i < to) {
       var c = src.charAt(i);
-      if (c === "\\" && i + 1 < src.length && ESCAPE_CHARS[src.charAt(i + 1)]) {
+      if (c === "\\" && i + 1 < to && ESCAPE_CHARS[src.charAt(i + 1)]) {
         pushHtml(escapeText(src.charAt(i + 1)));
         i += 2;
         continue;
       }
       if (c === "`") {
-        var span = readCodeSpan(src, i);
+        var span = readCodeSpan(src, i, to);
         if (span) {
           pushHtml("<code>" + escapeText(span.text) + "</code>");
           i = span.end;
           continue;
         }
       }
-      if (c === "!" && src.charAt(i + 1) === "[") {
-        var img = parseMarkdownImageAt(src, i);
+      if (c === "!" && i + 1 < to && src.charAt(i + 1) === "[") {
+        var img = parseMarkdownImageAt(src, i, to);
         if (img) {
           pushHtml(imageHtml(img.url, img.alt, img.title));
           i = img.end;
@@ -687,19 +718,19 @@
         }
       }
       if (c === "[") {
-        var linked = parseLinkedMarkdownImageAt(src, i);
+        var linked = parseLinkedMarkdownImageAt(src, i, to);
         if (linked) {
           pushHtml(linkedImageHtml(linked.href, linked.url, linked.alt, linked.title));
           i = linked.end;
           continue;
         }
-        var link = parseMarkdownLinkAt(src, i);
+        var link = parseMarkdownLinkAt(src, i, to);
         if (link) {
           pushHtml(anchorHtml(link.url, renderInline(link.text, defs), link.title));
           i = link.end;
           continue;
         }
-        var ref = parseRefLink(src, i, defs);
+        var ref = parseRefLink(src, i, defs, to);
         if (ref) {
           pushHtml(ref.html);
           i = ref.end;
@@ -707,27 +738,26 @@
         }
       }
       if (c === "<") {
-        if (src.startsWith("<!--", i)) {
-          var cend = src.indexOf("-->", i + 4);
-          var cto = cend < 0 ? src.length : cend + 3;
-          pushHtml(src.slice(i, cto));
-          i = cto;
+        var comment = htmlCommentEnd(src, i, to);
+        if (comment >= 0) {
+          pushHtml(src.slice(i, comment));
+          i = comment;
           continue;
         }
-        var autoLink = parseAutolink(src, i);
+        var autoLink = parseAutolink(src, i, to);
         if (autoLink) {
           pushHtml(autoLink.html);
           i = autoLink.end;
           continue;
         }
-        var stray = strayCloseEnd(src, i);
+        var stray = strayCloseEnd(src, i, to);
         if (stray > i) {
           i = stray;
           continue;
         }
-        var tag = parseHtmlTagAt(src, i);
+        var tag = parseHtmlTagAt(src, i, to);
         if (tag && !tag.closing) {
-          var el = finishElement(src, tag, defs);
+          var el = finishElement(src, tag, defs, memo, to);
           if (el) {
             pushHtml(el.html);
             i = el.end;
@@ -742,29 +772,22 @@
     return composeInline(parts);
   }
 
-  function splitLines(src) {
+  function splitLines(src, from, to) {
+    if (from == null) from = 0;
+    if (to == null) to = src.length;
     var lines = [];
-    var i = 0;
-    while (i < src.length) {
+    var i = from;
+    while (i < to) {
       var nl = src.indexOf("\n", i);
-      if (nl < 0) {
-        lines.push({ text: src.slice(i), nl: false });
+      if (nl < 0 || nl >= to) {
+        lines.push({ text: src.slice(i, to), nl: false, at: i });
         break;
       }
-      lines.push({ text: src.slice(i, nl), nl: true });
+      lines.push({ text: src.slice(i, nl), nl: true, at: i });
       i = nl + 1;
-      if (i === src.length) break;
+      if (i === to) break;
     }
     return lines;
-  }
-
-  function joinFrom(lines, index) {
-    var s = "";
-    for (var k = index; k < lines.length; k++) {
-      s += lines[k].text;
-      if (lines[k].nl) s += "\n";
-    }
-    return s;
   }
 
   function isBlankText(text) {
@@ -851,8 +874,8 @@
   // A close with no open element is dropped. The matching close of an
   // open element is consumed before this runs. Unknown names stay text,
   // and the raw text inside pre/code/script is copied through elsewhere.
-  function strayCloseEnd(s, i) {
-    var tag = parseHtmlTagAt(s, i);
+  function strayCloseEnd(s, i, end) {
+    var tag = parseHtmlTagAt(s, i, end);
     if (!tag || !tag.closing || !isKnownTagName(tag.name)) return -1;
     return tag.end;
   }
@@ -1125,15 +1148,14 @@
     return { html: html, next: i };
   }
 
-  function renderHtmlAt(lines, index, defs) {
-    var src = joinFrom(lines, index);
+  function renderHtmlAt(src, lines, index, defs, memo, limit) {
     var lead = /^[ \t]*/.exec(lines[index].text)[0].length;
-    var tag = parseHtmlTagAt(src, lead);
+    var tag = parseHtmlTagAt(src, lines[index].at + lead, limit);
     if (!tag) return null;
-    var el = finishElement(src, tag, defs);
+    var el = finishElement(src, tag, defs, memo, limit);
     if (!el) return null;
     var html = el.html;
-    var left = el.end;
+    var left = el.end - lines[index].at;
     var line = index;
     var col = 0;
     while (line < lines.length) {
@@ -1154,8 +1176,11 @@
     return { html: html, next: next };
   }
 
-  function renderBlocks(src, defs, insideHtml) {
-    var lines = splitLines(src);
+  function renderBlocks(src, defs, insideHtml, memo, from, to) {
+    if (memo == null) memo = new Map();
+    if (from == null) from = 0;
+    if (to == null) to = src.length;
+    var lines = splitLines(src, from, to);
     var out = "";
     var i = 0;
     while (i < lines.length) {
@@ -1226,7 +1251,7 @@
         continue;
       }
       if (blockTagAt(text)) {
-        var block = renderHtmlAt(lines, i, defs);
+        var block = renderHtmlAt(src, lines, i, defs, memo, to);
         if (block) {
           out += block.html;
           i = block.next;
@@ -1277,7 +1302,7 @@
   function render(src) {
     var text = String(src == null ? "" : src).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     if (!text) return "";
-    return renderBlocks(text, collectDefs(text));
+    return renderBlocks(text, collectDefs(text), false, new Map());
   }
 
   global.Markdown = { render: render };
