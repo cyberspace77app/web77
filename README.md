@@ -41,7 +41,7 @@ Then open 127.0.0.1:8777 in your web browser.
 
 ## Dependencies
 
-vendored @noble/hashes, @noble/curves, and @noble/ciphers; marked, DOMPurify, cdn.jsdelivr.net, esm.sh/@getalby/sdk, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
+vendored @noble/hashes, @noble/curves, @noble/ciphers, and DOMPurify 3.4.18; marked, cdn.jsdelivr.net, esm.sh/@getalby/sdk, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
 
 ## Hive
 
