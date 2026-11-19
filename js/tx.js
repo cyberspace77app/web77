@@ -1,5 +1,5 @@
 // Hive signing, memos, and transaction serialization.
-import { bytesToHex, cbc, hexToBytes, ripemd160, secp256k1, sha256, sha512 } from "./vendor/noble.js";
+import { bytesToHex, cbc, hexToBytes, ripemd160, secp256k1, sha256, sha512 } from "./vendor/noble.js?v=2.4.0";
 
 // Chain id and address prefix. Node choice and failover live in HiveApi.hiveRpc.
 const config = {
