@@ -817,52 +817,6 @@
     return { level, text };
   }
 
-  /** Turn ATX headings into <h1>–<h6> so HTML blocks cannot swallow them. */
-  function promoteAtxHeadings(s) {
-    const lines = s.split("\n");
-    const out = [];
-    let inFence = false;
-    let fenceMark = "";
-    const parseInline = global.marked?.parseInline || null;
-    for (let i = 0; i < lines.length; i++) {
-      const fence = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-      if (fence) {
-        const mark = fence[1][0];
-        if (!inFence) {
-          inFence = true;
-          fenceMark = mark;
-        } else if (mark === fenceMark) {
-          inFence = false;
-          fenceMark = "";
-        }
-        out.push(lines[i]);
-        continue;
-      }
-      if (inFence) {
-        out.push(lines[i]);
-        continue;
-      }
-      const heading = parseAtxHeadingLine(lines[i]);
-      if (!heading) {
-        out.push(lines[i]);
-        continue;
-      }
-      let inner = heading.text;
-      if (parseInline) {
-        try {
-          inner = parseInline(inner);
-        } catch {
-          inner = escapeHtml(inner);
-        }
-      } else {
-        inner = escapeHtml(inner);
-      }
-      out.push("<h" + heading.level + ">" + inner + "</h" + heading.level + ">");
-      if (i + 1 < lines.length && lines[i + 1] !== "") out.push("");
-    }
-    return out.join("\n");
-  }
-
   function worldmappinEmbedHtml(lat, lng, description) {
     const latN = Number(lat);
     const lngN = Number(lng);
@@ -896,152 +850,21 @@
     return s;
   }
 
-  // A line of nothing but tags. Quote-aware, so a ">" inside an attribute
-  // does not end the tag early.
-  function isOpaqueHtmlLine(line) {
-    let i = 0;
-    let sawTag = false;
-    while (i < line.length) {
-      const ch = line.charAt(i);
-      if (ch === " " || ch === "\t") {
-        i++;
-        continue;
-      }
-      if (line.startsWith("<!--", i)) {
-        const end = line.indexOf("-->", i + 4);
-        if (end < 0) return false;
-        sawTag = true;
-        i = end + 3;
-        continue;
-      }
-      if (ch !== "<") return false;
-      const tag = parseHtmlTagAt(line, i);
-      if (!tag) return false;
-      sawTag = true;
-      i = tag.end;
-    }
-    return sawTag;
-  }
-
-  // <img> on its own line, or a line whose only content is an image wrapped
-  // in presentational tags such as <center> or <a>.
-  function isImageBlockLine(line) {
-    return /<img\b/i.test(line) && isOpaqueHtmlLine(line);
-  }
-
-  function renderSwallowedMarkdown(text) {
-    const styled = renderMarkdownInStylingTags(text);
-    const html = renderTextSegment(styled);
-    const trimmed = unwrapSingleParagraph(String(html).replace(/^\n+|\n+$/g, ""));
-    return trimmed || text;
-  }
-
-  // CommonMark treats a line that is only an <img> as an HTML block and keeps
-  // every following line, up to a blank line, as raw HTML. *caption* under a
-  // photo then stays literal asterisks. Parse that swallowed markdown first
-  // so the italics are already <em> when the block is copied through.
-  function revealMarkdownAfterImages(src) {
-    const lines = String(src || "").split("\n");
-    const out = [];
-    const fence = { inFence: false, fenceMark: "" };
-    let rawSkip = "";
-    let i = 0;
-
-    function inRawRegion(line) {
-      if (fence.inFence) {
-        const end = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
-        if (end && end[1][0] === fence.fenceMark) {
-          fence.inFence = false;
-          fence.fenceMark = "";
-        }
-        return true;
-      }
-      const start = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
-      if (start) {
-        fence.inFence = true;
-        fence.fenceMark = start[1][0];
-        return true;
-      }
-      if (rawSkip) {
-        if (new RegExp("</" + rawSkip + "\\s*>", "i").test(line)) rawSkip = "";
-        return true;
-      }
-      const rawOpen = /^[ \t]{0,3}<(pre|script|style|textarea)\b/i.exec(line);
-      if (rawOpen && !new RegExp("</" + rawOpen[1] + "\\s*>", "i").test(line)) {
-        rawSkip = rawOpen[1];
-        return true;
-      }
-      return false;
-    }
-
-    while (i < lines.length) {
-      const line = lines[i];
-      if (inRawRegion(line) || !isImageBlockLine(line)) {
-        out.push(line);
-        i++;
-        continue;
-      }
-      out.push(line);
-      i++;
-      const bucket = [];
-      while (i < lines.length && lines[i].trim() !== "") {
-        const next = lines[i];
-        if (
-          !fence.inFence &&
-          !rawSkip &&
-          (/^[ \t]{0,3}(`{3,}|~{3,})/.test(next) ||
-            /^[ \t]{0,3}<(pre|script|style|textarea)\b/i.test(next))
-        ) {
-          break;
-        }
-        bucket.push(next);
-        i++;
-      }
-      let run = [];
-      const flush = () => {
-        if (!run.length) return;
-        const text = run.join("\n");
-        run = [];
-        out.push(looksLikeMarkdown(text) ? renderSwallowedMarkdown(text) : text);
-      };
-      for (let n = 0; n < bucket.length; n++) {
-        const part = bucket[n];
-        if (isImageBlockLine(part) || isOpaqueHtmlLine(part)) {
-          flush();
-          out.push(part);
-        } else {
-          run.push(part);
-        }
-      }
-      flush();
-    }
-    return out.join("\n");
-  }
-
   function preprocessHiveMarkdown(src) {
     let s = String(src || "").replace(/\r\n/g, "\n");
     s = replaceWorldmappinSnippets(s);
     s = rewriteKnownMediaPlayers(s);
-    // Thematic breaks stay as --- / *** / ___. marked turns them into <hr>.
-    // Rewriting them to <hr> first opens a CommonMark HTML block, which keeps
-    // every following line raw until a blank line, so "*italic*" stays asterisks.
-    s = promoteAtxHeadings(s);
-    // Bare image URLs on their own line → markdown image
+    // A lone image address becomes a markdown image. Markdown renders it,
+    // and the caption on the next line stays markdown. Bare media URLs that
+    // are not images stay text so embedMedia can see them.
     s = s.replace(
       /^(https?:\/\/[^\s]+?\.(?:png|jpe?g|gif|webp|svg|bmp|avif)(?:\?[^\s]*)?)\s*$/gim,
       "![]($1)"
     );
-    // Ecency / InLeo image hosts (extension optional) on their own line
     s = s.replace(
       /^(https?:\/\/(?:(?:i|images)\.ecency\.com|(?:i|img|images|cdn|files|media)\.inleo\.io)\/[^\s]+)\s*$/gim,
       "![]($1)"
     );
-    // ![alt](url "title") → <img> so HTML blocks cannot swallow the image.
-    // Bare media URLs stay plain text. embedMedia turns those into players,
-    // and the last step links whatever URL text is left. A markdown link
-    // such as [source](url) is not wrapped again.
-    s = replaceMarkdownImages(s);
-    s = revealMarkdownAfterImages(s);
     return s;
   }
 
@@ -1842,14 +1665,27 @@
     if (s.charAt(i) !== "!" || s.charAt(i + 1) !== "[") return null;
     let j = i + 2;
     let alt = "";
+    let depth = 0;
     while (j < s.length) {
       if (s[j] === "\\" && j + 1 < s.length) {
         alt += s[j + 1];
         j += 2;
         continue;
       }
-      if (s[j] === "]") break;
       if (s[j] === "\n") return null;
+      if (s[j] === "[") {
+        depth++;
+        alt += "[";
+        j++;
+        continue;
+      }
+      if (s[j] === "]") {
+        if (depth === 0) break;
+        depth--;
+        alt += "]";
+        j++;
+        continue;
+      }
       alt += s[j];
       j++;
     }
@@ -1931,14 +1767,27 @@
     if (s.charAt(i + 1) === "!" && s.charAt(i + 2) === "[") return null;
     let j = i + 1;
     let text = "";
+    let depth = 0;
     while (j < s.length) {
       if (s[j] === "\\" && j + 1 < s.length) {
         text += s[j + 1];
         j += 2;
         continue;
       }
-      if (s[j] === "]") break;
       if (s[j] === "\n") return null;
+      if (s[j] === "[") {
+        depth++;
+        text += "[";
+        j++;
+        continue;
+      }
+      if (s[j] === "]") {
+        if (depth === 0) break;
+        depth--;
+        text += "]";
+        j++;
+        continue;
+      }
       text += s[j];
       j++;
     }
@@ -1965,96 +1814,6 @@
     return html;
   }
 
-  function replaceMarkdownImages(src) {
-    const s = String(src || "");
-    let out = "";
-    let i = 0;
-    let inFence = false;
-    let fenceMark = "";
-    while (i < s.length) {
-      if (i === 0 || s[i - 1] === "\n") {
-        const nl = s.indexOf("\n", i);
-        const line = nl < 0 ? s.slice(i) : s.slice(i, nl);
-        const fence = line.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-        if (fence) {
-          const mark = fence[1][0];
-          if (!inFence) {
-            inFence = true;
-            fenceMark = mark;
-          } else if (mark === fenceMark) {
-            inFence = false;
-            fenceMark = "";
-          }
-          out += nl < 0 ? line : line + "\n";
-          i = nl < 0 ? s.length : nl + 1;
-          continue;
-        }
-      }
-      if (inFence) {
-        out += s[i];
-        i++;
-        continue;
-      }
-      if (s[i] === "<") {
-        const skipTag = s.slice(i).match(/^<(pre|code|script)\b/i);
-        if (skipTag) {
-          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
-          const rest = s.slice(i);
-          const m = rest.search(close);
-          if (m < 0) {
-            out += rest;
-            break;
-          }
-          const end = m + rest.slice(m).match(close)[0].length;
-          out += rest.slice(0, end);
-          i += end;
-          continue;
-        }
-      }
-      if (s[i] === "`") {
-        let n = 0;
-        while (s[i + n] === "`") n++;
-        let j = i + n;
-        let closed = false;
-        while (j < s.length) {
-          if (s[j] !== "`") {
-            j++;
-            continue;
-          }
-          let k = 0;
-          while (s[j + k] === "`") k++;
-          if (k === n) {
-            out += s.slice(i, j + k);
-            i = j + k;
-            closed = true;
-            break;
-          }
-          j += k;
-        }
-        if (!closed) {
-          out += s.slice(i);
-          break;
-        }
-        continue;
-      }
-      const linked = parseLinkedMarkdownImageAt(s, i);
-      if (linked) {
-        out += linkedImageHtml(linked.href, linked.url, linked.alt, linked.title);
-        i = linked.end;
-        continue;
-      }
-      const img = parseMarkdownImageAt(s, i);
-      if (img) {
-        out += imageHtml(img.url, img.alt, img.title);
-        i = img.end;
-        continue;
-      }
-      out += s[i];
-      i++;
-    }
-    return out;
-  }
-
   function embedWorldmappin(html) {
     const re = new RegExp("(?:<p>\\s*)?" + WORLDMAPPIN_INNER + "(?:\\s*</p>)?", "gi");
     return String(html || "").replace(re, function (_full, lat, lng, desc) {
@@ -2063,41 +1822,148 @@
     });
   }
 
-  // Walk rendered HTML text. Tags are copied through. The inside of a link or
-  // a raw block is copied through too, so a URL that is already a link, or
-  // that sits in code, is neither embedded nor linkified.
-  function walkHtmlText(html, onText) {
+  // Open tags whose interior is copied through. Same set the old text walks
+  // skipped, so a URL or mention inside a link or a code span stays literal.
+  const SKIP_OPEN_RE = /<(a|code|pre|script|style|textarea|kbd|samp)\b/iy;
+  const SKIP_CLOSE_RE = /<\/(a|code|pre|script|style|textarea|kbd|samp)\s*>/ig;
+  const PLAIN_URL_RE = /https?:\/\/[^\s<]+/iy;
+  const MENTION_NAME_RE = /[a-z][a-z0-9.\-]*[a-z0-9]/iy;
+  const TAG_NAME_RE = /[a-z0-9][a-z0-9-]{0,22}[a-z0-9]/iy;
+
+  function matchSkipOpen(s, i) {
+    SKIP_OPEN_RE.lastIndex = i;
+    const m = SKIP_OPEN_RE.exec(s);
+    if (!m || m.index !== i) return null;
+    return { name: m[1], length: m[0].length };
+  }
+
+  function findSkipClose(s, from, name) {
+    const want = name.toLowerCase();
+    SKIP_CLOSE_RE.lastIndex = from;
+    let m;
+    while ((m = SKIP_CLOSE_RE.exec(s))) {
+      if (m[1].toLowerCase() === want) return m.index + m[0].length;
+    }
+    return -1;
+  }
+
+  // End index after this tag, or after the matching close for a skipped tag.
+  // An unclosed tag consumes the rest of the string, matching the old walker.
+  function takeTag(s, i) {
+    const open = matchSkipOpen(s, i);
+    if (open) {
+      const close = findSkipClose(s, i + open.length, open.name);
+      return close < 0 ? s.length : close;
+    }
+    const gt = s.indexOf(">", i + 1);
+    return gt < 0 ? s.length : gt + 1;
+  }
+
+  function plainUrlAt(s, i) {
+    PLAIN_URL_RE.lastIndex = i;
+    const m = PLAIN_URL_RE.exec(s);
+    if (!m || m.index !== i) return "";
+    return m[0];
+  }
+
+  function mentionNameAt(s, i) {
+    MENTION_NAME_RE.lastIndex = i;
+    const m = MENTION_NAME_RE.exec(s);
+    if (!m || m.index !== i) return "";
+    if (m[0].length < 3 || m[0].length > 16) return "";
+    return m[0];
+  }
+
+  function hashTagAt(s, i) {
+    TAG_NAME_RE.lastIndex = i;
+    const m = TAG_NAME_RE.exec(s);
+    if (!m || m.index !== i) return "";
+    if (tagContinues(s.charAt(i + m[0].length))) return "";
+    return m[0];
+  }
+
+  // Embed already replaced media URLs. Link any URL still sitting in text,
+  // then mentions and tags. Inserted tags are copied, not scanned again.
+  function linkifyAndMentions(s, prevChar) {
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      const ch = s.charAt(i);
+      if (ch === "<") {
+        const end = takeTag(s, i);
+        out += s.slice(i, end);
+        i = end;
+        continue;
+      }
+      const url = ch === "h" || ch === "H" ? plainUrlAt(s, i) : "";
+      if (url) {
+        const parts = splitPlainUrl(url);
+        if (parts.url) {
+          const href = unescapeHtml(parts.url);
+          const linked = linkHtml(href, href);
+          if (linked && linked !== escapeHtml(href)) {
+            out += linked + parts.trail;
+            i += url.length;
+            continue;
+          }
+        }
+      }
+      const prev = i > 0 ? s.charAt(i - 1) : prevChar;
+      if ((ch === "@" || ch === "＠") && isMentionBoundary(prev)) {
+        const name = mentionNameAt(s, i + 1);
+        if (name) {
+          const perm = postPermlinkAt(s, i + 1 + name.length);
+          if (perm) {
+            out += postRefHtml(ch, name, perm);
+            i += 1 + name.length + 1 + perm.length;
+            continue;
+          }
+          out += mentionHtml(ch, name);
+          i += 1 + name.length;
+          continue;
+        }
+      }
+      if ((ch === "#" || ch === "＃") && isTagBoundary(prev)) {
+        const tag = hashTagAt(s, i + 1);
+        if (tag) {
+          out += tagHtml(ch, tag);
+          i += 1 + tag.length;
+          continue;
+        }
+      }
+      const start = i;
+      i++;
+      while (i < s.length) {
+        const c = s.charCodeAt(i);
+        if (
+          c === 60 || c === 64 || c === 35 || c === 72 || c === 104 ||
+          c === 0xff20 || c === 0xff03
+        ) break;
+        i++;
+      }
+      out += s.slice(start, i);
+    }
+    return out;
+  }
+
+  // One walk: media URLs become players or images, other URLs become links,
+  // and @mentions and #tags become local links. Inside a link or raw block
+  // none of that runs.
+  function walkPostText(html) {
     const s = String(html || "");
     let out = "";
     let i = 0;
     while (i < s.length) {
       if (s.charAt(i) === "<") {
-        const skipTag = /^<(a|code|pre|script|style|textarea|kbd|samp)\b/i.exec(s.slice(i));
-        if (skipTag) {
-          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
-          const rest = s.slice(i);
-          const found = rest.search(close);
-          if (found < 0) {
-            out += rest;
-            break;
-          }
-          const end = found + rest.slice(found).match(close)[0].length;
-          out += rest.slice(0, end);
-          i += end;
-          continue;
-        }
-        const gt = s.indexOf(">", i + 1);
-        if (gt < 0) {
-          out += s.slice(i);
-          break;
-        }
-        out += s.slice(i, gt + 1);
-        i = gt + 1;
+        const end = takeTag(s, i);
+        out += s.slice(i, end);
+        i = end;
         continue;
       }
       const next = s.indexOf("<", i);
       const end = next < 0 ? s.length : next;
-      out += onText(s.slice(i, end));
+      const prev = i > 0 ? s.charAt(i - 1) : "";
+      out += linkifyAndMentions(embedPlainText(s.slice(i, end)), prev);
       i = end;
     }
     return out;
@@ -3254,30 +3120,11 @@
 
   function embedMedia(html) {
     html = embedWorldmappin(html);
-    // Only text nodes. Markdown links and raw HTML links are already <a>,
-    // and this walk does not read their contents.
-    html = walkHtmlText(html, embedPlainText);
+    html = walkPostText(html);
     html = liftBlockEmbeds(html);
     html = frameAuthorVideos(html);
     html = liftBlockEmbeds(html);
     return html;
-  }
-
-  function linkifyPlainText(text) {
-    return String(text || "").replace(/https?:\/\/[^\s<]+/gi, function (raw) {
-      const parts = splitPlainUrl(raw);
-      if (!parts.url) return raw;
-      const url = unescapeHtml(parts.url);
-      const linked = linkHtml(url, url);
-      if (!linked || linked === escapeHtml(url)) return raw;
-      return linked + parts.trail;
-    });
-  }
-
-  // Last URL step. Media text was embedded above. Angle-bracket autolinks and
-  // markdown links are already anchors. Hive hosts are rewritten next.
-  function linkifyPlainUrls(html) {
-    return walkHtmlText(html, linkifyPlainText);
   }
 
   function localAppPrefix() {
@@ -3404,86 +3251,6 @@
     );
   }
 
-  /** Turn bare @username and @username/permlink mentions, and #tags, into local links. */
-  function linkifyMentionsTags(html) {
-    const s = String(html || "");
-    let out = "";
-    let i = 0;
-    while (i < s.length) {
-      if (s[i] === "<") {
-        const skipTag = s.slice(i).match(/^<(a|code|pre|script|style|textarea|kbd|samp)\b/i);
-        if (skipTag) {
-          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
-          const rest = s.slice(i);
-          const m = rest.search(close);
-          if (m < 0) {
-            out += rest;
-            break;
-          }
-          const end = m + rest.slice(m).match(close)[0].length;
-          out += rest.slice(0, end);
-          i += end;
-          continue;
-        }
-        const gt = s.indexOf(">", i + 1);
-        if (gt < 0) {
-          out += s.slice(i);
-          break;
-        }
-        out += s.slice(i, gt + 1);
-        i = gt + 1;
-        continue;
-      }
-      const at = s[i];
-      if ((at === "@" || at === "＠") && isMentionBoundary(s[i - 1])) {
-        const m = s.slice(i + 1).match(/^([a-z][a-z0-9.\-]*[a-z0-9])/i);
-        if (m && m[1].length >= 3 && m[1].length <= 16) {
-          const perm = postPermlinkAt(s, i + 1 + m[1].length);
-          if (perm) {
-            out += postRefHtml(at, m[1], perm);
-            i += 1 + m[1].length + 1 + perm.length;
-            continue;
-          }
-          out += mentionHtml(at, m[1]);
-          i += 1 + m[1].length;
-          continue;
-        }
-      }
-      if ((at === "#" || at === "＃") && isTagBoundary(s[i - 1])) {
-        const m = s.slice(i + 1).match(/^([a-z0-9][a-z0-9-]{0,22}[a-z0-9])/i);
-        if (m && !tagContinues(s[i + 1 + m[1].length])) {
-          out += tagHtml(at, m[1]);
-          i += 1 + m[1].length;
-          continue;
-        }
-      }
-      out += s[i];
-      i++;
-    }
-    return out;
-  }
-
-  // Presentational tags and the text containers Hive posts use the same way.
-  // CommonMark treats many of these as raw HTML and does not parse inside them.
-  const STYLING_HTML_TAGS = new Set(
-    (
-      "center div span font p blockquote figure figcaption " +
-      "h1 h2 h3 h4 h5 h6 td th caption li dt dd " +
-      "section article header footer aside address details summary " +
-      "b i u s strike big small sup sub mark tt em strong del ins cite abbr q"
-    ).split(" ")
-  );
-
-  // Tags whose element, once opened at the start of a line, swallows following markdown.
-  const HTML_BLOCK_TAGS = new Set(
-    (
-      "address article aside blockquote caption center dd details dialog div dl dt " +
-      "fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr li main nav " +
-      "ol p pre section script style summary table tbody td textarea tfoot th thead tr ul"
-    ).split(" ")
-  );
-
-  const SKIP_MARKDOWN_TAGS = new Set(["pre", "code", "script", "style", "textarea"]);
   const VOID_HTML_TAGS = new Set([
     "hr",
     "br",
@@ -3614,322 +3381,6 @@
       return -1;
     }
     return nl < 0 ? s.length : nl + 1;
-  }
-
-  function markdownSignalText(s) {
-    return String(s)
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<\/?[A-Za-z][^>\n]*>/g, " ");
-  }
-
-  function looksLikeMarkdown(s) {
-    const text = markdownSignalText(s);
-    if (/[*_~`\[!]/.test(text)) return true;
-    // Angle-bracket autolinks. A bare https:// URL stays text here so the
-    // embed step can see it; linkifyPlainUrls links what remains.
-    if (/<[A-Za-z][A-Za-z0-9+.-]*:/.test(text)) return true;
-    if (/^#{1,6}(?:\s|$)/m.test(text)) return true;
-    if (/^[ \t]{0,3}(?:>|[-+*](?:\s|$)|\d+\.\s)/m.test(text)) return true;
-    if (/^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/m.test(text)) return true;
-    return false;
-  }
-
-  function parseWithMarked(src) {
-    ensureMarked();
-    const parse = global.marked?.parse || null;
-    if (!parse) return null;
-    try {
-      return parse(src);
-    } catch {
-      return null;
-    }
-  }
-
-  function unwrapSingleParagraph(html) {
-    const m = /^<p>([\s\S]*)<\/p>\n?$/.exec(html);
-    if (!m || /<\/p>/i.test(m[1])) return html;
-    return m[1];
-  }
-
-  function renderTextSegment(src, unwrap) {
-    if (!src || !looksLikeMarkdown(src)) return src;
-    const html = parseWithMarked(src);
-    if (html == null) return src;
-    // A same-line sibling stays inline. A following line keeps its <p> so the
-    // paragraph margin survives the final parse.
-    if (unwrap === false) return html;
-    return unwrapSingleParagraph(html);
-  }
-
-  // --- inside a raw HTML block never reaches marked. Turn that line into <hr>.
-  // Fences, pre, and code stay literal. A setext underline stays too.
-  function thematicBreaksInRawHtml(html) {
-    const lines = String(html).split("\n");
-    let inFence = false;
-    let fenceMark = "";
-    let skip = "";
-    const thematic = /^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/;
-    const setextUnderline = /^[ \t]{0,3}-{3,}[ \t]*$/;
-    for (let i = 0; i < lines.length; i++) {
-      const fence = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-      if (!skip && fence) {
-        const mark = fence[1][0];
-        if (!inFence) {
-          inFence = true;
-          fenceMark = mark;
-        } else if (mark === fenceMark) {
-          inFence = false;
-          fenceMark = "";
-        }
-        continue;
-      }
-      if (inFence) continue;
-      if (skip) {
-        if (new RegExp("</" + skip + "\\s*>", "i").test(lines[i])) skip = "";
-        continue;
-      }
-      const open = /<(pre|script|style|textarea|code)\b/i.exec(lines[i]);
-      if (open && !new RegExp("</" + open[1] + "\\s*>", "i").test(lines[i])) {
-        skip = open[1];
-        continue;
-      }
-      if (!thematic.test(lines[i])) continue;
-      if (setextUnderline.test(lines[i])) {
-        const prev = i > 0 ? lines[i - 1].trim() : "";
-        const looksLikeSetext =
-          !!prev &&
-          !/[<>]/.test(prev) &&
-          !/^(?:-{3,}|\*{3,}|_{3,})$/.test(prev) &&
-          !/^(?:#{1,6}(?:\s|$)|[-*+]\s|\d+\.\s|>)/.test(prev);
-        if (looksLikeSetext) continue;
-      }
-      lines[i] = "<hr>";
-    }
-    return lines.join("\n");
-  }
-
-  // Parse markdown that sits beside HTML blocks. A block element on a line would
-  // otherwise swallow the rest of that line, including a sibling *italic*.
-  // parseBare false leaves a string with no HTML block for the caller to parse
-  // once. Interiors of styling tags pass true so marked still runs there.
-  function parseMarkdownAroundHtmlBlocks(src, parseBare) {
-    const s = String(src || "");
-    if (!looksLikeMarkdown(s)) return s;
-    const parts = [];
-    let i = 0;
-    let textStart = 0;
-    const fence = { inFence: false, fenceMark: "" };
-    while (i < s.length) {
-      const fenceEnd = skipFenceLine(s, i, fence);
-      if (fenceEnd >= 0) {
-        i = fenceEnd;
-        continue;
-      }
-      if (fence.inFence) {
-        i++;
-        continue;
-      }
-      if (s.charAt(i) === "`") {
-        const span = readCodeSpan(s, i);
-        if (span) {
-          i = span.end;
-          continue;
-        }
-      }
-      if (s.startsWith("<!--", i)) {
-        const end = s.indexOf("-->", i + 4);
-        i = end < 0 ? s.length : end + 3;
-        continue;
-      }
-      if (s.charAt(i) !== "<") {
-        i++;
-        continue;
-      }
-      const tag = parseHtmlTagAt(s, i);
-      if (!tag || tag.closing || !HTML_BLOCK_TAGS.has(tag.name.toLowerCase())) {
-        i = tag && !tag.closing ? tag.end : i + 1;
-        continue;
-      }
-      let end = tag.end;
-      if (!tag.selfClosing) {
-        const close = findCloseTag(s, tag.end, tag.name);
-        if (!close) {
-          i = tag.end;
-          continue;
-        }
-        end = close.end;
-      }
-      if (i > textStart) parts.push(s.slice(textStart, i));
-      parts.push({ html: s.slice(i, end) });
-      i = end;
-      textStart = end;
-    }
-    if (!parts.length) return parseBare === false ? s : renderTextSegment(s);
-    if (textStart < s.length) parts.push(s.slice(textStart));
-    let out = "";
-    for (let n = 0; n < parts.length; n++) {
-      const part = parts[n];
-      if (typeof part === "string") {
-        out += renderTextSegment(part, part.indexOf("\n") === -1);
-      } else {
-        out += thematicBreaksInRawHtml(part.html);
-      }
-    }
-    return out;
-  }
-
-  function renderMarkdownInStylingTags(src) {
-    const s = String(src || "");
-    let out = "";
-    let i = 0;
-    const fence = { inFence: false, fenceMark: "" };
-    while (i < s.length) {
-      const fenceEnd = skipFenceLine(s, i, fence);
-      if (fenceEnd >= 0) {
-        out += s.slice(i, fenceEnd);
-        i = fenceEnd;
-        continue;
-      }
-      if (fence.inFence) {
-        out += s.charAt(i);
-        i++;
-        continue;
-      }
-      if (s.charAt(i) === "`") {
-        const span = readCodeSpan(s, i);
-        if (span) {
-          out += span.raw;
-          i = span.end;
-          continue;
-        }
-      }
-      if (s.startsWith("<!--", i)) {
-        const end = s.indexOf("-->", i + 4);
-        const to = end < 0 ? s.length : end + 3;
-        out += s.slice(i, to);
-        i = to;
-        continue;
-      }
-      if (s.charAt(i) === "<") {
-        const tag = parseHtmlTagAt(s, i);
-        if (tag && !tag.closing && !tag.selfClosing) {
-          const name = tag.name.toLowerCase();
-          if (SKIP_MARKDOWN_TAGS.has(name)) {
-            const close = findCloseTag(s, tag.end, tag.name);
-            if (close) {
-              out += s.slice(i, close.end);
-              i = close.end;
-              continue;
-            }
-          } else if (STYLING_HTML_TAGS.has(name)) {
-            const close = findCloseTag(s, tag.end, tag.name);
-            if (close) {
-              let inner = s.slice(tag.end, close.start);
-              inner = renderMarkdownInStylingTags(inner);
-              inner = parseMarkdownAroundHtmlBlocks(inner);
-              out += tag.raw + inner + close.raw;
-              i = close.end;
-              continue;
-            }
-          }
-        }
-        if (tag) {
-          out += tag.raw;
-          i = tag.end;
-          continue;
-        }
-      }
-      out += s.charAt(i);
-      i++;
-    }
-    return out;
-  }
-
-  // The feed excerpt path does not use these. The first post, comment, or
-  // preview inserts them. Until both are ready, renderMarkdown escapes the
-  // source instead of returning HTML.
-  const MARKED_SRC = "https://cdn.jsdelivr.net/npm/marked@18/lib/marked.umd.min.js";
-  const PURIFY_SRC = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js";
-  let markdownEnginesPromise = null;
-
-  function markdownEnginesReady() {
-    return Boolean(
-      global.marked &&
-        typeof global.marked.parse === "function" &&
-        global.DOMPurify &&
-        typeof global.DOMPurify.sanitize === "function"
-    );
-  }
-
-  function loadClassicScript(src, name) {
-    return new Promise((resolve, reject) => {
-      const prior = document.querySelector('script[data-cs77-lib="' + name + '"]');
-      if (prior && prior.getAttribute("data-cs77-loaded") === "1") {
-        resolve();
-        return;
-      }
-      const script = prior || document.createElement("script");
-      const finish = () => {
-        script.setAttribute("data-cs77-loaded", "1");
-        resolve();
-      };
-      const fail = () => {
-        if (script.parentNode) script.remove();
-        reject(new Error("Could not load " + src));
-      };
-      script.addEventListener("load", finish, { once: true });
-      script.addEventListener("error", fail, { once: true });
-      if (!prior) {
-        script.src = src;
-        script.async = true;
-        script.setAttribute("data-cs77-lib", name);
-        document.head.appendChild(script);
-      }
-    });
-  }
-
-  function whenMarkdownReady() {
-    if (markdownEnginesReady()) return Promise.resolve();
-    if (!markdownEnginesPromise) {
-      markdownEnginesPromise = Promise.all([
-        loadClassicScript(MARKED_SRC, "marked"),
-        loadClassicScript(PURIFY_SRC, "purify"),
-      ])
-        .then(() => {
-          if (!markdownEnginesReady()) throw new Error("Could not start the markdown renderer.");
-          ensureMarked();
-          ensurePostSanitizeHooks();
-        })
-        .catch((err) => {
-          markdownEnginesPromise = null;
-          throw err;
-        });
-    }
-    return markdownEnginesPromise;
-  }
-
-  let markedReady = false;
-
-  function ensureMarked() {
-    if (markedReady || !global.marked) return;
-    // GFM's bare-URL tokenizer is off. A pasted URL stays text until after
-    // embedMedia. Angle-bracket autolinks (<https://…>) still become links.
-    // undefined disables the tokenizer; false falls through and still autolinks.
-    const opts = {
-      gfm: true,
-      breaks: true,
-      tokenizer: {
-        url: function () {
-          return;
-        },
-      },
-    };
-    if (typeof global.marked.use === "function") {
-      global.marked.use(opts);
-    } else if (typeof global.marked.setOptions === "function") {
-      global.marked.setOptions({ gfm: true, breaks: true });
-    }
-    markedReady = true;
   }
 
   // .post-body clips with overflow:hidden. .comment-body does not, so a
@@ -4392,44 +3843,90 @@
     }
   }
 
+  // The feed excerpt path does not use these. The first post, comment, or
+  // preview inserts them. Until both are ready, renderMarkdown escapes the source.
+  const PURIFY_SRC = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js";
+  const MARKDOWN_SRC = "/js/md-render.js?v=0.22.5";
+  let markdownEnginesPromise = null;
+
+  function markdownEnginesReady() {
+    return Boolean(
+      global.DOMPurify &&
+      typeof global.DOMPurify.sanitize === "function" &&
+      global.Markdown &&
+      typeof global.Markdown.render === "function"
+    );
+  }
+
+  function loadClassicScript(src, name) {
+    return new Promise((resolve, reject) => {
+      const prior = document.querySelector('script[data-cs77-lib="' + name + '"]');
+      if (prior && prior.getAttribute("data-cs77-loaded") === "1") {
+        resolve();
+        return;
+      }
+      const script = prior || document.createElement("script");
+      const finish = () => {
+        script.setAttribute("data-cs77-loaded", "1");
+        resolve();
+      };
+      const fail = () => {
+        if (script.parentNode) script.remove();
+        reject(new Error("Could not load " + src));
+      };
+      script.addEventListener("load", finish, { once: true });
+      script.addEventListener("error", fail, { once: true });
+      if (!prior) {
+        script.src = src;
+        script.async = true;
+        script.setAttribute("data-cs77-lib", name);
+        document.head.appendChild(script);
+      }
+    });
+  }
+
+  function whenMarkdownReady() {
+    if (markdownEnginesReady()) return Promise.resolve();
+    if (!markdownEnginesPromise) {
+      markdownEnginesPromise = Promise.all([
+        loadClassicScript(PURIFY_SRC, "purify"),
+        loadClassicScript(MARKDOWN_SRC, "markdown"),
+      ])
+        .then(() => {
+          if (!markdownEnginesReady()) throw new Error("Could not start the markdown renderer.");
+          ensurePostSanitizeHooks();
+        })
+        .catch((err) => {
+          markdownEnginesPromise = null;
+          throw err;
+        });
+    }
+    return markdownEnginesPromise;
+  }
+
   function plainMarkdownHtml(src) {
     return `<p>${escapeHtml(String(src || "")).replace(/\n/g, "<br>")}</p>`;
   }
 
   function renderMarkdown(src) {
     if (!markdownEnginesReady()) return plainMarkdownHtml(src);
-    ensureMarked();
-    // 1. Markdown to HTML. Hive prep rewrites players and bare image URLs,
-    //    and turns markdown images into <img> so a caption under the photo
-    //    is parsed before CommonMark's HTML-block rule. Styling tags and
-    //    HTML-block siblings are parsed with marked, because a raw HTML block
-    //    would hide them. marked.parse then translates what is left, including
-    //    thematic breaks, links, and emphasis.
-    const prepared = parseMarkdownAroundHtmlBlocks(
-      renderMarkdownInStylingTags(
-        preprocessHiveMarkdown(String(src || "").replace(/\r\n/g, "\n"))
-      ),
-      false
-    );
+    const render = global.Markdown && global.Markdown.render;
+    if (typeof render !== "function") return plainMarkdownHtml(src);
+    // Hive prep rewrites players and lone image URLs. Markdown turns the
+    // rest into HTML, including breaks, links, emphasis, and tags.
+    const prepared = preprocessHiveMarkdown(String(src || "").replace(/\r\n/g, "\n"));
     let html;
     try {
-      const parse = global.marked?.parse || null;
-      if (parse) {
-        html = parse(prepared);
-      } else {
-        html = `<p>${escapeHtml(prepared).replace(/\n/g, "<br>")}</p>`;
-      }
-    } catch {
-      html = `<p>${escapeHtml(prepared).replace(/\n/g, "<br>")}</p>`;
+      html = render(prepared);
+    } catch (err) {
+      html = plainMarkdownHtml(prepared);
     }
 
-    // 2. Whitelist. 3. Plain-text media. 4. Leftover http(s) text.
-    // 5. Hive hosts, then @user, @user/permlink, and #tags.
+    // 2. Whitelist. 3. Plain-text media, leftover http(s), @mentions, and #tags.
+    // 4. Hive hosts. 5. Wide tables.
     html = sanitizePostHtml(html);
     html = embedMedia(html);
-    html = linkifyPlainUrls(html);
     html = localizeHiveLinks(html);
-    html = linkifyMentionsTags(html);
     html = wrapWideTables(html);
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
     if (html.indexOf("imgur-embed-pub") !== -1) queueImgurEmbeds();
