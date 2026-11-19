@@ -6,9 +6,11 @@
  * runs to the end of its container. A list item keeps one unindented
  * continuation line, and an indented fence or heading inside it is a block.
  * An image alt or a link label may contain balanced [brackets]. Inside a
- * raw HTML tag, indented lines are not code blocks. A nested tag is
+ * raw HTML tag, indented lines are not code blocks. A four-space line is
+ * a code block only at the start or after a blank line. A nested tag is
  * closed before an outer tag takes a mismatched close, and a closed
- * <a> parses the markdown inside it.
+ * <a> parses the markdown inside it. An unmatched close of a known tag
+ * is dropped. Unknown tags stay text.
  */
 (function (global) {
   "use strict";
@@ -315,41 +317,52 @@
     };
   }
 
+  // One Map per top-level search. A failed nested search used to rescan
+  // the same suffix for every unclosed tag (~2^k). The close rules stay
+  // the same: skip a nest that does close, and do not skip one that does not.
   function findCloseTag(s, from, name) {
-    var i = from;
-    var want = name.toLowerCase();
-    while (i < s.length) {
-      if (s.startsWith("<!--", i)) {
-        var end = s.indexOf("-->", i + 4);
-        i = end < 0 ? s.length : end + 3;
-        continue;
-      }
-      if (s.charAt(i) !== "<") {
-        i++;
-        continue;
-      }
-      var tag = parseHtmlTagAt(s, i);
-      if (!tag) {
-        i++;
-        continue;
-      }
-      var tagName = tag.name.toLowerCase();
-      if (tag.closing && tagName === want) {
-        return { start: i, end: tag.end, raw: tag.raw };
-      }
-      // Skip a nested element that does close, so a </div> inside
-      // <pre>…</pre> cannot end the div that wraps that pre.
-      // An unclosed nest is not skipped: <script> must not swallow the post.
-      if (!tag.closing && !tag.selfClosing) {
-        var nested = findCloseTag(s, tag.end, tag.name);
-        if (nested) {
-          i = nested.end;
+    var memo = new Map();
+    function search(start, want) {
+      var key = start + "\0" + want;
+      if (memo.has(key)) return memo.get(key);
+      var i = start;
+      var found = null;
+      while (i < s.length) {
+        if (s.startsWith("<!--", i)) {
+          var end = s.indexOf("-->", i + 4);
+          i = end < 0 ? s.length : end + 3;
           continue;
         }
+        if (s.charAt(i) !== "<") {
+          i++;
+          continue;
+        }
+        var tag = parseHtmlTagAt(s, i);
+        if (!tag) {
+          i++;
+          continue;
+        }
+        var tagName = tag.name.toLowerCase();
+        if (tag.closing && tagName === want) {
+          found = { start: i, end: tag.end, raw: tag.raw };
+          break;
+        }
+        // Skip a nested element that does close, so a </div> inside
+        // <pre>…</pre> cannot end the div that wraps that pre.
+        // An unclosed nest is not skipped: <script> must not swallow the post.
+        if (!tag.closing && !tag.selfClosing) {
+          var nested = search(tag.end, tagName);
+          if (nested) {
+            i = nested.end;
+            continue;
+          }
+        }
+        i = tag.end;
       }
-      i = tag.end;
+      memo.set(key, found);
+      return found;
     }
-    return null;
+    return search(from, name.toLowerCase());
   }
 
   function readCodeSpan(s, i) {
@@ -611,6 +624,11 @@
         i = auto.end;
         continue;
       }
+      var stray = strayCloseEnd(src, i);
+      if (stray > i) {
+        i = stray;
+        continue;
+      }
       var tag = parseHtmlTagAt(src, i);
       if (!tag || tag.closing) {
         out += src.charAt(i);
@@ -700,6 +718,11 @@
         if (autoLink) {
           pushHtml(autoLink.html);
           i = autoLink.end;
+          continue;
+        }
+        var stray = strayCloseEnd(src, i);
+        if (stray > i) {
+          i = stray;
           continue;
         }
         var tag = parseHtmlTagAt(src, i);
@@ -807,6 +830,39 @@
 
   function isIndentedCodeText(text) {
     return /^ {4}/.test(text) || /^\t/.test(text);
+  }
+
+  // A code block does not interrupt a paragraph. At the start of the
+  // post, or after a blank line, four spaces are still code.
+  function indentedCodeAt(lines, index) {
+    if (!isIndentedCodeText(lines[index].text)) return false;
+    return index === 0 || isBlankText(lines[index - 1].text);
+  }
+
+  function dedentCodeIndent(text) {
+    return text.replace(/^(?: {4}|\t)/, "");
+  }
+
+  function isKnownTagName(name) {
+    var n = String(name || "").toLowerCase();
+    return !!(BLOCK_TAGS[n] || INLINE_TAGS[n] || SKIP_TAGS[n] || VOID_TAGS[n] || n === "a");
+  }
+
+  // A close with no open element is dropped. The matching close of an
+  // open element is consumed before this runs. Unknown names stay text,
+  // and the raw text inside pre/code/script is copied through elsewhere.
+  function strayCloseEnd(s, i) {
+    var tag = parseHtmlTagAt(s, i);
+    if (!tag || !tag.closing || !isKnownTagName(tag.name)) return -1;
+    return tag.end;
+  }
+
+  function isStrayCloseLine(text) {
+    var lead = /^[ \t]*/.exec(text);
+    var i = lead ? lead[0].length : 0;
+    var end = strayCloseEnd(text, i);
+    if (end < 0) return false;
+    return /^[ \t]*$/.test(text.slice(end));
   }
 
   function isDefLine(text) {
@@ -1148,10 +1204,14 @@
         i = list.next;
         continue;
       }
-      if (!insideHtml && isIndentedCodeText(text)) {
+      if (!insideHtml && indentedCodeAt(lines, i)) {
         var code = renderIndented(lines, i);
         out += code.html;
         i = code.next;
+        continue;
+      }
+      if (isStrayCloseLine(text)) {
+        i++;
         continue;
       }
       if (isCommentOnly(text)) {
@@ -1173,7 +1233,7 @@
           continue;
         }
       }
-      var buf = [text];
+      var buf = [!insideHtml && isIndentedCodeText(text) ? dedentCodeIndent(text) : text];
       var start = i;
       i++;
       while (i < lines.length && !isBlankText(lines[i].text)) {
@@ -1184,13 +1244,17 @@
           i++;
           break;
         }
+        if (isStrayCloseLine(lines[i].text)) {
+          i++;
+          continue;
+        }
         if (
           fenceInfo(lines[i].text) ||
           isTableStart(lines, i) ||
           parseAtx(lines[i].text) ||
           isQuoteLine(lines[i].text) ||
           (parseListMarker(lines[i].text) && parseListMarker(lines[i].text).indent <= 3) ||
-          (!insideHtml && isIndentedCodeText(lines[i].text)) ||
+          (!insideHtml && indentedCodeAt(lines, i)) ||
           isCommentOnly(lines[i].text) ||
           imageOnlyHtml(lines[i].text) !== null ||
           isThematic(lines[i].text) ||
@@ -1199,7 +1263,9 @@
         ) {
           break;
         }
-        buf.push(lines[i].text);
+        var continued = lines[i].text;
+        if (!insideHtml && isIndentedCodeText(continued)) continued = dedentCodeIndent(continued);
+        buf.push(continued);
         i++;
       }
       if (buf) out += "<p>" + renderInline(buf.join("\n"), defs) + "</p>\n";

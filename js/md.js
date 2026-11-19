@@ -3846,7 +3846,7 @@
   // The feed excerpt path does not use these. The first post, comment, or
   // preview inserts them. Until both are ready, renderMarkdown escapes the source.
   const PURIFY_SRC = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js";
-  const MARKDOWN_SRC = "/js/md-render.js?v=0.22.5";
+  const MARKDOWN_SRC = "/js/md-render.js?v=0.22.7";
   let markdownEnginesPromise = null;
 
   function markdownEnginesReady() {
