@@ -362,7 +362,7 @@ let CS77_FILTER_LOW_REP = 20;
   const ZAP_PAY_ARM_MS = 450;
   // Show the question while the wallet is still open, so coming back does not depend on focus.
   const ZAP_PAY_ASK_MS = 3000;
-  // Default name@v4v.app zaps wait on @v4vapp custom_json instead of asking.
+  // A Hive name at v4v.app waits on @v4vapp custom_json instead of asking.
   let zapV4vTimer = 0;
   let zapV4vGen = 0;
   const V4V_POLL_MS = 3000;
@@ -409,7 +409,7 @@ let CS77_FILTER_LOW_REP = 20;
     // Subspace title to cite. Empty cites @author.
     subspace: "",
     commentBusy: false,
-    // Set while a default-address lightning: invoice is waiting on Hive.
+    // Set while a v4v.app lightning: invoice is waiting on Hive.
     v4vWatch: false,
     paymentHash: "",
   };
@@ -22514,7 +22514,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!zapState.singleTap || gen !== zapSendGen) return;
     // The lightning: link stays in progress until the page comes back, or the give-up.
-    // A default v4v.app address stays in progress until that Hive receipt arrives.
+    // A v4v.app address stays in progress until that Hive receipt arrives.
     if (zapWalletAsk || zapPayConfirmOpen() || zapState.v4vWatch) return;
     const silentWallet = Boolean(zapState.invoice) && !zapState.paid;
     if (!zapState.paid && !silentWallet) return;
@@ -23786,7 +23786,7 @@ let CS77_FILTER_LOW_REP = 20;
     const invoice = zapState.invoice;
     zapPayAskTimer = window.setTimeout(() => {
       zapPayAskTimer = 0;
-      if (zapUsesPaidToggle()) return;
+      if (zapState.v4vWatch || zapUsesPaidToggle()) return;
       if (zapPayConfirmOpen() || zapState.sent || zapState.invoice !== invoice) return;
       if (!zapDialogOpen() && !zapState.singleTap) return;
       zapWalletAsk = null;
@@ -23795,7 +23795,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function armZapWalletReturn(sats) {
-    if (zapState.sent || !zapState.invoice) return;
+    if (zapState.v4vWatch || zapState.sent || !zapState.invoice) return;
     if (zapWalletAsk && zapWalletAsk.invoice === zapState.invoice) return;
     const away = document.hidden || (typeof document.hasFocus === "function" && !document.hasFocus());
     zapWalletAsk = {
@@ -24038,13 +24038,23 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.paymentHash = "";
   }
 
+  // v4v.app credits the local-part. That part has to be a Hive account.
+  function v4vSettleAccount(address) {
+    const parsed = normalizeLightningAddress(address);
+    if (!parsed.address) return "";
+    const at = parsed.address.indexOf("@");
+    if (at < 1 || parsed.address.slice(at + 1) !== "v4v.app") return "";
+    return walletHiveName(parsed.address.slice(0, at));
+  }
+
   // First look is 3 seconds out, then again 3 seconds after each answer.
+  // A stored address uses the same watch as the empty-wallet default.
   function startV4vWatch(hash) {
-    stopV4vWatch();
     const paymentHash = String(hash || "");
     const invoice = zapState.invoice;
-    const author = walletHiveName(zapState.author);
+    const author = v4vSettleAccount(zapState.lnAddress);
     if (!/^[0-9a-f]{64}$/.test(paymentHash) || !invoice || !author) return false;
+    stopV4vWatch();
     const gen = zapV4vGen;
     const started = Date.now();
     zapState.v4vWatch = true;
@@ -24126,8 +24136,8 @@ let CS77_FILTER_LOW_REP = 20;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    // A default v4v.app address settles on Hive. Do not ask, and do not show Payment sent.
-    if (zapState.lnDefault && startV4vWatch(bolt11PaymentHash(pr))) {
+    // Any Hive name at v4v.app settles on Hive. Do not ask, and do not show Payment sent.
+    if (startV4vWatch(bolt11PaymentHash(pr))) {
       if (zapState.singleTap) return;
       const box = $("#zapWalletFallback");
       if (box) box.hidden = false;
@@ -41975,7 +41985,7 @@ let CS77_FILTER_LOW_REP = 20;
     const zapOpenWallet = $("#zapOpenWallet");
     if (zapOpenWallet) {
       zapOpenWallet.addEventListener("click", () => {
-        if (!zapState.invoice || zapState.sent) return;
+        if (!zapState.invoice || zapState.sent || zapState.v4vWatch) return;
         armZapWalletReturn(zapState.sentSats);
       });
     }
