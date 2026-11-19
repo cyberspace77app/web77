@@ -9,8 +9,8 @@
  * raw HTML tag, indented lines are not code blocks. A four-space line is
  * a code block only at the start or after a blank line. A nested tag is
  * closed before an outer tag takes a mismatched close, and a closed
- * <a> parses the markdown inside it. An unmatched close of a known tag
- * is dropped. Unknown tags stay text.
+ * <a> parses the markdown inside it. An unmatched close of a real HTML
+ * tag is dropped. A misspelled tag stays text.
  */
 (function (global) {
   "use strict";
@@ -39,6 +39,15 @@
   var VOID_TAGS = {
     hr: 1, br: 1, img: 1, source: 1, col: 1, link: 1, meta: 1, input: 1,
     wbr: 1, area: 1, base: 1, embed: 1, param: 1, track: 1,
+  };
+
+  // These are real elements, but this parser does not treat them as
+  // containers. An unmatched close is still dropped. html, head, and body
+  // are document wrappers. A misspelling is not listed here.
+  var STRAY_CLOSE_TAGS = {
+    audio: 1, colgroup: 1, dl: 1, kbd: 1, ol: 1, samp: 1, table: 1,
+    tbody: 1, tfoot: 1, thead: 1, time: 1, tr: 1, ul: 1, var: 1, video: 1,
+    html: 1, head: 1, body: 1,
   };
 
   function escapeHtml(s) {
@@ -868,7 +877,7 @@
 
   function isKnownTagName(name) {
     var n = String(name || "").toLowerCase();
-    return !!(BLOCK_TAGS[n] || INLINE_TAGS[n] || SKIP_TAGS[n] || VOID_TAGS[n] || n === "a");
+    return !!(BLOCK_TAGS[n] || INLINE_TAGS[n] || SKIP_TAGS[n] || VOID_TAGS[n] || STRAY_CLOSE_TAGS[n] || n === "a");
   }
 
   // A close with no open element is dropped. The matching close of an
