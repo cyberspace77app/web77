@@ -37857,6 +37857,7 @@ let CS77_FILTER_LOW_REP = 20;
         <h2 class="settings-section-title settings-section-line"><span>Stored keys</span></h2>
         <p class="settings-note">Saved in this browser.</p>
         <div id="settingsStoredKeysList"></div>
+        <p class="settings-status" id="settingsStoredKeysStatus" role="status"></p>
       </section>
       <form class="settings-form" id="settingsKeysForm" autocomplete="off">
         <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
@@ -38175,11 +38176,11 @@ let CS77_FILTER_LOW_REP = 20;
     box.replaceChildren(note);
   }
 
-  async function paintSettingsStoredKeys() {
+  async function paintSettingsStoredKeys(opts) {
     const look = ++settingsStoredLook;
     const box = $("#settingsStoredKeysList");
     if (!box) return;
-    settingsStoredEmpty(box, "Checking this browser…");
+    if (!opts || !opts.quiet) settingsStoredEmpty(box, "Checking this browser…");
     let rows = null;
     let failed = false;
     try {
@@ -38209,6 +38210,8 @@ let CS77_FILTER_LOW_REP = 20;
       const who = document.createElement("span");
       who.className = "settings-stored-key-user";
       who.textContent = "@" + user;
+      const actions = document.createElement("span");
+      actions.className = "settings-stored-key-actions";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "settings-key-qr";
@@ -38217,7 +38220,15 @@ let CS77_FILTER_LOW_REP = 20;
       btn.setAttribute("aria-label", roleName + " key QR code for @" + user);
       btn.setAttribute("aria-pressed", "false");
       btn.innerHTML = profileQrMarkSvg();
-      item.append(role, who, btn);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "settings-stored-key-remove";
+      remove.setAttribute("data-settings-stored-remove", user);
+      remove.setAttribute("data-settings-key-role", row.role);
+      remove.setAttribute("aria-label", "Remove " + roleName.toLowerCase() + " key for @" + user);
+      remove.textContent = "×";
+      actions.append(btn, remove);
+      item.append(role, who, actions);
       list.appendChild(item);
     });
     if (!list.childElementCount) {
@@ -38225,6 +38236,92 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     box.replaceChildren(list);
+  }
+
+  function setSettingsStoredStatus(message, isError) {
+    const status = $("#settingsStoredKeysStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function setStoredKeyRemoveBusy(busy) {
+    const buttons = document.querySelectorAll("#settingsStoredKeys [data-settings-stored-remove]");
+    for (let i = 0; i < buttons.length; i++) buttons[i].disabled = busy;
+  }
+
+  function closeStoredKeyQr(user, role) {
+    const openBtn = document.querySelector("#settingsStoredKeys .settings-key-qr.is-open");
+    if (!openBtn) return;
+    if (openBtn.getAttribute("data-settings-stored-user") !== user) return;
+    if (openBtn.getAttribute("data-settings-key-role") !== role) return;
+    closeSettingsKeyQr();
+  }
+
+  // A posting-key login stays while a posting or active key is still stored.
+  // Memo does not keep the account, and a Keychain login does not use these records.
+  function storedLoginUsesKeys(username) {
+    const row = loggedInRow(username);
+    return Boolean(row && row.via !== "keychain");
+  }
+
+  async function storedLoginKeyRemains(username) {
+    const rows = await cs77Auth.listStoredKeys();
+    const name = normalizeLoginUser(username);
+    return (rows || []).some((row) => {
+      const who = normalizeLoginUser(row && row.username);
+      return who === name && (row.role === "posting" || row.role === "active");
+    });
+  }
+
+  let settingsStoredBusy = false;
+
+  async function removeSettingsStoredKey(button) {
+    if (settingsStoredBusy || accountSwitchBusy) return;
+    const user = normalizeLoginUser(button.getAttribute("data-settings-stored-remove") || "");
+    const role = button.getAttribute("data-settings-key-role") || "";
+    if (!validLoginUser(user) || !settingsStoredRoleLabel(role)) return;
+    if (!window.cs77Auth || typeof cs77Auth.deleteStoredKey !== "function") {
+      setSettingsStoredStatus("Could not delete the stored key.", true);
+      return;
+    }
+    settingsStoredBusy = true;
+    setStoredKeyRemoveBusy(true);
+    setSettingsStoredStatus("");
+    closeStoredKeyQr(user, role);
+    let deleted = false;
+    try {
+      try {
+        await cs77Auth.deleteStoredKey(user, role);
+        deleted = true;
+        if ((role === "posting" || role === "active") && storedLoginUsesKeys(user)) {
+          const left = await storedLoginKeyRemains(user);
+          if (!left) {
+            if (observer() === user) {
+              const before = observer();
+              await logout();
+              if (observer() !== before) return;
+            } else {
+              forgetLoggedIn(user);
+              renderSession();
+            }
+          }
+        }
+      } catch (err) {
+        if (!deleted) {
+          setSettingsStoredStatus((err && err.message) || "Could not delete the stored key.", true);
+          return;
+        }
+      }
+      try {
+        await paintSettingsStoredKeys({ quiet: true });
+      } catch {
+        /* the next visit reads the store again */
+      }
+    } finally {
+      settingsStoredBusy = false;
+      if (button.isConnected) setStoredKeyRemoveBusy(false);
+    }
   }
 
   function bindSettingsKeys() {
@@ -38249,6 +38346,12 @@ let CS77_FILTER_LOW_REP = 20;
     const stored = $("#settingsStoredKeys");
     if (stored) {
       stored.addEventListener("click", (e) => {
+        const removeBtn = e.target.closest("[data-settings-stored-remove]");
+        if (removeBtn && stored.contains(removeBtn)) {
+          e.preventDefault();
+          removeSettingsStoredKey(removeBtn);
+          return;
+        }
         const qrBtn = e.target.closest("[data-settings-stored-user]");
         if (!qrBtn || !stored.contains(qrBtn)) return;
         e.preventDefault();

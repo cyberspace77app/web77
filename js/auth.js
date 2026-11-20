@@ -423,6 +423,23 @@
     }
   }
 
+  // Removes one posting, active, or memo record. The wallet connection stays.
+  // Deleting the posting key that is unlocked in this tab wipes those bytes.
+  // The account stays the signed-in user until the page logs it out.
+  async function deleteStoredKey(username, role) {
+    let roleName = "";
+    try {
+      roleName = normalizeRole(role);
+    } catch {
+      throw new Error("Unknown key role.");
+    }
+    if (STORED_KEY_ROLES.indexOf(roleName) < 0) throw new Error("Unknown key role.");
+    const name = accountName(username);
+    if (!validStoredName(name)) throw new Error("Enter a valid Hive username.");
+    await idbDelete(recordId(roleName, name));
+    if (roleName === "posting" && sessionUser === name) lockMemory();
+  }
+
   async function checkedPostingKey(username, wif) {
     const name = accountName(username);
     const secret = String(wif || "").replace(/\s+/g, "");
@@ -1072,6 +1089,7 @@
     hasKey,
     listStoredKeys,
     storedKeyWif,
+    deleteStoredKey,
     saveNwc,
     readNwc,
     clearNwc,

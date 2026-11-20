@@ -10413,9 +10413,60 @@ min-height: 0;
 }
 
 .settings-stored-key-user {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 0.95rem;
   color: var(--yellow);
+}
+
+.settings-stored-key-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.settings-stored-key-remove {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.45rem;
+  height: 2.45rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--gray);
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-stored-key-remove:hover:not(:disabled),
+.settings-stored-key-remove:focus-visible {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+}
+
+.settings-stored-key-remove:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.settings-stored-key-remove:disabled {
+  opacity: 0.45;
+  cursor: default;
+  color: var(--gray);
+  border-color: var(--border);
 }
 
 #settingsStoredKeysList > .settings-note {
