@@ -37879,6 +37879,61 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <p class="settings-status" id="settingsKeysStatus" role="status"></p>
       </form>
+      ${settingsPasswordHtml(username)}
+    `;
+  }
+
+  function settingsPasswordHtml(username) {
+    const esc = HiveMd.escapeHtml;
+    const name = normalizeLoginUser(username || "");
+    const loggedIn = validLoginUser(name);
+    const user = esc(loggedIn ? name : "");
+    const disabled = loggedIn ? "" : " disabled";
+    const note = loggedIn
+      ? "Replaces the Owner, Active, Posting, and Memo keys. Save the new master password before you change it. The old keys stop working."
+      : "Log in to change the master password.";
+    return `
+      <form class="settings-form" id="settingsPasswordForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Change password</span></h2>
+        <p class="settings-note">${note}</p>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsPasswordUser">Username</label>
+          <input id="settingsPasswordUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" value="${user}"${disabled}>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsPasswordOwner">Owner key or master password</label>
+          <input id="settingsPasswordOwner" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="settingsPasswordOwnerNote"${disabled}>
+          <p class="settings-note" id="settingsPasswordOwnerNote">A master password is turned into the owner key on this device.</p>
+        </div>
+        <div id="settingsPasswordNext" hidden>
+          <div class="settings-field">
+            <label class="settings-label" for="settingsPasswordNew">New master password</label>
+            <div class="subspace-key-line">
+              <input id="settingsPasswordNew" type="text" readonly spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="settingsPasswordNewNote">
+              <button type="button" class="btn-ghost btn-compact" id="settingsPasswordCopy" aria-label="Copy master password">Copy</button>
+            </div>
+            <p class="settings-note" id="settingsPasswordNewNote">Master password for this account. CyberSpace77 does not store it.</p>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="settingsPasswordRepeat">Repeat password</label>
+            <input id="settingsPasswordRepeat" type="text" autocomplete="off" spellcheck="false" autocapitalize="off">
+          </div>
+          <label class="cyber-toggle">
+            <input id="settingsPasswordSaved" type="checkbox">
+            <span class="cyber-toggle-track" aria-hidden="true"></span>
+            <span class="cyber-toggle-copy">
+              <span class="cyber-toggle-title">Backup confirmation</span>
+              <span class="cyber-toggle-sub">I have securely saved the new master password.</span>
+            </span>
+          </label>
+          <p class="settings-note" id="settingsPasswordWarn" hidden></p>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsPasswordSubmit"${disabled}>New password</button>
+          <button type="button" class="btn-ghost" id="settingsPasswordReset">Reset</button>
+        </div>
+        <p class="settings-status" id="settingsPasswordStatus" role="status"></p>
+      </form>
     `;
   }
 
@@ -38208,11 +38263,483 @@ let CS77_FILTER_LOW_REP = 20;
         clearSettingsClipboard();
       });
     }
+    bindSettingsPassword();
+  }
+
+  // The offered master password and the owner secret stay here until Reset,
+  // a route change, or a successful change. Strings are dropped, not shredded.
+  const settingsPassword = {
+    token: 0,
+    phase: "idle",
+    pending: false,
+    user: "",
+    secret: "",
+    password: "",
+  };
+
+  function setSettingsPasswordStatus(message, isError) {
+    const status = $("#settingsPasswordStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function paintSettingsPasswordLock() {
+    const pending = settingsPassword.pending;
+    const loggedIn = validLoginUser(normalizeLoginUser(observer()));
+    const user = $("#settingsPasswordUser");
+    const owner = $("#settingsPasswordOwner");
+    const submit = $("#settingsPasswordSubmit");
+    const reset = $("#settingsPasswordReset");
+    const repeat = $("#settingsPasswordRepeat");
+    const saved = $("#settingsPasswordSaved");
+    const copy = $("#settingsPasswordCopy");
+    if (user) user.disabled = pending || !loggedIn;
+    if (owner) owner.disabled = pending || !loggedIn;
+    if (submit) submit.disabled = pending || !loggedIn;
+    if (reset) reset.disabled = pending;
+    if (repeat) repeat.disabled = pending;
+    if (saved) saved.disabled = pending;
+    if (copy) copy.disabled = pending;
+  }
+
+  function settingsPasswordLooksPublic(secret) {
+    return /^STM[1-9A-HJ-NP-Za-km-z]{40,}$/.test(String(secret || "").replace(/\s+/g, ""));
+  }
+
+  function settingsKeyWeight(auth, pub) {
+    const keys = auth && Array.isArray(auth.key_auths) ? auth.key_auths : [];
+    for (let i = 0; i < keys.length; i++) {
+      const row = keys[i];
+      if (!Array.isArray(row) || String(row[0]) !== pub) continue;
+      const weight = Number(row[1]);
+      return Number.isFinite(weight) ? weight : 0;
+    }
+    return 0;
+  }
+
+  function settingsAuthorityAccounts(auth) {
+    const rows = auth && Array.isArray(auth.account_auths) ? auth.account_auths : [];
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!Array.isArray(row) || !row[0]) continue;
+      const weight = Number(row[1]);
+      if (!Number.isInteger(weight) || weight < 1 || weight > 65535) continue;
+      out.push([String(row[0]), weight]);
+    }
+    return out;
+  }
+
+  function settingsAuthorityThreshold(auth) {
+    const threshold = Number(auth && auth.weight_threshold);
+    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 65535) return 0;
+    return threshold;
+  }
+
+  function settingsPasswordWarnText(account) {
+    const roles = [account && account.owner, account && account.active, account && account.posting];
+    let extraKeys = false;
+    let accounts = false;
+    for (let i = 0; i < roles.length; i++) {
+      const auth = roles[i];
+      if (auth && Array.isArray(auth.key_auths) && auth.key_auths.length > 1) extraKeys = true;
+      if (settingsAuthorityAccounts(auth).length) accounts = true;
+    }
+    const parts = [];
+    if (extraKeys) parts.push("This removes the other private keys on Owner, Active, and Posting.");
+    if (accounts) parts.push("Authorized accounts stay in place.");
+    return parts.join(" ");
+  }
+
+  function settingsAccountHasKey(account, role, pub) {
+    if (!account || !pub) return false;
+    if (role === "memo") return String(account.memo_key || "") === pub;
+    return settingsKeyWeight(account[role], pub) > 0;
+  }
+
+  function settingsOwnerWaitMs(account) {
+    const raw = String((account && account.last_owner_update) || "").trim();
+    if (!raw) return 0;
+    const stamp = /z$/i.test(raw) ? raw : raw + "Z";
+    const ms = Date.parse(stamp);
+    if (!Number.isFinite(ms)) return 0;
+    return Math.max(0, ms + 60 * 60 * 1000 - Date.now());
+  }
+
+  function settingsOwnerWaitText(ms) {
+    const minutes = Math.max(1, Math.ceil(ms / 60000));
+    const unit = minutes === 1 ? "minute" : "minutes";
+    return "The owner key can be changed once an hour. Try again in " + minutes + " " + unit + ".";
+  }
+
+  function settingsPasswordErrorText(err) {
+    const message = (err && err.message) || "Could not change the password.";
+    if (/owner authority can only be updated once/i.test(message) || /owner_update_limit/i.test(message)) {
+      return "The owner key can be changed once an hour. Try again later.";
+    }
+    return message;
+  }
+
+  function settingsPasswordAuthority(auth, pub) {
+    const weight = settingsAuthorityThreshold(auth);
+    if (!weight) throw new Error("This authority cannot be replaced from a master password.");
+    return {
+      weight_threshold: weight,
+      account_auths: settingsAuthorityAccounts(auth),
+      key_auths: [[pub, weight]],
+    };
+  }
+
+  // Empty metadata strings do not clear the profile. Account authorities
+  // stay, and the new key is the only private key on that role. The owner
+  // key signs this. Hive accepts an owner change once an hour.
+  function settingsPasswordOperation(user, keys, account) {
+    return [
+      "account_update2",
+      {
+        account: user,
+        owner: settingsPasswordAuthority(account && account.owner, keys.ownerPub),
+        active: settingsPasswordAuthority(account && account.active, keys.activePub),
+        posting: settingsPasswordAuthority(account && account.posting, keys.postingPub),
+        memo_key: keys.memoPub,
+        json_metadata: "",
+        posting_json_metadata: "",
+        extensions: [],
+      },
+    ];
+  }
+
+  function hideSettingsPasswordOffer() {
+    blankSettingsControl("settingsPasswordNew");
+    blankSettingsControl("settingsPasswordRepeat");
+    const saved = $("#settingsPasswordSaved");
+    if (saved) saved.checked = false;
+    const next = $("#settingsPasswordNext");
+    if (next) next.hidden = true;
+    const warn = $("#settingsPasswordWarn");
+    if (warn) warn.hidden = true;
+    const submit = $("#settingsPasswordSubmit");
+    if (submit) submit.textContent = "New password";
+    const copy = $("#settingsPasswordCopy");
+    if (copy) copy.textContent = "Copy";
+  }
+
+  function wipeSettingsPassword(opts) {
+    settingsPassword.token += 1;
+    settingsPassword.pending = false;
+    settingsPassword.phase = "idle";
+    settingsPassword.user = "";
+    settingsPassword.secret = "";
+    settingsPassword.password = "";
+    const form = $("#settingsPasswordForm");
+    if (!form) return;
+    const name = normalizeLoginUser(observer());
+    const user = $("#settingsPasswordUser");
+    if (user) user.value = validLoginUser(name) ? name : "";
+    blankSettingsControl("settingsPasswordOwner");
+    hideSettingsPasswordOffer();
+    if (!opts || !opts.keepStatus) setSettingsPasswordStatus("");
+    paintSettingsPasswordLock();
+  }
+
+  function collapseSettingsPasswordOffer() {
+    if (settingsPassword.pending && settingsPassword.phase === "ready") return;
+    if (settingsPassword.pending) {
+      settingsPassword.token += 1;
+      settingsPassword.pending = false;
+      settingsPassword.phase = "idle";
+      settingsPassword.user = "";
+      settingsPassword.secret = "";
+      settingsPassword.password = "";
+      hideSettingsPasswordOffer();
+      paintSettingsPasswordLock();
+      setSettingsPasswordStatus("");
+      return;
+    }
+    if (settingsPassword.phase !== "ready") return;
+    settingsPassword.token += 1;
+    settingsPassword.phase = "idle";
+    settingsPassword.user = "";
+    settingsPassword.secret = "";
+    settingsPassword.password = "";
+    hideSettingsPasswordOffer();
+    setSettingsPasswordStatus("That password was discarded. Generate a new one.");
+  }
+
+  async function settingsPasswordWaitForKey(user, pub, token) {
+    for (let i = 0; i < 8; i++) {
+      if (token !== settingsPassword.token) return false;
+      let account = null;
+      try {
+        account = await hiveAccountRecord(user);
+      } catch {
+        account = null;
+      }
+      if (token !== settingsPassword.token) return false;
+      if (account && settingsAccountHasKey(account, "posting", pub)) return true;
+      await subspaceWait(1500);
+    }
+    throw new Error("The password change was broadcast, but the network has not shown the new keys yet. Keep the new master password.");
+  }
+
+  async function generateSettingsPassword() {
+    if (settingsPassword.pending || settingsPassword.phase === "ready") return;
+    const token = (settingsPassword.token += 1);
+    settingsPassword.user = "";
+    settingsPassword.secret = "";
+    settingsPassword.password = "";
+    settingsPassword.phase = "idle";
+    hideSettingsPasswordOffer();
+    const session = normalizeLoginUser(observer());
+    const userEl = $("#settingsPasswordUser");
+    const user = normalizeLoginUser((userEl && userEl.value) || "");
+    if (userEl && userEl.value !== user) userEl.value = user;
+    const ownerEl = $("#settingsPasswordOwner");
+    let secret = (ownerEl && ownerEl.value) || "";
+    if (!validLoginUser(session)) {
+      secret = "";
+      setSettingsPasswordStatus("Log in to change the master password.", true);
+      return;
+    }
+    if (!validLoginUser(user)) {
+      secret = "";
+      setSettingsPasswordStatus("Enter a valid Hive username.", true);
+      return;
+    }
+    if (user !== session) {
+      secret = "";
+      setSettingsPasswordStatus("Log in as that account to change its password.", true);
+      return;
+    }
+    if (!String(secret).replace(/\s+/g, "")) {
+      secret = "";
+      setSettingsPasswordStatus("Enter the owner key or master password.", true);
+      return;
+    }
+    if (settingsPasswordLooksPublic(secret)) {
+      secret = "";
+      setSettingsPasswordStatus("Enter the private owner key or the master password.", true);
+      return;
+    }
+    if (!window.cs77Auth || typeof cs77Auth.publicFromSecret !== "function") {
+      secret = "";
+      setSettingsPasswordStatus("Could not derive the owner key in this browser.", true);
+      return;
+    }
+    settingsPassword.pending = true;
+    paintSettingsPasswordLock();
+    setSettingsPasswordStatus("Checking the owner key…");
+    try {
+      const pub = await cs77Auth.publicFromSecret(user, secret, "owner");
+      if (token !== settingsPassword.token) return;
+      const account = await hiveAccountRecord(user);
+      if (token !== settingsPassword.token) return;
+      if (!account) throw new Error("Unknown Hive account @" + user + ".");
+      const weight = settingsKeyWeight(account.owner, pub);
+      const threshold = Number(account.owner && account.owner.weight_threshold) || 0;
+      if (weight <= 0) {
+        throw new Error("This owner key or master password does not match @" + user + ".");
+      }
+      if (weight < threshold) {
+        throw new Error("This owner key does not have enough weight to change the password.");
+      }
+      const wait = settingsOwnerWaitMs(account);
+      if (wait > 0) throw new Error(settingsOwnerWaitText(wait));
+      settingsPasswordAuthority(account.owner, pub);
+      settingsPasswordAuthority(account.active, pub);
+      settingsPasswordAuthority(account.posting, pub);
+      const password = randomSubspaceMasterKey();
+      if (token !== settingsPassword.token) return;
+      settingsPassword.user = user;
+      settingsPassword.secret = secret;
+      secret = "";
+      settingsPassword.password = password;
+      settingsPassword.phase = "ready";
+      const field = $("#settingsPasswordNew");
+      if (field) field.value = password;
+      const next = $("#settingsPasswordNext");
+      if (next) next.hidden = false;
+      const warn = $("#settingsPasswordWarn");
+      const warnText = settingsPasswordWarnText(account);
+      if (warn) {
+        warn.textContent = warnText;
+        warn.hidden = !warnText;
+      }
+      const submit = $("#settingsPasswordSubmit");
+      if (submit) submit.textContent = "Change password";
+      setSettingsPasswordStatus("Save this master password, repeat it, and confirm the backup. Change password applies it.");
+      focusDesktop(field);
+    } catch (err) {
+      if (token !== settingsPassword.token) return;
+      settingsPassword.phase = "idle";
+      settingsPassword.user = "";
+      settingsPassword.secret = "";
+      settingsPassword.password = "";
+      hideSettingsPasswordOffer();
+      setSettingsPasswordStatus(settingsPasswordErrorText(err), true);
+    } finally {
+      secret = "";
+      if (token === settingsPassword.token) {
+        settingsPassword.pending = false;
+        paintSettingsPasswordLock();
+      }
+    }
+  }
+
+  async function commitSettingsPassword() {
+    if (settingsPassword.pending || settingsPassword.phase !== "ready") return;
+    const token = settingsPassword.token;
+    const user = settingsPassword.user;
+    const session = normalizeLoginUser(observer());
+    let offered = settingsPassword.password;
+    const repeated = String(($("#settingsPasswordRepeat") || {}).value || "").trim();
+    const saved = Boolean(($("#settingsPasswordSaved") || {}).checked);
+    if (!validLoginUser(session) || user !== session) {
+      offered = "";
+      wipeSettingsPassword();
+      setSettingsPasswordStatus("Log in as that account to change its password.", true);
+      return;
+    }
+    if (!offered) {
+      setSettingsPasswordStatus("Generate a new master password.", true);
+      return;
+    }
+    if (!repeated) {
+      setSettingsPasswordStatus("Repeat the new master password.", true);
+      return;
+    }
+    if (repeated !== offered) {
+      setSettingsPasswordStatus("The passwords do not match.", true);
+      return;
+    }
+    if (!saved) {
+      setSettingsPasswordStatus("Confirm that you have securely saved the new master password.", true);
+      return;
+    }
+    let secret = settingsPassword.secret;
+    if (!secret) {
+      offered = "";
+      setSettingsPasswordStatus("Enter the owner key or master password.", true);
+      collapseSettingsPasswordOffer();
+      return;
+    }
+    if (!window.cs77Auth || typeof cs77Auth.keysFromLogin !== "function" || typeof cs77Auth.broadcastRoleSecret !== "function") {
+      secret = "";
+      offered = "";
+      setSettingsPasswordStatus("Could not change the password in this browser.", true);
+      return;
+    }
+    settingsPassword.pending = true;
+    paintSettingsPasswordLock();
+    setSettingsPasswordStatus("Changing the password…");
+    let keys = null;
+    let doneMessage = "";
+    try {
+      keys = await cs77Auth.keysFromLogin(user, offered);
+      if (token !== settingsPassword.token) return;
+      let seen = null;
+      try {
+        seen = await hiveAccountRecord(user);
+      } catch {
+        seen = null;
+      }
+      if (token !== settingsPassword.token) return;
+      const applied = Boolean(seen && settingsAccountHasKey(seen, "posting", keys.postingPub));
+      if (!applied) {
+        if (!seen) throw new Error("Could not load the account.");
+        const operation = settingsPasswordOperation(user, keys, seen);
+        const signJob = cs77Auth.broadcastRoleSecret(user, secret, "owner", [operation]);
+        try {
+          await signJob;
+        } catch (err) {
+          let now = null;
+          try {
+            now = await hiveAccountRecord(user);
+          } catch {
+            now = null;
+          }
+          if (token !== settingsPassword.token) return;
+          if (!(now && settingsAccountHasKey(now, "posting", keys.postingPub))) throw err;
+        }
+        if (token !== settingsPassword.token) return;
+        setSettingsPasswordStatus("Waiting for the new keys…");
+        await settingsPasswordWaitForKey(user, keys.postingPub, token);
+        if (token !== settingsPassword.token) return;
+      }
+      const stored = typeof cs77Auth.hasKey === "function" && cs77Auth.hasKey(user);
+      const keychain = keychainLoginActive() === user;
+      if (stored && !keychain && typeof cs77Auth.login === "function") {
+        try {
+          await cs77Auth.login(user, keys.posting);
+          doneMessage = "Password changed. This browser now uses the new posting key. Update Hive Keychain if it still has the old keys.";
+        } catch {
+          doneMessage = "Password changed. Log out and log in with the new master password.";
+        }
+      } else if (keychain) {
+        doneMessage = "Password changed. Update Hive Keychain with the new keys.";
+      } else {
+        doneMessage = "Password changed. Log in again with the new master password.";
+      }
+    } catch (err) {
+      if (token !== settingsPassword.token) return;
+      setSettingsPasswordStatus(settingsPasswordErrorText(err), true);
+      return;
+    } finally {
+      secret = "";
+      offered = "";
+      if (keys) {
+        keys.posting = "";
+        keys.ownerPub = "";
+        keys.activePub = "";
+        keys.postingPub = "";
+        keys.memoPub = "";
+      }
+      keys = null;
+      if (token === settingsPassword.token) {
+        settingsPassword.pending = false;
+        paintSettingsPasswordLock();
+      }
+    }
+    if (doneMessage && token === settingsPassword.token) {
+      wipeSettingsPassword({ keepStatus: true });
+      setSettingsPasswordStatus(doneMessage, false);
+    }
+  }
+
+  function submitSettingsPassword(e) {
+    if (e) e.preventDefault();
+    if (settingsPassword.phase === "ready") commitSettingsPassword();
+    else generateSettingsPassword();
+  }
+
+  function bindSettingsPassword() {
+    const form = $("#settingsPasswordForm");
+    if (!form) return;
+    form.addEventListener("submit", submitSettingsPassword);
+    const user = $("#settingsPasswordUser");
+    const owner = $("#settingsPasswordOwner");
+    if (user) user.addEventListener("input", collapseSettingsPasswordOffer);
+    if (owner) owner.addEventListener("input", collapseSettingsPasswordOffer);
+    const copy = $("#settingsPasswordCopy");
+    if (copy) {
+      copy.addEventListener("click", () => {
+        copySubspaceMasterKey($("#settingsPasswordNew"), copy);
+      });
+    }
+    const reset = $("#settingsPasswordReset");
+    if (reset) {
+      reset.addEventListener("click", () => {
+        wipeSettingsPassword();
+      });
+    }
+    paintSettingsPasswordLock();
   }
 
   async function renderSettings(page) {
     settingsNodeToken += 1;
     clearSettingsKeys();
+    wipeSettingsPassword();
     const tab = page === "profile" || page === "keys" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
@@ -40322,6 +40849,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (r.name !== "settings") {
       clearSettingsProfileScratch();
       clearSettingsKeys();
+      wipeSettingsPassword();
     }
     if (r.name !== "publish") {
       document.body.classList.toggle(

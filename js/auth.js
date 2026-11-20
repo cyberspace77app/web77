@@ -842,8 +842,9 @@
     }
   }
 
-  // One role key, from a WIF or a master password. Checked, used, discarded.
-  async function materializeRoleKey(username, secret, role) {
+  // A WIF is that key. Anything else is a master password and is derived
+  // into the role. The caller owns bytes and must wipe them.
+  async function openRoleSecret(username, secret, role) {
     const name = accountName(username);
     const roleName = normalizeRole(role);
     if (!validStoredName(name)) {
@@ -856,8 +857,6 @@
       raw = "";
       throw new Error("Enter " + roleEnterPhrase(roleName) + ".");
     }
-    let bytes = null;
-    let pub = "";
     if (looksLikeWif(compact)) {
       raw = "";
       const lib = await loadHiveTx();
@@ -869,35 +868,50 @@
         throw new Error("That key is not valid.");
       }
       compact = "";
-      pub = pk.createPublic().toString();
-      bytes = pk.key.slice();
+      const pub = pk.createPublic().toString();
+      const bytes = pk.key.slice();
       wipe(pk.key);
-    } else {
-      let password = raw.trim();
-      raw = "";
-      compact = "";
-      const derivedJob = deriveRoleKey(name, password, roleName);
-      password = "";
-      const derived = await derivedJob;
-      bytes = derived.bytes;
-      pub = derived.pub;
+      return { name: name, role: roleName, bytes: bytes, pub: pub };
     }
+    let password = raw.trim();
+    raw = "";
+    compact = "";
+    const derivedJob = deriveRoleKey(name, password, roleName);
+    password = "";
+    const derived = await derivedJob;
+    return { name: name, role: roleName, bytes: derived.bytes, pub: derived.pub };
+  }
+
+  // One role key, from a WIF or a master password. Checked, used, discarded.
+  async function materializeRoleKey(username, secret, role) {
+    const openedJob = openRoleSecret(username, secret, role);
+    secret = "";
+    const opened = await openedJob;
     try {
-      const accounts = await HiveApi.getAccounts([name]);
+      const accounts = await HiveApi.getAccounts([opened.name]);
       const account = accounts && accounts[0];
-      if (!account || accountName(account.name) !== name) {
-        throw new Error("Unknown Hive account @" + name + ".");
+      if (!account || accountName(account.name) !== opened.name) {
+        throw new Error("Unknown Hive account @" + opened.name + ".");
       }
-      if (rolePubs(account, roleName).indexOf(pub) < 0) {
+      if (rolePubs(account, opened.role).indexOf(opened.pub) < 0) {
         throw new Error(
-          "This " + roleName + " key does not match @" + name + "."
+          "This " + opened.role + " key does not match @" + opened.name + "."
         );
       }
-      return { name: name, role: roleName, bytes: bytes };
+      return { name: opened.name, role: opened.role, bytes: opened.bytes };
     } catch (err) {
-      wipe(bytes);
+      wipe(opened.bytes);
       throw err;
     }
+  }
+
+  // Public key for a WIF or a master password. The private key is wiped.
+  async function publicFromSecret(username, secret, role) {
+    const openedJob = openRoleSecret(username, secret, role);
+    secret = "";
+    const opened = await openedJob;
+    wipe(opened.bytes);
+    return opened.pub;
   }
 
   async function broadcastRoleSecret(username, secret, role, operations) {
@@ -1071,6 +1085,7 @@
     broadcastStored,
     secretKind,
     deriveRoleKey,
+    publicFromSecret,
     wifFromLogin,
     loginMaster,
     broadcastRoleSecret,
