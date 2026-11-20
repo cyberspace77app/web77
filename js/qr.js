@@ -26,6 +26,13 @@
  * The browser BarcodeDetector is used when it can read QR codes. Otherwise
  * each frame is copied off the camera and decoded here. cornerPoints are
  * in the picture's pixels, clockwise from the code's top left.
+ *
+ * Hive Keychain's one-account export:
+ *   cs77Qr.keychainAccount(text, role);
+ * text is keychain://add_account= plus { name, keys }, or that JSON alone.
+ * role is posting, active, memo, or owner. The result is
+ * { ok, name, wif, error }. error is "", "format", "plural", or "role".
+ * name is the JSON value unchanged. The page checks the Hive username.
  */
 (function (global) {
   "use strict";
@@ -2848,6 +2855,59 @@
 
   cs77Qr.Scanner = Scanner;
   cs77Qr.NO_QR = NO_QR;
+
+  // Hive WIF shape only. The checksum is checked when the page uses the key.
+  function looksLikeHiveWif(compact) {
+    return /^5[1-9A-HJ-NP-Za-km-z]{49,52}$/.test(compact);
+  }
+
+  function keychainRoleKey(keys, role) {
+    var pub;
+    var compact;
+    if (!keys || (role !== "posting" && role !== "active" && role !== "memo" && role !== "owner")) return "";
+    pub = keys[role + "Pubkey"];
+    if (typeof pub === "string" && pub.trim().charAt(0) === "@") return "";
+    if (typeof keys[role] !== "string") return "";
+    compact = keys[role].replace(/\s+/g, "");
+    if (!compact || compact.charAt(0) === "#" || compact.charAt(0) === "@") return "";
+    if (!looksLikeHiveWif(compact)) return "";
+    return compact;
+  }
+
+  // One Keychain account QR. The bulk add_accounts export is rejected.
+  function keychainAccount(text, role) {
+    var raw = String(text || "").trim();
+    var lower;
+    var prefix = "keychain://add_account=";
+    var json = "";
+    var data;
+    var keys;
+    var name;
+    var wif;
+    var empty = { ok: false, name: "", wif: "", error: "format" };
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1).trim();
+    lower = raw.toLowerCase();
+    if (lower.indexOf("keychain://add_accounts=") === 0) {
+      return { ok: false, name: "", wif: "", error: "plural" };
+    }
+    if (lower.indexOf(prefix) === 0) json = raw.slice(prefix.length);
+    else if (raw.charAt(0) === "{") json = raw;
+    else return empty;
+    try {
+      data = JSON.parse(json);
+    } catch (err) {
+      return empty;
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return empty;
+    keys = data.keys;
+    if (!keys || typeof keys !== "object" || Array.isArray(keys)) return empty;
+    name = typeof data.name === "string" ? data.name : "";
+    wif = keychainRoleKey(keys, role);
+    if (!wif) return { ok: false, name: name, wif: "", error: "role" };
+    return { ok: true, name: name, wif: wif, error: "" };
+  }
+
+  cs77Qr.keychainAccount = keychainAccount;
 
   global.cs77Qr = cs77Qr;
 })(typeof window !== "undefined" ? window : globalThis);

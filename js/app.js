@@ -8226,6 +8226,10 @@ let CS77_FILTER_LOW_REP = 20;
       if (scrollPeoplePanel(e)) return;
     }
     if (e.key !== "Escape") return;
+    if (keyQrDialogOpen()) {
+      closeKeyQrScanner();
+      return;
+    }
     if (localDataDialogOpen()) {
       hideLocalDataDialog();
       return;
@@ -8392,6 +8396,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (previous === "password" && next !== "password") {
       const keyInput = keyBlock && keyBlock.querySelector("input");
       if (keyInput) keyInput.value = "";
+      if (root.id === "loginMethod" && keyQrTarget === "login") closeKeyQrScanner();
+      if (root.id === "ownerSignMethod" && keyQrTarget === "sign") closeKeyQrScanner();
     }
     if (previous !== next) {
       const status = card && card.querySelector("[id$='Status']");
@@ -8411,6 +8417,186 @@ let CS77_FILTER_LOW_REP = 20;
         setAuthMethod(root, btn.getAttribute("data-auth-method"));
       });
     });
+  }
+
+  // Camera scan of Hive Keychain's one-account "Show QR Code" symbol.
+  // cs77Qr.keychainAccount reads the payload. This dialog fills one field.
+  let keyQrScanner = null;
+  let keyQrTarget = "";
+  let keyQrGen = 0;
+  let keyQrSeen = "";
+
+  function keyQrDialogOpen() {
+    const el = $("#keyQrOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function setKeyQrStatus(message, isError) {
+    const status = $("#keyQrStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function stopKeyQrCamera() {
+    const scanner = keyQrScanner;
+    keyQrScanner = null;
+    if (scanner) {
+      try {
+        scanner.destroy();
+      } catch (err) {
+        /* already closed */
+      }
+    }
+    const video = $("#keyQrVideo");
+    if (video) {
+      try {
+        video.pause();
+      } catch (err) {
+        /* not playing */
+      }
+      video.srcObject = null;
+    }
+  }
+
+  function closeKeyQrScanner() {
+    keyQrGen += 1;
+    keyQrTarget = "";
+    keyQrSeen = "";
+    stopKeyQrCamera();
+    setKeyQrStatus("", false);
+    hideDialog($("#keyQrOverlay"));
+  }
+
+  function keyQrFingerprint(text) {
+    const value = String(text || "");
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) hash = (Math.imul(hash, 31) + value.charCodeAt(i)) | 0;
+    return String(hash) + ":" + value.length;
+  }
+
+  function applyKeychainAccountQr(target, text) {
+    const Qr = window.cs77Qr;
+    const role =
+      target === "sign" && ownerSignSession ? ownerSignRoleName(ownerSignSession.authority) : "posting";
+    const parsed = Qr && typeof Qr.keychainAccount === "function" ? Qr.keychainAccount(text, role) : null;
+    if (!parsed || parsed.error === "format") {
+      return { ok: false, message: "That is not a Hive Keychain account QR code." };
+    }
+    if (parsed.error === "plural") {
+      return { ok: false, message: "Scan the QR code for one account." };
+    }
+    const name = normalizeLoginUser(parsed.name);
+    if (!validLoginUser(name)) {
+      return { ok: false, message: "That QR code has no username." };
+    }
+    if (target === "sign") {
+      const wanted = normalizeLoginUser(
+        (ownerSignSession && ownerSignSession.name) || ($("#ownerSignUser") && $("#ownerSignUser").value)
+      );
+      if (!ownerSignSession || !ownerSignOpen() || wanted !== name) {
+        const message = "That QR code is for @" + name + ".";
+        setOwnerSignStatus(message, true);
+        return { ok: false, message: message };
+      }
+      if (!parsed.ok || !parsed.wif) {
+        const message = "That QR code has no " + role + " key.";
+        setOwnerSignStatus(message, true);
+        return { ok: false, message: message };
+      }
+      const input = $("#ownerSignKey");
+      if (input) input.value = parsed.wif;
+      setOwnerSignStatus("", false);
+      return { ok: true };
+    }
+    if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
+    const user = $("#loginUser");
+    if (user) user.value = name;
+    resetLoginMasterPrompt();
+    const key = $("#loginKey");
+    const status = $("#loginStatus");
+    if (!parsed.ok || !parsed.wif) {
+      if (key) key.value = "";
+      if (status) status.textContent = "That QR code has no posting key.";
+      return { ok: false, message: "That QR code has no posting key." };
+    }
+    if (key) key.value = parsed.wif;
+    if (status) status.textContent = "";
+    return { ok: true };
+  }
+
+  function onKeyQrHit(target, hit) {
+    if (!keyQrDialogOpen() || keyQrTarget !== target) return;
+    const text = String((hit && hit.data) || "");
+    const seen = keyQrFingerprint(text);
+    if (seen === keyQrSeen) return;
+    keyQrSeen = seen;
+    const result = applyKeychainAccountQr(target, text);
+    if (result.ok) {
+      closeKeyQrScanner();
+      return;
+    }
+    setKeyQrStatus(result.message, true);
+  }
+
+  async function openKeyQrScanner(target) {
+    const el = $("#keyQrOverlay");
+    const video = $("#keyQrVideo");
+    if (!el || !video) return;
+    if (target === "login") {
+      if (loginBusy || !overlay || overlay.hidden || authMethod($("#loginMethod")) !== "password") return;
+    } else if (target === "sign") {
+      if (ownerSignBusy || !ownerSignOpen() || authMethod($("#ownerSignMethod")) !== "password") return;
+    } else return;
+    const gen = ++keyQrGen;
+    stopKeyQrCamera();
+    keyQrTarget = target;
+    keyQrSeen = "";
+    setKeyQrStatus("Starting the camera…", false);
+    const focusFrom = document.activeElement;
+    el.hidden = false;
+    focusDialog(el, focusFrom);
+    let Qr;
+    try {
+      Qr = await loadQrScript();
+    } catch (err) {
+      if (gen !== keyQrGen) return;
+      setKeyQrStatus((err && err.message) || "Could not load the QR code library.", true);
+      return;
+    }
+    if (gen !== keyQrGen || !keyQrDialogOpen()) return;
+    if (!Qr || typeof Qr.Scanner !== "function") {
+      setKeyQrStatus("Could not open the QR scanner.", true);
+      return;
+    }
+    let scanner;
+    try {
+      scanner = new Qr.Scanner(video, (found) => onKeyQrHit(target, found), {
+        preferredCamera: "environment",
+      });
+    } catch (err) {
+      if (gen !== keyQrGen) return;
+      setKeyQrStatus((err && err.message) || "Could not open the QR scanner.", true);
+      return;
+    }
+    if (gen !== keyQrGen) {
+      try {
+        scanner.destroy();
+      } catch (err) {
+        /* closed */
+      }
+      return;
+    }
+    keyQrScanner = scanner;
+    try {
+      await scanner.start();
+    } catch (err) {
+      if (gen !== keyQrGen) return;
+      setKeyQrStatus((err && err.message) || "Could not open the camera.", true);
+      return;
+    }
+    if (gen !== keyQrGen) return;
+    setKeyQrStatus("", false);
   }
 
   let loginMasterArmed = false;
@@ -8444,6 +8630,7 @@ let CS77_FILTER_LOW_REP = 20;
   let loginBusy = false;
 
   function closeLogin() {
+    if (keyQrTarget === "login") closeKeyQrScanner();
     hideDialog(overlay);
     pendingPublish = false;
     pendingCrossPost = null;
@@ -21348,7 +21535,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // qr.js stays unloaded until a QR is asked for. The same helper draws a
   // lightning invoice, a lightning LNURL, or a web address, and can scan one.
-  const QR_SCRIPT = "/js/qr.js?v=0.22.0";
+  const QR_SCRIPT = "/js/qr.js?v=0.22.1";
   let qrScriptPromise = null;
 
   function loadQrScript() {
@@ -33434,6 +33621,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function hideOwnerSign() {
+    if (keyQrTarget === "sign") closeKeyQrScanner();
     hideDialog($("#ownerSignOverlay"));
     const key = $("#ownerSignKey");
     if (key) key.value = "";
@@ -41810,6 +41998,21 @@ let CS77_FILTER_LOW_REP = 20;
     }
     bindAuthMethod($("#loginMethod"));
     bindAuthMethod($("#ownerSignMethod"));
+    const loginScanQr = $("#loginScanQr");
+    const ownerSignScanQr = $("#ownerSignScanQr");
+    const keyQrClose = $("#keyQrClose");
+    const keyQrOverlay = $("#keyQrOverlay");
+    if (loginScanQr) loginScanQr.addEventListener("click", () => openKeyQrScanner("login"));
+    if (ownerSignScanQr) ownerSignScanQr.addEventListener("click", () => openKeyQrScanner("sign"));
+    if (keyQrClose) keyQrClose.addEventListener("click", closeKeyQrScanner);
+    if (keyQrOverlay) {
+      keyQrOverlay.addEventListener("click", (e) => {
+        if (e.target !== keyQrOverlay) return;
+        const active = document.activeElement;
+        if (active && keyQrOverlay.contains(active)) return;
+        closeKeyQrScanner();
+      });
+    }
     const ownerSignConnect = $("#ownerSignConnect");
     const ownerSignCancel = $("#ownerSignCancel");
     const ownerSignKey = $("#ownerSignKey");

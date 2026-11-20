@@ -6852,6 +6852,97 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   width: min(32rem, 100%);
 }
 
+/* Above login and the sign dialog so a scan can sit on either one. */
+#keyQrOverlay {
+  z-index: 70;
+}
+
+.auth-key-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+#loginKeyBlock .auth-key-row input,
+#ownerSignKeyBlock .auth-key-row input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.auth-scan-qr {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.auth-scan-qr svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.auth-scan-qr:hover,
+.auth-scan-qr:focus-visible {
+  color: var(--yellow);
+  border-color: var(--red-bright);
+}
+
+.auth-scan-qr:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.key-qr-view {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  max-height: 18rem;
+  margin-bottom: 0.85rem;
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.key-qr-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.key-qr-view::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  top: 18%;
+  width: 64%;
+  height: 64%;
+  border: 1px solid var(--yellow);
+  border-radius: 0.35rem;
+  pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
+}
+
+#keyQrStatus:empty {
+  display: none;
+}
+
+#keyQrStatus.is-error {
+  color: var(--red-bright);
+}
+
 /* Above the publish composer so Publish can ask for a session without closing it. */
 #loginOverlay {
   z-index: 55;
@@ -9262,11 +9353,41 @@ body:has(#lightningOverlay:not([hidden])) {
     margin-bottom: 0;
   }
 
+  #keyQrOverlay {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+  }
+
+  #keyQrOverlay .overlay-card.viewport-sheet {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    overflow: hidden;
+    padding-top: max(1.75rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  #keyQrOverlay .key-qr-view {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 12rem;
+    max-height: none;
+    aspect-ratio: auto;
+  }
+
   /* A border on these sheets is a line against the viewport. Poll votes stay framed. */
   #peopleOverlay .people-card.viewport-sheet,
   #publishOverlay .publish-card.viewport-sheet,
   #zapOverlay .overlay-card.viewport-sheet,
   #lightningOverlay .overlay-card.viewport-sheet,
+  #keyQrOverlay .overlay-card.viewport-sheet,
   .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
