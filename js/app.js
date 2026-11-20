@@ -19657,7 +19657,7 @@ let CS77_FILTER_LOW_REP = 20;
         "Own your voice. Create, earn, and connect without censorship, gatekeepers, and algos.",
       image:
         (image && String(image.getAttribute("content") || "").trim()) ||
-        "/assets/cyberspace77.png",
+        "https://cyberspace77.com/assets/cyberspace77.jpg",
     };
     return metaDefaults;
   }
