@@ -119,6 +119,10 @@
     return idbRequest("readwrite", (store) => store.delete(id));
   }
 
+  function idbAll() {
+    return idbRequest("readonly", (store) => store.getAll()).then((rows) => rows || []);
+  }
+
   function validStoredName(name) {
     return global.HiveApi.validAccountName(name);
   }
@@ -348,6 +352,75 @@
 
   async function persist(username, bytes) {
     await persistRole("posting", username, bytes);
+  }
+
+  function storedRoleOf(row) {
+    if (row && STORED_KEY_ROLES.indexOf(row.role) >= 0) return row.role;
+    const id = String((row && row.id) || "");
+    const colon = id.indexOf(":");
+    if (colon < 1) return "";
+    const role = id.slice(0, colon);
+    return STORED_KEY_ROLES.indexOf(role) >= 0 ? role : "";
+  }
+
+  // Roles saved in this browser. No key bytes.
+  async function listStoredKeys() {
+    const rows = await idbAll();
+    const order = { posting: 0, active: 1, memo: 2 };
+    const out = [];
+    const seen = {};
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const role = storedRoleOf(row);
+      if (!role || !recordWrapped(row)) continue;
+      const name = accountName(row.username || String(row.id || "").slice(role.length + 1));
+      if (!validStoredName(name)) continue;
+      const key = role + ":" + name;
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push({ username: name, role: role });
+    }
+    out.sort((a, b) => {
+      if (a.username !== b.username) return a.username < b.username ? -1 : 1;
+      return order[a.role] - order[b.role];
+    });
+    return out;
+  }
+
+  // One stored private key, as a WIF, for a QR code. Empty when it is missing.
+  async function storedKeyWif(username, role) {
+    let roleName = "";
+    try {
+      roleName = normalizeRole(role);
+    } catch {
+      return "";
+    }
+    if (STORED_KEY_ROLES.indexOf(roleName) < 0) return "";
+    const name = accountName(username);
+    if (!validStoredName(name)) return "";
+    let record = null;
+    try {
+      record = await idbGet(recordId(roleName, name));
+    } catch {
+      return "";
+    }
+    if (!recordWrapped(record)) return "";
+    let bytes = null;
+    try {
+      bytes = await unwrapBytes(record);
+      if (!bytes || bytes.length !== 32) return "";
+      const lib = await loadHiveTx();
+      const pk = lib.PrivateKey.from(bytes);
+      try {
+        return pk.toString();
+      } finally {
+        if (pk.key && pk.key !== bytes) wipe(pk.key);
+      }
+    } catch {
+      return "";
+    } finally {
+      wipe(bytes);
+    }
   }
 
   async function checkedPostingKey(username, wif) {
@@ -983,6 +1056,8 @@
     login,
     clear,
     hasKey,
+    listStoredKeys,
+    storedKeyWif,
     saveNwc,
     readNwc,
     clearNwc,

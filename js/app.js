@@ -37853,6 +37853,11 @@ let CS77_FILTER_LOW_REP = 20;
       `;
     }).join("");
     return `
+      <section class="settings-stored-keys" id="settingsStoredKeys">
+        <h2 class="settings-section-title settings-section-line"><span>Stored keys</span></h2>
+        <p class="settings-note">Saved in this browser.</p>
+        <div id="settingsStoredKeysList"></div>
+      </section>
       <form class="settings-form" id="settingsKeysForm" autocomplete="off">
         <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
         <p class="settings-note">Generate the Owner, Active, Memo and  Posting key locally from the master password.</p>
@@ -38040,12 +38045,13 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function openSettingsKeyQr(button) {
+    const storedUser = button.getAttribute("data-settings-stored-user") || "";
     const id = button.getAttribute("data-settings-key-qr") || "";
     const role = button.getAttribute("data-settings-key-role") || "";
-    const input = document.getElementById(id);
+    const input = storedUser ? null : document.getElementById(id);
     const el = $("#settingsKeyQrOverlay");
     const box = $("#settingsKeyQrCode");
-    if (!el || !box || !input) return;
+    if (!el || !box || (!storedUser && !input)) return;
     if (settingsKeyQrOpen() && button.classList.contains("is-open")) {
       closeSettingsKeyQr();
       return;
@@ -38063,15 +38069,28 @@ let CS77_FILTER_LOW_REP = 20;
     const focusFrom = document.activeElement;
     el.hidden = false;
     focusDialog(el, focusFrom);
+    let wif = "";
     try {
       const Qr = await loadQrScript();
       if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
-      const wif = Qr && typeof Qr.privateKeyText === "function" ? Qr.privateKeyText(input.value) : "";
+      if (storedUser) {
+        if (!window.cs77Auth || typeof cs77Auth.storedKeyWif !== "function") {
+          throw new Error("Could not make a QR code.");
+        }
+        wif = await cs77Auth.storedKeyWif(storedUser, role);
+        if (look !== settingsKeyQrLook || !settingsKeyQrOpen() || !button.isConnected) return;
+      } else {
+        wif = input.value;
+      }
+      wif = Qr && typeof Qr.privateKeyText === "function" ? Qr.privateKeyText(wif) : "";
       if (!wif) throw new Error("Could not make a QR code.");
       const svg = await renderQrCode(wif);
-      if (look !== settingsKeyQrLook || !settingsKeyQrOpen() || !input.isConnected) return;
-      const still = Qr.privateKeyText(input.value);
-      if (still !== wif) return;
+      if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
+      if (storedUser) {
+        if (!button.isConnected) return;
+      } else if (!input.isConnected || Qr.privateKeyText(input.value) !== wif) {
+        return;
+      }
       svg.setAttribute("aria-label", label);
       box.replaceChildren(svg);
       setSettingsKeyQrCaption(label, false);
@@ -38079,7 +38098,78 @@ let CS77_FILTER_LOW_REP = 20;
       if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
       box.replaceChildren();
       setSettingsKeyQrCaption((err && err.message) || "Could not make a QR code.", true);
+    } finally {
+      wif = "";
     }
+  }
+
+  let settingsStoredLook = 0;
+
+  function settingsStoredRoleLabel(role) {
+    if (role === "posting" || role === "active" || role === "memo") {
+      return role.charAt(0).toUpperCase() + role.slice(1);
+    }
+    return "";
+  }
+
+  function settingsStoredEmpty(box, text) {
+    const note = document.createElement("p");
+    note.className = "settings-note";
+    note.id = "settingsStoredKeysEmpty";
+    note.textContent = text;
+    box.replaceChildren(note);
+  }
+
+  async function paintSettingsStoredKeys() {
+    const look = ++settingsStoredLook;
+    const box = $("#settingsStoredKeysList");
+    if (!box) return;
+    settingsStoredEmpty(box, "Checking this browser…");
+    let rows = null;
+    let failed = false;
+    try {
+      if (!window.cs77Auth || typeof cs77Auth.listStoredKeys !== "function") {
+        throw new Error("Could not read the stored keys.");
+      }
+      rows = await cs77Auth.listStoredKeys();
+    } catch {
+      failed = true;
+    }
+    if (look !== settingsStoredLook || !box.isConnected) return;
+    if (failed) {
+      settingsStoredEmpty(box, "Could not read the stored keys.");
+      return;
+    }
+    const list = document.createElement("ul");
+    list.className = "settings-stored-list";
+    (rows || []).forEach((row) => {
+      const roleName = settingsStoredRoleLabel(row && row.role);
+      const user = normalizeLoginUser(row && row.username);
+      if (!roleName || !validLoginUser(user)) return;
+      const item = document.createElement("li");
+      item.className = "settings-stored-key";
+      const role = document.createElement("span");
+      role.className = "settings-stored-key-role";
+      role.textContent = roleName;
+      const who = document.createElement("span");
+      who.className = "settings-stored-key-user";
+      who.textContent = "@" + user;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "settings-key-qr";
+      btn.setAttribute("data-settings-stored-user", user);
+      btn.setAttribute("data-settings-key-role", row.role);
+      btn.setAttribute("aria-label", roleName + " key QR code for @" + user);
+      btn.setAttribute("aria-pressed", "false");
+      btn.innerHTML = profileQrMarkSvg();
+      item.append(role, who, btn);
+      list.appendChild(item);
+    });
+    if (!list.childElementCount) {
+      settingsStoredEmpty(box, "None");
+      return;
+    }
+    box.replaceChildren(list);
   }
 
   function bindSettingsKeys() {
@@ -38101,6 +38191,16 @@ let CS77_FILTER_LOW_REP = 20;
         openSettingsKeyQr(qrBtn);
       });
     }
+    const stored = $("#settingsStoredKeys");
+    if (stored) {
+      stored.addEventListener("click", (e) => {
+        const qrBtn = e.target.closest("[data-settings-stored-user]");
+        if (!qrBtn || !stored.contains(qrBtn)) return;
+        e.preventDefault();
+        openSettingsKeyQr(qrBtn);
+      });
+    }
+    paintSettingsStoredKeys();
     if (clear) {
       clear.addEventListener("click", () => {
         clearSettingsKeys();

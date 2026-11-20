@@ -10349,7 +10349,8 @@ min-height: 0;
   cursor: default;
 }
 
-#settingsKeysForm h2.settings-section-line {
+#settingsKeysForm h2.settings-section-line,
+#settingsStoredKeys h2.settings-section-line {
   display: flex;
   align-items: center;
   gap: 0.85rem;
@@ -10363,15 +10364,59 @@ min-height: 0;
   line-height: 1.45;
 }
 
-#settingsKeysForm h2.settings-section-line span {
+#settingsKeysForm h2.settings-section-line span,
+#settingsStoredKeys h2.settings-section-line span {
   white-space: nowrap;
 }
 
-#settingsKeysForm h2.settings-section-line::after {
+#settingsKeysForm h2.settings-section-line::after,
+#settingsStoredKeys h2.settings-section-line::after {
   content: "";
   flex: 1 1 auto;
   height: 0;
   border-top: 1px solid #fff;
+}
+
+.settings-stored-keys {
+  max-width: 36rem;
+  margin-bottom: 2.35rem;
+}
+
+.settings-stored-list {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+}
+
+.settings-stored-key {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.7rem;
+}
+
+.settings-stored-key:last-child {
+  margin-bottom: 0;
+}
+
+.settings-stored-key-role {
+  flex: 0 0 5.5rem;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+.settings-stored-key-user {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--yellow);
+}
+
+#settingsStoredKeysList > .settings-note {
+  margin-top: 0.85rem;
 }
 
 .settings-keys-hint {
