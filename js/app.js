@@ -38461,25 +38461,47 @@ let CS77_FILTER_LOW_REP = 20;
     return settingsKeyWeight(account[role], pub) > 0;
   }
 
-  function settingsOwnerWaitMs(account) {
-    const raw = String((account && account.last_owner_update) || "").trim();
-    if (!raw) return 0;
-    const stamp = /z$/i.test(raw) ? raw : raw + "Z";
+  function settingsOwnerStampMs(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return NaN;
+    const stamp = /z$/i.test(text) ? text : text + "Z";
     const ms = Date.parse(stamp);
-    if (!Number.isFinite(ms)) return 0;
-    return Math.max(0, ms + 60 * 60 * 1000 - Date.now());
+    return Number.isFinite(ms) ? ms : NaN;
+  }
+
+  // HF26 allows two owner updates an hour. Another update is accepted while
+  // either timestamp is older than that hour. Both inside the hour wait until
+  // the older one leaves it.
+  function settingsOwnerWaitMs(account) {
+    const limit = 60 * 60 * 1000;
+    const now = Date.now();
+    const stamps = [
+      settingsOwnerStampMs(account && account.last_owner_update),
+      settingsOwnerStampMs(account && account.previous_owner_update),
+    ];
+    let soonest = 0;
+    let inside = 0;
+    for (let i = 0; i < stamps.length; i++) {
+      if (!Number.isFinite(stamps[i])) continue;
+      const left = stamps[i] + limit - now;
+      if (left <= 0) return 0;
+      inside += 1;
+      if (!soonest || left < soonest) soonest = left;
+    }
+    if (inside < 2) return 0;
+    return soonest;
   }
 
   function settingsOwnerWaitText(ms) {
     const minutes = Math.max(1, Math.ceil(ms / 60000));
     const unit = minutes === 1 ? "minute" : "minutes";
-    return "The owner key can be changed once an hour. Try again in " + minutes + " " + unit + ".";
+    return "The owner key can be changed twice an hour. Try again in " + minutes + " " + unit + ".";
   }
 
   function settingsPasswordErrorText(err) {
     const message = (err && err.message) || "Could not change the password.";
-    if (/owner authority can only be updated once/i.test(message) || /owner_update_limit/i.test(message)) {
-      return "The owner key can be changed once an hour. Try again later.";
+    if (/owner authority can only be updated (?:once|twice) an hour/i.test(message) || /owner_update_limit/i.test(message)) {
+      return "The owner key can be changed twice an hour. Try again later.";
     }
     return message;
   }
@@ -38496,7 +38518,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // Empty metadata strings do not clear the profile. Account authorities
   // stay, and the new key is the only private key on that role. The owner
-  // key signs this. Hive accepts an owner change once an hour.
+  // key signs this. Hive accepts two owner changes an hour.
   function settingsPasswordOperation(user, keys, account) {
     return [
       "account_update2",
