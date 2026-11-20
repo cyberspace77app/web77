@@ -10558,7 +10558,7 @@ min-height: 0;
 }
 
 #settingsPasswordForm .cyber-toggle {
-  margin-top: 0.15rem;
+  margin: 0.15rem 0 1.15rem;
 }
 
 #settingsPasswordWarn {
