@@ -56,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.22.8">
+  <link rel="stylesheet" href="/css/style.css?v=0.22.9">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -245,9 +245,9 @@
   </div>
 
   <div class="overlay" id="keyQrOverlay" hidden>
-    <div class="panel overlay-card login-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="keyQrTitle">
+    <div class="panel overlay-card dialog-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="keyQrTitle">
       <h2 id="keyQrTitle">Scan QR code</h2>
-      <p class="login-lead">Point the camera at a Keychain account or CyberSpace private key QR code.</p>
+      <p class="dialog-lead">Point the camera at a Keychain account or CyberSpace private key QR code.</p>
       <div class="key-qr-view">
         <video id="keyQrVideo" playsinline muted></video>
       </div>
@@ -259,17 +259,17 @@
   </div>
 
   <div class="overlay" id="loginOverlay" hidden>
-    <div class="panel overlay-card login-card">
+    <div class="panel overlay-card dialog-card">
       <h2>Login</h2>
-      <p class="login-lead">Use hive keychain (recommended) or enter your posting key.</p>
-      <div class="login-method" id="loginMethod" data-auth-switch role="group" aria-label="Sign-in method">
+      <p class="dialog-lead">Use hive keychain (recommended) or enter your posting key.</p>
+      <div class="dialog-method" id="loginMethod" data-auth-switch role="group" aria-label="Sign-in method">
         <button type="button" data-auth-method="keychain" class="is-active" aria-pressed="true">Keychain</button>
         <button type="button" data-auth-method="password" aria-pressed="false">Password</button>
       </div>
-      <label class="login-label" for="loginUser">Username</label>
+      <label class="dialog-label" for="loginUser">Username</label>
       <input id="loginUser" type="text" autocomplete="username" placeholder="username" spellcheck="false" autocapitalize="off">
       <div id="loginKeyBlock" data-auth-key hidden>
-        <label class="login-label" for="loginKey">Posting key</label>
+        <label class="dialog-label" for="loginKey">Posting key</label>
         <div class="auth-key-row">
           <input id="loginKey" type="password" autocomplete="off" placeholder="posting key" spellcheck="false">
           <button type="button" class="auth-scan-qr" id="loginScanQr" aria-label="Scan QR code">
@@ -307,17 +307,17 @@
   </div>
 
   <div class="overlay" id="ownerSignOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="ownerSignTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="ownerSignTitle">
       <h2 id="ownerSignTitle">Sign owner settings</h2>
-      <p class="login-lead" id="ownerSignLead">Use hive keychain (recommended) or enter the posting key of this subspace account.</p>
-      <div class="login-method" id="ownerSignMethod" data-auth-switch role="group" aria-label="Sign method">
+      <p class="dialog-lead" id="ownerSignLead">Use hive keychain (recommended) or enter the posting key of this subspace account.</p>
+      <div class="dialog-method" id="ownerSignMethod" data-auth-switch role="group" aria-label="Sign method">
         <button type="button" data-auth-method="keychain" class="is-active" aria-pressed="true">Keychain</button>
         <button type="button" data-auth-method="password" aria-pressed="false">Password</button>
       </div>
-      <label class="login-label" for="ownerSignUser">Account</label>
+      <label class="dialog-label" for="ownerSignUser">Account</label>
       <input id="ownerSignUser" type="text" readonly autocomplete="off" spellcheck="false">
       <div id="ownerSignKeyBlock" data-auth-key hidden>
-        <label class="login-label" for="ownerSignKey" id="ownerSignKeyLabel">Posting key</label>
+        <label class="dialog-label" for="ownerSignKey" id="ownerSignKeyLabel">Posting key</label>
         <div class="auth-key-row">
           <input id="ownerSignKey" type="password" autocomplete="off" placeholder="posting key" spellcheck="false">
           <button type="button" class="auth-scan-qr" id="ownerSignScanQr" aria-label="Scan QR code">
@@ -352,12 +352,12 @@
   </div>
 
   <div class="overlay" id="communityRoleOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="communityRoleTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="communityRoleTitle">
       <h2 id="communityRoleTitle">Change role</h2>
-      <p class="login-lead" id="communityRoleLead">Choose a role. Guest removes the account from the team.</p>
-      <label class="login-label" for="communityRoleUser">Username</label>
+      <p class="dialog-lead" id="communityRoleLead">Choose a role. Guest removes the account from the team.</p>
+      <label class="dialog-label" for="communityRoleUser">Username</label>
       <input id="communityRoleUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
-      <label class="login-label" for="communityRoleSelect">Role</label>
+      <label class="dialog-label" for="communityRoleSelect">Role</label>
       <select id="communityRoleSelect"></select>
       <p class="dialog-hint" id="communityRoleHint"></p>
       <p id="communityRoleStatus"></p>
@@ -369,12 +369,12 @@
   </div>
 
   <div class="overlay" id="communityTitleOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="communityTitleHeading">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="communityTitleHeading">
       <h2 id="communityTitleHeading">Role title</h2>
-      <p class="login-lead">Shown beside the username. Leave it empty to clear it.</p>
-      <label class="login-label" for="communityTitleUser">Username</label>
+      <p class="dialog-lead">Shown beside the username. Leave it empty to clear it.</p>
+      <label class="dialog-label" for="communityTitleUser">Username</label>
       <input id="communityTitleUser" type="text" readonly autocomplete="off" spellcheck="false">
-      <label class="login-label" for="communityTitleInput">Title</label>
+      <label class="dialog-label" for="communityTitleInput">Title</label>
       <input id="communityTitleInput" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="title">
       <p class="dialog-hint">Up to 32 characters.</p>
       <p id="communityTitleStatus"></p>
@@ -386,19 +386,19 @@
   </div>
 
   <div class="overlay" id="lightningOverlay" hidden>
-    <div class="panel overlay-card login-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="lightningTitle">
+    <div class="panel overlay-card dialog-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="lightningTitle">
       <h2 id="lightningTitle">Add Bitcoin Lightning</h2>
-      <p class="login-lead" id="lightningLead">Link a Bitcoin Lightning address to your profile so that anyone with a Lightning wallet can zap you.</p>
-      <label class="login-label" for="lightningAddress">Lightning address</label>
+      <p class="dialog-lead" id="lightningLead">Link a Bitcoin Lightning address to your profile so that anyone with a Lightning wallet can zap you.</p>
+      <label class="dialog-label" for="lightningAddress">Lightning address</label>
       <input id="lightningAddress" type="text" inputmode="email" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="254" placeholder="username@v4v.app">
       <p class="settings-note" id="lightningAddressNote">Saved in your profile.<span id="lightningDefaultWallet"> Default wallet: <a href="https://v4v.app/" target="_blank" rel="noopener noreferrer">v4v.app</a></span></p>
       <h2 class="settings-section-title settings-section-line" id="lightningZapTitle"><span>Zap settings</span></h2>
       <p class="settings-note">Zapping requires a nostr wallet connection, or the alby extension, or an external Lightning wallet.</p>
-      <label class="login-label" for="zapNwc">Nostr wallet connect</label>
+      <label class="dialog-label" for="zapNwc">Nostr wallet connect</label>
       <input id="zapNwc" type="text" autocomplete="off" autocorrect="off" spellcheck="false" autocapitalize="off" placeholder="nostr+walletconnect://">
       <p class="settings-note zap-nwc-hint" id="zapNwcHint"><span id="zapNwcHintText">Optional. Saved in this browser.</span><button type="button" id="zapNwcClear" hidden>Clear</button></p>
       <div id="zapSingleTapFields">
-        <label class="login-label" for="zapSingleTapAmount">Default amount</label>
+        <label class="dialog-label" for="zapSingleTapAmount">Default amount</label>
         <div class="zap-single-tap-amount">
           <input id="zapSingleTapAmount" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="21" aria-label="Default amount">
           <select id="zapSingleTapUnit" aria-label="Unit">
@@ -407,7 +407,7 @@
             <option value="hbd">hbd</option>
           </select>
         </div>
-        <label class="login-label" for="zapSingleTapNote">Default note</label>
+        <label class="dialog-label" for="zapSingleTapNote">Default note</label>
         <input id="zapSingleTapNote" type="text" maxlength="250" autocomplete="off" spellcheck="false" aria-label="Default note" placeholder="Use app default">
       </div>
       <label class="cyber-toggle zap-single-tap-toggle">
@@ -426,11 +426,11 @@
   </div>
 
   <div class="overlay" id="zapOverlay" hidden>
-    <div class="panel overlay-card login-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="zapTitle">
+    <div class="panel overlay-card dialog-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="zapTitle">
       <h2 id="zapTitle">Zap</h2>
-      <p class="login-lead" id="zapLead">Send 21 sats to @username.</p>
+      <p class="dialog-lead" id="zapLead">Send 21 sats to @username.</p>
       <p class="zap-address" id="zapAddress" hidden><span class="zap-btc" aria-hidden="true">&#x20BF;</span><span id="zapAddressText"></span></p>
-      <div class="login-method" id="zapAsset" role="group" aria-label="Currency">
+      <div class="dialog-method" id="zapAsset" role="group" aria-label="Currency">
         <button type="button" data-zap-asset="ln" class="is-active" aria-pressed="true">lightning</button>
         <button type="button" data-zap-asset="hive" aria-pressed="false">hive</button>
         <button type="button" data-zap-asset="hbd" aria-pressed="false">hbd</button>
@@ -438,14 +438,14 @@
       <p class="dialog-hint" id="zapLnMissing" hidden>This user has not added a Bitcoin Lightning address yet.</p>
       <div id="zapAmountBlock">
         <div class="zap-choices" id="zapChoices" role="group" aria-label="Amount"></div>
-        <label class="login-label" for="zapCustom" id="zapCustomLabel">Custom amount</label>
+        <label class="dialog-label" for="zapCustom" id="zapCustomLabel">Custom amount</label>
         <div class="wallet-amount-row">
           <div class="send-amount-field">
             <input id="zapCustom" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="0" aria-label="Custom amount">
             <span id="zapCustomUnit" class="send-amount-unit">sats</span>
           </div>
         </div>
-        <label class="login-label" for="zapNote">Note</label>
+        <label class="dialog-label" for="zapNote">Note</label>
         <input id="zapNote" type="text" maxlength="250" autocomplete="off" spellcheck="false" placeholder="note">
       </div>
       <div id="zapWalletFallback" hidden>
@@ -478,9 +478,9 @@
   </div>
 
   <div class="overlay" id="zapPayOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="zapPayTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="zapPayTitle">
       <h2 id="zapPayTitle">Payment</h2>
-      <p class="login-lead" id="zapPayLead">Was the payment successful?</p>
+      <p class="dialog-lead" id="zapPayLead">Was the payment successful?</p>
       <p class="dialog-hint" id="zapPayNote" hidden></p>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="zapPayYes">Yes</button>
@@ -490,10 +490,10 @@
   </div>
 
   <div class="overlay" id="walletOverlay" hidden>
-    <div class="panel overlay-card login-card">
+    <div class="panel overlay-card dialog-card">
       <h2 id="walletOpTitle">Stake hive</h2>
-      <p class="login-lead" id="walletOpLead"></p>
-      <label class="login-label" for="walletAmount">Amount</label>
+      <p class="dialog-lead" id="walletOpLead"></p>
+      <label class="dialog-label" for="walletAmount">Amount</label>
       <div class="wallet-amount-row">
         <input id="walletAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false" aria-describedby="walletOpAvailable">
         <button type="button" class="btn-ghost" id="walletOpMax">Max</button>
@@ -508,18 +508,18 @@
   </div>
 
   <div class="overlay" id="sendOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="sendTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="sendTitle">
       <h2 id="sendTitle">Send crypto</h2>
-      <p class="login-lead" id="sendLead">Send hive or hbd to a hive account.</p>
-      <div class="login-method" id="sendAsset" role="group" aria-label="Asset">
+      <p class="dialog-lead" id="sendLead">Send hive or hbd to a hive account.</p>
+      <div class="dialog-method" id="sendAsset" role="group" aria-label="Asset">
         <button type="button" data-send-asset="hive" class="is-active" aria-pressed="true">hive</button>
         <button type="button" data-send-asset="hbd" aria-pressed="false">hbd</button>
       </div>
-      <label class="login-label" for="sendFrom">From</label>
+      <label class="dialog-label" for="sendFrom">From</label>
       <input id="sendFrom" type="text" readonly autocomplete="off" spellcheck="false" autocapitalize="off">
-      <label class="login-label" for="sendTo">To</label>
+      <label class="dialog-label" for="sendTo">To</label>
       <input id="sendTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
-      <label class="login-label" for="sendAmount">Amount</label>
+      <label class="dialog-label" for="sendAmount">Amount</label>
       <div class="wallet-amount-row">
         <div class="send-amount-field">
           <input id="sendAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false" aria-describedby="sendAvailable">
@@ -528,7 +528,7 @@
         <button type="button" class="btn-ghost" id="sendMax">Max</button>
       </div>
       <p class="dialog-hint" id="sendAvailable"></p>
-      <label class="login-label" for="sendMemo">Memo</label>
+      <label class="dialog-label" for="sendMemo">Memo</label>
       <div class="send-memo-field">
         <input id="sendMemo" type="text" maxlength="2047" autocomplete="off" spellcheck="false" placeholder="memo">
         <button type="button" id="sendMemoLock" class="send-memo-lock" aria-pressed="false" aria-label="Encrypt memo"></button>
@@ -542,15 +542,15 @@
   </div>
 
   <div class="overlay" id="convertOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="convertTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="convertTitle">
       <h2 id="convertTitle">Convert hbd</h2>
-      <p class="login-lead" id="convertLead">Convert hbd into hive.</p>
-      <div class="login-method" id="convertAsset" role="group" aria-label="Conversion">
+      <p class="dialog-lead" id="convertLead">Convert hbd into hive.</p>
+      <div class="dialog-method" id="convertAsset" role="group" aria-label="Conversion">
         <button type="button" data-convert-asset="hbd" class="is-active" aria-pressed="true">hbd→hive</button>
         <button type="button" data-convert-asset="hive" aria-pressed="false">hive→hbd</button>
       </div>
       <p class="dialog-hint" id="convertNote">hbd converts to hive after 3.5 days. The hive amount is the median price when the conversion completes.</p>
-      <label class="login-label" for="convertAmount">Amount</label>
+      <label class="dialog-label" for="convertAmount">Amount</label>
       <div class="wallet-amount-row">
         <div class="send-amount-field">
           <input id="convertAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false" aria-describedby="convertAvailable">
@@ -568,10 +568,10 @@
   </div>
 
   <div class="overlay" id="claimTokensOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="claimTokensTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="claimTokensTitle">
       <h2 id="claimTokensTitle">Claim account tokens</h2>
-      <p class="login-lead" id="claimTokensLead">Claim account creation tokens with resource credits.</p>
-      <label class="login-label" for="claimTokensAmount">Tokens</label>
+      <p class="dialog-lead" id="claimTokensLead">Claim account creation tokens with resource credits.</p>
+      <label class="dialog-label" for="claimTokensAmount">Tokens</label>
       <div class="wallet-amount-row">
         <input id="claimTokensAmount" type="text" inputmode="numeric" autocomplete="off" placeholder="0" spellcheck="false" aria-describedby="claimTokensAvailable">
         <button type="button" class="btn-ghost" id="claimTokensMax">Max</button>
@@ -587,17 +587,17 @@
   </div>
 
   <div class="overlay" id="createAccountOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="createAccountTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="createAccountTitle">
       <h2 id="createAccountTitle">Create account</h2>
-      <p class="login-lead" id="createAccountLead">Create a hive account with a username and master key.</p>
-      <label class="login-label" for="createAccountName">Username</label>
+      <p class="dialog-lead" id="createAccountLead">Create a hive account with a username and master key.</p>
+      <label class="dialog-label" for="createAccountName">Username</label>
       <div class="subspace-key-line">
         <input id="createAccountName" type="text" maxlength="16" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username" aria-describedby="createAccountNameNote">
         <button type="button" class="btn-ghost btn-compact" id="createAccountNameCopy" aria-label="Copy username">Copy</button>
       </div>
       <p class="dialog-hint" id="createAccountNameNote">3 to 16 characters. Start with a letter. The username must be free.</p>
       <p class="dialog-hint subspace-name-status" id="createAccountNameStatus"></p>
-      <label class="login-label" for="createAccountKey">Master key</label>
+      <label class="dialog-label" for="createAccountKey">Master key</label>
       <div class="subspace-key-line">
         <input id="createAccountKey" type="text" readonly spellcheck="false" autocomplete="off" autocapitalize="off">
         <button type="button" class="btn-ghost btn-compact" id="createAccountCopy" aria-label="Copy master key">Copy</button>
@@ -621,9 +621,9 @@
   </div>
 
   <div class="overlay" id="rcOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="rcTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="rcTitle">
       <h2 id="rcTitle">Resource credits</h2>
-      <p class="login-lead" id="rcLead"></p>
+      <p class="dialog-lead" id="rcLead"></p>
       <p class="dialog-hint" id="rcRecharge"></p>
       <div id="rcTable"></div>
       <p class="dialog-hint" id="rcNote"></p>
@@ -635,36 +635,36 @@
   </div>
 
   <div class="overlay" id="proposalOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="proposalCreateTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="proposalCreateTitle">
       <h2 id="proposalCreateTitle">Create proposal</h2>
-      <p class="login-lead" id="proposalCreateLead">Fill the required details. There is a fee to create a proposal: 10 hbd, plus 1 hbd for each day it lasts over 60 days. The fee is paid in hbd by the creator.</p>
-      <label class="login-label" for="proposalCreateCreator">Creator</label>
+      <p class="dialog-lead" id="proposalCreateLead">Fill the required details. There is a fee to create a proposal: 10 hbd, plus 1 hbd for each day it lasts over 60 days. The fee is paid in hbd by the creator.</p>
+      <label class="dialog-label" for="proposalCreateCreator">Creator</label>
       <input id="proposalCreateCreator" type="text" readonly autocomplete="off" spellcheck="false">
-      <label class="login-label" for="proposalCreateSubject">Subject</label>
+      <label class="dialog-label" for="proposalCreateSubject">Subject</label>
       <input id="proposalCreateSubject" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="A short description">
       <p class="dialog-hint">Up to 80 characters.</p>
-      <label class="login-label" for="proposalCreatePermlink">Proposal post</label>
+      <label class="dialog-label" for="proposalCreatePermlink">Proposal post</label>
       <input id="proposalCreatePermlink" type="text" maxlength="2048" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="permlink or a post link">
       <p class="dialog-hint">The post must already exist, written by the creator or the receiver.</p>
-      <label class="login-label" for="proposalCreateDaily">Daily amount</label>
+      <label class="dialog-label" for="proposalCreateDaily">Daily amount</label>
       <input id="proposalCreateDaily" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false">
       <div id="proposalCreateDailyHint" hidden>
         <p class="dialog-hint">Can only be lowered.</p>
       </div>
-      <label class="login-label" for="proposalCreateTotal">Total if fully funded</label>
+      <label class="dialog-label" for="proposalCreateTotal">Total if fully funded</label>
       <input id="proposalCreateTotal" type="text" readonly tabindex="-1" placeholder="Fill the amount and the dates">
       <div class="proposal-create-dates">
         <div>
-          <label class="login-label" for="proposalCreateStart">Start</label>
+          <label class="dialog-label" for="proposalCreateStart">Start</label>
           <input id="proposalCreateStart" type="datetime-local" step="60">
         </div>
         <div>
-          <label class="login-label" for="proposalCreateEnd">End</label>
+          <label class="dialog-label" for="proposalCreateEnd">End</label>
           <input id="proposalCreateEnd" type="datetime-local" step="60">
         </div>
       </div>
       <p class="dialog-hint" id="proposalCreateDateHint" hidden>The start cannot be changed. The end can only be moved earlier.</p>
-      <label class="login-label" for="proposalCreateReceiver">Receiver</label>
+      <label class="dialog-label" for="proposalCreateReceiver">Receiver</label>
       <input id="proposalCreateReceiver" type="text" maxlength="17" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="username">
       <p class="dialog-hint" id="proposalCreateReceiverHint">Account that is paid. Leave it empty to pay the creator.</p>
       <p class="dialog-hint" id="proposalCreateFee">Creation fee: 10.000 hbd</p>
@@ -678,9 +678,9 @@
   </div>
 
   <div class="overlay" id="proposalCancelOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="proposalCancelTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="proposalCancelTitle">
       <h2 id="proposalCancelTitle">Cancel proposal</h2>
-      <p class="login-lead" id="proposalCancelLead"></p>
+      <p class="dialog-lead" id="proposalCancelLead"></p>
       <p class="dialog-hint">This is signed with the active key.</p>
       <p id="proposalCancelStatus" role="status"></p>
       <div class="overlay-actions">
@@ -691,10 +691,10 @@
   </div>
 
   <div class="overlay" id="proxyOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="proxyTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="proxyTitle">
       <h2 id="proxyTitle">Set proxy</h2>
-      <p class="login-lead" id="proxyLead">Delegate your witness and proposal votes to another account.</p>
-      <label class="login-label" for="proxyUser">Username</label>
+      <p class="dialog-lead" id="proxyLead">Delegate your witness and proposal votes to another account.</p>
+      <label class="dialog-label" for="proxyUser">Username</label>
       <input id="proxyUser" type="text" maxlength="17" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="username">
       <p class="dialog-hint">This is signed with the active key.</p>
       <p id="proxyStatus" role="status"></p>
@@ -706,17 +706,17 @@
   </div>
 
   <div class="overlay" id="delegateOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="delegateTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="delegateTitle">
       <h2 id="delegateTitle">Delegate</h2>
-      <p class="login-lead" id="delegateLead"></p>
-      <div class="login-method" id="delegateAsset" role="group" aria-label="Delegation type">
+      <p class="dialog-lead" id="delegateLead"></p>
+      <div class="dialog-method" id="delegateAsset" role="group" aria-label="Delegation type">
         <button type="button" data-delegate-asset="hp" class="is-active" aria-pressed="true">HP</button>
         <button type="button" data-delegate-asset="rc" aria-pressed="false">Resource Credits</button>
       </div>
       <div id="delegateForm">
-        <label class="login-label" for="delegateUser">Username</label>
+        <label class="dialog-label" for="delegateUser">Username</label>
         <input id="delegateUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
-        <label class="login-label" for="delegateAmount" id="delegateAmountLabel">Amount</label>
+        <label class="dialog-label" for="delegateAmount" id="delegateAmountLabel">Amount</label>
         <div class="wallet-amount-row">
           <input id="delegateAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false">
           <select id="delegateRcUnit" hidden aria-label="Resource credit unit">
@@ -740,10 +740,10 @@
   </div>
 
   <div class="overlay" id="nodeOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="nodeOverlayTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="nodeOverlayTitle">
       <h2 id="nodeOverlayTitle">Custom node</h2>
-      <p class="login-lead">Connect to a custom hive API node.</p>
-      <label class="login-label" for="nodeServer">Hive node</label>
+      <p class="dialog-lead">Connect to a custom hive API node.</p>
+      <label class="dialog-label" for="nodeServer">Hive node</label>
       <input id="nodeServer" type="text" inputmode="url" autocomplete="off" placeholder="api.hive.blog" spellcheck="false" autocapitalize="off">
       <p id="nodeStatus" role="status"></p>
       <div class="overlay-actions">
@@ -901,7 +901,7 @@
         <span id="locationHint">openfreemap © openstreetmap</span>
         <span id="locationCoords"></span>
       </div>
-      <label class="login-label" for="locationDescription">Description</label>
+      <label class="dialog-label" for="locationDescription">Description</label>
       <input id="locationDescription" type="text" maxlength="250" autocomplete="off" placeholder="Short description">
       <p id="locationStatus" class="location-status" role="status" hidden></p>
       <div class="overlay-actions">
@@ -913,7 +913,7 @@
   </div>
 
   <div class="overlay" id="contentDelete" hidden>
-    <div class="panel overlay-card login-card">
+    <div class="panel overlay-card dialog-card">
       <h2 id="contentDeleteTitle">Delete post</h2>
       <p id="contentDeleteLead">This cannot be undone. Hive only deletes a post or comment with no replies, before payout, and with no net upvotes.</p>
       <p id="contentDeleteStatus" hidden></p>
@@ -925,7 +925,7 @@
   </div>
 
   <div class="overlay" id="crossPostOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="crossPostTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="crossPostTitle">
       <h2 id="crossPostTitle">Cross post</h2>
       <div class="publish-dest" id="crossPostDest">
         <span class="publish-dest-label">Subspace</span>
@@ -938,7 +938,7 @@
         </div>
         <p class="publish-dest-note" id="crossPostDestNote" hidden></p>
       </div>
-      <label class="login-label" for="crossPostMessage">Message <span class="label-optional">(optional)</span></label>
+      <label class="dialog-label" for="crossPostMessage">Message <span class="label-optional">(optional)</span></label>
       <input id="crossPostMessage" type="text" autocomplete="off" placeholder="Add a comment" maxlength="500">
       <p id="crossPostStatus" hidden></p>
       <div class="overlay-actions">
@@ -949,10 +949,10 @@
   </div>
 
   <div class="overlay" id="embedOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="embedTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="embedTitle">
       <h2 id="embedTitle">Embed</h2>
       <p id="embedLead">Paste this on another site.</p>
-      <label class="login-label" for="embedCode">Embed code</label>
+      <label class="dialog-label" for="embedCode">Embed code</label>
       <textarea id="embedCode" rows="9" readonly spellcheck="false"></textarea>
       <div class="overlay-actions">
         <button type="button" class="btn-primary" id="embedCopy">Copy</button>
@@ -962,7 +962,7 @@
   </div>
 
   <div class="overlay" id="settingsKeyQrOverlay" hidden>
-    <div class="panel overlay-card login-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsKeyQrTitle">
+    <div class="panel overlay-card dialog-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsKeyQrTitle">
       <h2 id="settingsKeyQrTitle">QR code</h2>
       <div id="settingsKeyQrCode" class="profile-qr-code"></div>
       <p id="settingsKeyQrCaption" class="profile-qr-caption"></p>
@@ -973,7 +973,7 @@
   </div>
 
   <div class="overlay" id="profileQrOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="profileQrTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="profileQrTitle">
       <h2 id="profileQrTitle">QR code</h2>
       <nav class="feed-nav profile-qr-nav" id="profileQrNav" aria-label="QR code">
         <button type="button" data-profile-qr="site" class="is-active" aria-pressed="true">Cyberspace</button>
@@ -988,7 +988,7 @@
   </div>
 
   <div class="overlay" id="publishDiscard" hidden>
-    <div class="panel overlay-card login-card">
+    <div class="panel overlay-card dialog-card">
       <h2 id="publishDiscardTitle">Discard post</h2>
       <p id="publishDiscardLead">This unpublished post will be deleted.</p>
       <div class="overlay-actions">
@@ -999,7 +999,7 @@
   </div>
 
   <div class="overlay" id="localDataOverlay" hidden>
-    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="localDataTitle">
+    <div class="panel overlay-card dialog-card" role="dialog" aria-modal="true" aria-labelledby="localDataTitle">
       <h2 id="localDataTitle">Clear local data</h2>
       <p id="localDataLead">You will be logged out and all data in this browser will be cleared.</p>
       <p id="localDataStatus" hidden></p>
@@ -1020,6 +1020,6 @@
   <script src="/js/auth.js?v=0.22.9"></script>
   <script src="/js/chain-queue.js?v=0.22.0"></script>
   <script src="/js/blacklist.js?v=0.22.0"></script>
-  <script src="/js/app.js?v=0.22.11"></script>
+  <script src="/js/app.js?v=0.22.12"></script>
 </body>
 </html>

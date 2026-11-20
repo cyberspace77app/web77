@@ -8394,7 +8394,7 @@ let CS77_FILTER_LOW_REP = 20;
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    const card = root.closest(".login-card");
+    const card = root.closest(".dialog-card");
     const keyBlock = card && card.querySelector("[data-auth-key]");
     if (keyBlock) keyBlock.hidden = next !== "password";
     if (previous === "password" && next !== "password") {
