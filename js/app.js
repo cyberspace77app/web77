@@ -8246,6 +8246,10 @@ let CS77_FILTER_LOW_REP = 20;
       hideEmbed();
       return;
     }
+    if (settingsKeyQrOpen()) {
+      closeSettingsKeyQr();
+      return;
+    }
     if (profileQrDialogOpen()) {
       closeProfileQrDialog();
       return;
@@ -8475,54 +8479,76 @@ let CS77_FILTER_LOW_REP = 20;
     return String(hash) + ":" + value.length;
   }
 
+  // A symbol that is only a WIF. The username field stays as the user left it.
+  function fillScannedPrivateKey(target, wif) {
+    if (target === "sign") {
+      if (!ownerSignSession || !ownerSignOpen()) {
+        return { ok: false, message: "The sign dialog is closed." };
+      }
+      const input = $("#ownerSignKey");
+      if (input) input.value = wif;
+      setOwnerSignStatus("", false);
+      return { ok: true };
+    }
+    if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
+    resetLoginMasterPrompt();
+    const key = $("#loginKey");
+    const status = $("#loginStatus");
+    if (key) key.value = wif;
+    if (status) status.textContent = "";
+    return { ok: true };
+  }
+
   function applyKeychainAccountQr(target, text) {
     const Qr = window.cs77Qr;
     const role =
       target === "sign" && ownerSignSession ? ownerSignRoleName(ownerSignSession.authority) : "posting";
     const parsed = Qr && typeof Qr.keychainAccount === "function" ? Qr.keychainAccount(text, role) : null;
-    if (!parsed || parsed.error === "format") {
-      return { ok: false, message: "That is not a Hive Keychain account QR code." };
-    }
-    if (parsed.error === "plural") {
-      return { ok: false, message: "Scan the QR code for one account." };
-    }
-    const name = normalizeLoginUser(parsed.name);
-    if (!validLoginUser(name)) {
-      return { ok: false, message: "That QR code has no username." };
-    }
-    if (target === "sign") {
-      const wanted = normalizeLoginUser(
-        (ownerSignSession && ownerSignSession.name) || ($("#ownerSignUser") && $("#ownerSignUser").value)
-      );
-      if (!ownerSignSession || !ownerSignOpen() || wanted !== name) {
-        const message = "That QR code is for @" + name + ".";
-        setOwnerSignStatus(message, true);
-        return { ok: false, message: message };
+    if (parsed && parsed.error !== "format") {
+      if (parsed.error === "plural") {
+        return { ok: false, message: "Scan the QR code for one account." };
       }
+      const name = normalizeLoginUser(parsed.name);
+      if (!validLoginUser(name)) {
+        return { ok: false, message: "That QR code has no username." };
+      }
+      if (target === "sign") {
+        const wanted = normalizeLoginUser(
+          (ownerSignSession && ownerSignSession.name) || ($("#ownerSignUser") && $("#ownerSignUser").value)
+        );
+        if (!ownerSignSession || !ownerSignOpen() || wanted !== name) {
+          const message = "That QR code is for @" + name + ".";
+          setOwnerSignStatus(message, true);
+          return { ok: false, message: message };
+        }
+        if (!parsed.ok || !parsed.wif) {
+          const message = "That QR code has no " + role + " key.";
+          setOwnerSignStatus(message, true);
+          return { ok: false, message: message };
+        }
+        const input = $("#ownerSignKey");
+        if (input) input.value = parsed.wif;
+        setOwnerSignStatus("", false);
+        return { ok: true };
+      }
+      if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
+      const user = $("#loginUser");
+      if (user) user.value = name;
+      resetLoginMasterPrompt();
+      const key = $("#loginKey");
+      const status = $("#loginStatus");
       if (!parsed.ok || !parsed.wif) {
-        const message = "That QR code has no " + role + " key.";
-        setOwnerSignStatus(message, true);
-        return { ok: false, message: message };
+        if (key) key.value = "";
+        if (status) status.textContent = "That QR code has no posting key.";
+        return { ok: false, message: "That QR code has no posting key." };
       }
-      const input = $("#ownerSignKey");
-      if (input) input.value = parsed.wif;
-      setOwnerSignStatus("", false);
+      if (key) key.value = parsed.wif;
+      if (status) status.textContent = "";
       return { ok: true };
     }
-    if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
-    const user = $("#loginUser");
-    if (user) user.value = name;
-    resetLoginMasterPrompt();
-    const key = $("#loginKey");
-    const status = $("#loginStatus");
-    if (!parsed.ok || !parsed.wif) {
-      if (key) key.value = "";
-      if (status) status.textContent = "That QR code has no posting key.";
-      return { ok: false, message: "That QR code has no posting key." };
-    }
-    if (key) key.value = parsed.wif;
-    if (status) status.textContent = "";
-    return { ok: true };
+    const bare = Qr && typeof Qr.privateKey === "function" ? Qr.privateKey(text) : null;
+    if (bare && bare.ok && bare.wif) return fillScannedPrivateKey(target, bare.wif);
+    return { ok: false, message: "That is not a Hive key QR code." };
   }
 
   function onKeyQrHit(target, hit) {
@@ -21535,7 +21561,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // qr.js stays unloaded until a QR is asked for. The same helper draws a
   // lightning invoice, a lightning LNURL, or a web address, and can scan one.
-  const QR_SCRIPT = "/js/qr.js?v=0.22.1";
+  const QR_SCRIPT = "/js/qr.js?v=0.22.2";
   let qrScriptPromise = null;
 
   function loadQrScript() {
@@ -37820,6 +37846,7 @@ let CS77_FILTER_LOW_REP = 20;
           <label class="settings-label" for="${id}">${label}</label>
           <div class="subspace-key-line">
             <input id="${id}" type="text" readonly autocomplete="off" spellcheck="false">
+            <button type="button" class="settings-key-qr" data-settings-key-qr="${id}" data-settings-key-role="${role}" aria-label="${label} key QR code" aria-pressed="false">${profileQrMarkSvg()}</button>
             <button type="button" class="btn-ghost btn-compact" data-settings-key-copy="${id}" aria-label="Copy ${label} key">Copy</button>
           </div>
         </div>
@@ -37857,6 +37884,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function clearSettingsKeys() {
     settingsKeysToken += 1;
+    closeSettingsKeyQr();
     blankSettingsControl("settingsKeysUser");
     blankSettingsControl("settingsKeysPass");
     for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
@@ -37917,6 +37945,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   async function generateSettingsKeys(e) {
     if (e) e.preventDefault();
+    closeSettingsKeyQr();
     const token = ++settingsKeysToken;
     const user = normalizeLoginUser(($("#settingsKeysUser") && $("#settingsKeysUser").value) || "");
     const passEl = $("#settingsKeysPass");
@@ -37979,6 +38008,80 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  let settingsKeyQrLook = 0;
+
+  function settingsKeyQrOpen() {
+    const el = $("#settingsKeyQrOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function settingsKeyQrLabel(role) {
+    const name = role === "active" || role === "memo" || role === "owner" || role === "posting" ? role : "private";
+    return name.charAt(0).toUpperCase() + name.slice(1) + " key";
+  }
+
+  function setSettingsKeyQrCaption(text, isError) {
+    const caption = $("#settingsKeyQrCaption");
+    if (!caption) return;
+    caption.textContent = text || "";
+    caption.classList.toggle("is-error", Boolean(isError) && Boolean(text));
+  }
+
+  function closeSettingsKeyQr() {
+    settingsKeyQrLook += 1;
+    const box = $("#settingsKeyQrCode");
+    if (box) box.replaceChildren();
+    setSettingsKeyQrCaption("", false);
+    document.querySelectorAll(".settings-key-qr.is-open").forEach((btn) => {
+      btn.classList.remove("is-open");
+      btn.setAttribute("aria-pressed", "false");
+    });
+    hideDialog($("#settingsKeyQrOverlay"));
+  }
+
+  async function openSettingsKeyQr(button) {
+    const id = button.getAttribute("data-settings-key-qr") || "";
+    const role = button.getAttribute("data-settings-key-role") || "";
+    const input = document.getElementById(id);
+    const el = $("#settingsKeyQrOverlay");
+    const box = $("#settingsKeyQrCode");
+    if (!el || !box || !input) return;
+    if (settingsKeyQrOpen() && button.classList.contains("is-open")) {
+      closeSettingsKeyQr();
+      return;
+    }
+    const look = ++settingsKeyQrLook;
+    const label = settingsKeyQrLabel(role);
+    document.querySelectorAll(".settings-key-qr.is-open").forEach((btn) => {
+      btn.classList.remove("is-open");
+      btn.setAttribute("aria-pressed", "false");
+    });
+    button.classList.add("is-open");
+    button.setAttribute("aria-pressed", "true");
+    box.replaceChildren();
+    setSettingsKeyQrCaption(label, false);
+    const focusFrom = document.activeElement;
+    el.hidden = false;
+    focusDialog(el, focusFrom);
+    try {
+      const Qr = await loadQrScript();
+      if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
+      const wif = Qr && typeof Qr.privateKeyText === "function" ? Qr.privateKeyText(input.value) : "";
+      if (!wif) throw new Error("Could not make a QR code.");
+      const svg = await renderQrCode(wif);
+      if (look !== settingsKeyQrLook || !settingsKeyQrOpen() || !input.isConnected) return;
+      const still = Qr.privateKeyText(input.value);
+      if (still !== wif) return;
+      svg.setAttribute("aria-label", label);
+      box.replaceChildren(svg);
+      setSettingsKeyQrCaption(label, false);
+    } catch (err) {
+      if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
+      box.replaceChildren();
+      setSettingsKeyQrCaption((err && err.message) || "Could not make a QR code.", true);
+    }
+  }
+
   function bindSettingsKeys() {
     const form = $("#settingsKeysForm");
     const clear = $("#settingsKeysClear");
@@ -37991,6 +38094,12 @@ let CS77_FILTER_LOW_REP = 20;
           copySubspaceMasterKey(input, copies[i]);
         });
       }
+      form.addEventListener("click", (e) => {
+        const qrBtn = e.target.closest("[data-settings-key-qr]");
+        if (!qrBtn || !form.contains(qrBtn)) return;
+        e.preventDefault();
+        openSettingsKeyQr(qrBtn);
+      });
     }
     if (clear) {
       clear.addEventListener("click", () => {
@@ -42011,6 +42120,17 @@ let CS77_FILTER_LOW_REP = 20;
         const active = document.activeElement;
         if (active && keyQrOverlay.contains(active)) return;
         closeKeyQrScanner();
+      });
+    }
+    const settingsKeyQrClose = $("#settingsKeyQrClose");
+    const settingsKeyQrOverlay = $("#settingsKeyQrOverlay");
+    if (settingsKeyQrClose) settingsKeyQrClose.addEventListener("click", closeSettingsKeyQr);
+    if (settingsKeyQrOverlay) {
+      settingsKeyQrOverlay.addEventListener("click", (e) => {
+        if (e.target !== settingsKeyQrOverlay) return;
+        const active = document.activeElement;
+        if (active && settingsKeyQrOverlay.contains(active)) return;
+        closeSettingsKeyQr();
       });
     }
     const ownerSignConnect = $("#ownerSignConnect");

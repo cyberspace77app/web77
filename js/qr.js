@@ -33,6 +33,11 @@
  * role is posting, active, memo, or owner. The result is
  * { ok, name, wif, error }. error is "", "format", "plural", or "role".
  * name is the JSON value unchanged. The page checks the Hive username.
+ *
+ * A private key by itself:
+ *   cs77Qr.privateKeyText(wif);  // the text to encode, or ""
+ *   cs77Qr.privateKey(text);     // { ok, wif, error: "" | "format" }
+ * The symbol is only the WIF. It has no username.
  */
 (function (global) {
   "use strict";
@@ -2908,6 +2913,27 @@
   }
 
   cs77Qr.keychainAccount = keychainAccount;
+
+  function compactPrivateKey(text) {
+    var compact = String(text || "").replace(/^\uFEFF/, "").replace(/\s+/g, "");
+    if (!looksLikeHiveWif(compact)) return "";
+    return compact;
+  }
+
+  // The text painted into a private-key symbol. Empty when it is not a WIF.
+  function privateKeyText(text) {
+    return compactPrivateKey(text);
+  }
+
+  // A scanned symbol that contains only a private key.
+  function privateKey(text) {
+    var wif = compactPrivateKey(text);
+    if (!wif) return { ok: false, wif: "", error: "format" };
+    return { ok: true, wif: wif, error: "" };
+  }
+
+  cs77Qr.privateKeyText = privateKeyText;
+  cs77Qr.privateKey = privateKey;
 
   global.cs77Qr = cs77Qr;
 })(typeof window !== "undefined" ? window : globalThis);

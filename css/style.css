@@ -6495,18 +6495,27 @@ a.wallet-tx-time:hover {
   width: min(16rem, 100%);
 }
 
-#profileQrCaption {
+#profileQrCaption,
+#settingsKeyQrCaption {
   margin: 0.15rem 0 1.15rem;
   text-align: center;
   overflow-wrap: anywhere;
 }
 
-#profileQrCaption:empty {
+#profileQrCaption:empty,
+#settingsKeyQrCaption:empty {
   display: none;
 }
 
-#profileQrCaption.is-error {
+#profileQrCaption.is-error,
+#settingsKeyQrCaption.is-error {
   color: var(--red-bright);
+}
+
+#settingsKeyQrOverlay {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-items: safe center;
 }
 
 .profile-qr-copy {
@@ -9382,12 +9391,44 @@ body:has(#lightningOverlay:not([hidden])) {
     aspect-ratio: auto;
   }
 
+  #settingsKeyQrOverlay {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+  }
+
+  #settingsKeyQrOverlay .overlay-card.viewport-sheet {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    overflow: hidden;
+    padding-top: max(1.75rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  #settingsKeyQrOverlay .profile-qr-code {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 12rem;
+  }
+
+  #settingsKeyQrOverlay .profile-qr-code .qr-code {
+    width: min(18rem, 72%);
+  }
+
   /* A border on these sheets is a line against the viewport. Poll votes stay framed. */
   #peopleOverlay .people-card.viewport-sheet,
   #publishOverlay .publish-card.viewport-sheet,
   #zapOverlay .overlay-card.viewport-sheet,
   #lightningOverlay .overlay-card.viewport-sheet,
   #keyQrOverlay .overlay-card.viewport-sheet,
+  #settingsKeyQrOverlay .overlay-card.viewport-sheet,
   .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
@@ -10347,6 +10388,46 @@ min-height: 0;
 .settings-keys-fields > .settings-field:last-child,
 .settings-keys-fields > .settings-field:last-child .subspace-key-line {
   margin-bottom: 0;
+}
+
+.settings-key-qr {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.45rem;
+  height: 2.45rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.settings-key-qr svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.settings-key-qr:hover,
+.settings-key-qr:focus-visible,
+.settings-key-qr.is-open {
+  color: var(--yellow);
+  border-color: var(--red-bright);
+}
+
+.settings-key-qr:hover svg,
+.settings-key-qr:focus-visible svg,
+.settings-key-qr.is-open svg {
+  filter: drop-shadow(0 0 6px rgba(255, 225, 74, 0.55));
+}
+
+.settings-key-qr:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .settings-status {
