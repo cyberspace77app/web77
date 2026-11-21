@@ -8519,12 +8519,14 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // Camera scan of Hive Keychain's one-account "Show QR Code" symbol.
-  // cs77Qr.keychainAccount reads the payload. This dialog fills one field.
+  // Camera scan. Login and sign read a Keychain account or a private key.
+  // Stake, send, and delegate read a CyberSpace profile URL.
   let keyQrScanner = null;
   let keyQrTarget = "";
   let keyQrGen = 0;
   let keyQrSeen = "";
+  const KEY_QR_KEY_LEAD = "Point the camera at a Keychain account or CyberSpace private key QR code.";
+  const KEY_QR_USER_LEAD = "Point the camera at a CyberSpace profile QR code.";
 
   function keyQrDialogOpen() {
     const el = $("#keyQrOverlay");
@@ -8567,20 +8569,84 @@ let CS77_FILTER_LOW_REP = 20;
     keyQrSeen = "";
     stopKeyQrCamera();
     setKeyQrStatus("", false);
+    paintKeyQrLead("login");
     hideDialog($("#keyQrOverlay"));
     if (wasOpen || keyQrHist.on) releasePanelHistory(keyQrHist, skipHistory);
+  }
+
+  function keyQrHistoryTarget(target) {
+    if (target === "sign" || target === "stake" || target === "send" || target === "delegate") return target;
+    return "login";
   }
 
   function keyQrHistoryFields() {
     return {
       keyQrPanel: true,
-      keyQrTarget: keyQrTarget === "sign" ? "sign" : "login",
+      keyQrTarget: keyQrHistoryTarget(keyQrTarget),
     };
   }
 
   function reopenKeyQrFromHistory(state) {
-    const target = state && state.keyQrTarget === "sign" ? "sign" : "login";
-    openKeyQrScanner(target, { fromHistory: true });
+    openKeyQrScanner(keyQrHistoryTarget(state && state.keyQrTarget), { fromHistory: true });
+  }
+
+  function paintKeyQrLead(target) {
+    const lead = $("#keyQrLead");
+    if (!lead) return;
+    lead.textContent =
+      target === "stake" || target === "send" || target === "delegate" ? KEY_QR_USER_LEAD : KEY_QR_KEY_LEAD;
+  }
+
+  // The parent dialog closed. Stop the camera without stepping Back.
+  function closeUsernameScan(target) {
+    if (keyQrTarget !== target) return;
+    closeKeyQrScanner({ skipHistory: true });
+    stripPanelHistory(keyQrHist, ["keyQrPanel", "keyQrTarget"]);
+  }
+
+  function usernameScanReady(target) {
+    if (target === "stake") {
+      const ov = $("#walletOverlay");
+      const field = $("#walletToField");
+      if (!ov || ov.hidden || !field || field.hidden || walletOpState.pending) return false;
+      return walletOpState.kind === "stake-hive" || walletOpState.kind === "stake-hbd";
+    }
+    if (target === "send") {
+      const ov = $("#sendOverlay");
+      return Boolean(ov && !ov.hidden && !sendState.pending);
+    }
+    if (target === "delegate") {
+      const ov = $("#delegateOverlay");
+      const form = $("#delegateForm");
+      return Boolean(
+        ov && !ov.hidden && form && !form.hidden && delegateState.mode === "delegate" && !delegateState.pending
+      );
+    }
+    return false;
+  }
+
+  function usernameScanInput(target) {
+    if (target === "stake") return $("#walletTo");
+    if (target === "send") return $("#sendTo");
+    if (target === "delegate") return $("#delegateUser");
+    return null;
+  }
+
+  function applyProfileUserQr(target, text) {
+    if (!usernameScanReady(target)) return { ok: false, message: "The dialog is closed." };
+    const Qr = window.cs77Qr;
+    const parsed = Qr && typeof Qr.profileUser === "function" ? Qr.profileUser(text) : null;
+    if (!parsed) return { ok: false, message: "Could not read that QR code." };
+    const name = parsed.ok ? walletHiveName(parsed.name) : "";
+    if (!name) return { ok: false, message: "That QR code has no username." };
+    const input = usernameScanInput(target);
+    if (!input || input.disabled) return { ok: false, message: "The dialog is closed." };
+    input.value = name;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (target === "stake") setWalletOpStatus("");
+    else if (target === "send") setSendStatus("");
+    else setDelegateStatus("");
+    return { ok: true };
   }
 
   function keyQrFingerprint(text) {
@@ -8668,7 +8734,10 @@ let CS77_FILTER_LOW_REP = 20;
     const seen = keyQrFingerprint(text);
     if (seen === keyQrSeen) return;
     keyQrSeen = seen;
-    const result = applyKeychainAccountQr(target, text);
+    const result =
+      target === "stake" || target === "send" || target === "delegate"
+        ? applyProfileUserQr(target, text)
+        : applyKeychainAccountQr(target, text);
     if (result.ok) {
       closeKeyQrScanner();
       return;
@@ -8685,11 +8754,14 @@ let CS77_FILTER_LOW_REP = 20;
       if (loginBusy || !overlay || overlay.hidden || authMethod($("#loginMethod")) !== "password") return;
     } else if (target === "sign") {
       if (ownerSignBusy || !ownerSignOpen() || authMethod($("#ownerSignMethod")) !== "password") return;
+    } else if (target === "stake" || target === "send" || target === "delegate") {
+      if (!usernameScanReady(target)) return;
     } else return;
     const gen = ++keyQrGen;
     stopKeyQrCamera();
     keyQrTarget = target;
     keyQrSeen = "";
+    paintKeyQrLead(target);
     setKeyQrStatus("Starting the camera…", false);
     const focusFrom = document.activeElement;
     el.hidden = false;
@@ -21674,7 +21746,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // qr.js stays unloaded until a QR is asked for. The same helper draws a
   // lightning invoice, a lightning LNURL, or a web address, and can scan one.
-  const QR_SCRIPT = "/js/qr.js?v=0.22.2";
+  const QR_SCRIPT = "/js/qr.js?v=0.22.3";
   let qrScriptPromise = null;
 
   function loadQrScript() {
@@ -28353,6 +28425,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (amount) amount.disabled = on;
     const to = $("#walletTo");
     if (to) to.disabled = on;
+    const scan = $("#walletToScan");
+    if (scan) scan.disabled = on;
     const available = $("#walletOpAvailable");
     const availableBtn = available && available.querySelector(".wallet-available-amt");
     if (availableBtn) availableBtn.disabled = on;
@@ -28381,6 +28455,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function closeWalletOverlay() {
     if (ownerSignSession && ownerSignSession.source === "wallet") return;
+    closeUsernameScan("stake");
     walletOpState.gen += 1;
     const ov = $("#walletOverlay");
     if (ov) {
@@ -28791,6 +28866,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (memo) memo.disabled = on;
     const lock = $("#sendMemoLock");
     if (lock) lock.disabled = on;
+    const scan = $("#sendToScan");
+    if (scan) scan.disabled = on;
     paintSendAvailable();
   }
 
@@ -28825,6 +28902,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#sendOverlay");
       if (ov && !ov.hidden) return;
     }
+    closeUsernameScan("send");
     hideDialog($("#sendOverlay"));
     sendState.asset = "hive";
     sendState.pending = false;
@@ -28839,6 +28917,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (submit) submit.disabled = false;
     const maxBtn = $("#sendMax");
     if (maxBtn) maxBtn.disabled = false;
+    const scan = $("#sendToScan");
+    if (scan) scan.disabled = false;
     const root = $("#sendAsset");
     if (root) {
       const buttons = root.querySelectorAll("button");
@@ -28868,6 +28948,8 @@ let CS77_FILTER_LOW_REP = 20;
     setSendStatus("");
     const submit = $("#sendSubmit");
     if (submit) submit.disabled = false;
+    const scan = $("#sendToScan");
+    if (scan) scan.disabled = false;
     const root = $("#sendAsset");
     if (root) {
       const buttons = root.querySelectorAll("button");
@@ -30229,6 +30311,7 @@ let CS77_FILTER_LOW_REP = 20;
       const ov = $("#delegateOverlay");
       if (ov && !ov.hidden) return;
     }
+    closeUsernameScan("delegate");
     hideDialog($("#delegateOverlay"));
     delegateState.mode = "";
     delegateState.pending = false;
@@ -30239,6 +30322,8 @@ let CS77_FILTER_LOW_REP = 20;
       submit.disabled = false;
       submit.textContent = "Confirm";
     }
+    const scan = $("#delegateUserScan");
+    if (scan) scan.disabled = false;
     setDelegateStatus("");
   }
 
@@ -30395,6 +30480,8 @@ let CS77_FILTER_LOW_REP = 20;
     if (max) max.disabled = on;
     if (unit) unit.disabled = on;
     if (amountBtn) amountBtn.disabled = on;
+    const scan = $("#delegateUserScan");
+    if (scan) scan.disabled = on;
   }
 
   function openDelegateDialog(prefill) {
@@ -30427,6 +30514,8 @@ let CS77_FILTER_LOW_REP = 20;
       submit.disabled = false;
       submit.textContent = "Confirm";
     }
+    const scan = $("#delegateUserScan");
+    if (scan) scan.disabled = false;
     const focusFrom = document.activeElement;
     const ov = $("#delegateOverlay");
     if (ov) ov.hidden = false;
@@ -43383,6 +43472,8 @@ let CS77_FILTER_LOW_REP = 20;
           if (e.key === "Enter") submitWalletOp();
         });
       }
+      const walletToScan = $("#walletToScan");
+      if (walletToScan) walletToScan.addEventListener("click", () => openKeyQrScanner("stake"));
       walletOverlay.addEventListener("click", (e) => {
         if (e.target === walletOverlay) closeWalletOverlay();
       });
@@ -43411,6 +43502,8 @@ let CS77_FILTER_LOW_REP = 20;
           if (e.key === "Enter") submitSend();
         });
       }
+      const sendToScan = $("#sendToScan");
+      if (sendToScan) sendToScan.addEventListener("click", () => openKeyQrScanner("send"));
       if (sendAmount) {
         sendAmount.addEventListener("keydown", (e) => {
           if (e.key === "Enter") submitSend();
@@ -43609,6 +43702,8 @@ let CS77_FILTER_LOW_REP = 20;
           if (e.key === "Enter") submitDelegate();
         });
       }
+      const delegateUserScan = $("#delegateUserScan");
+      if (delegateUserScan) delegateUserScan.addEventListener("click", () => openKeyQrScanner("delegate"));
       const delegateRcUnit = $("#delegateRcUnit");
       if (delegateAmount) {
         delegateAmount.addEventListener("keydown", (e) => {

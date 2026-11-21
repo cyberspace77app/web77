@@ -56,7 +56,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.22.10">
+  <link rel="stylesheet" href="/css/style.css?v=0.22.11">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -247,7 +247,7 @@
   <div class="overlay" id="keyQrOverlay" hidden>
     <div class="panel overlay-card dialog-card viewport-sheet" role="dialog" aria-modal="true" aria-labelledby="keyQrTitle">
       <h2 id="keyQrTitle">Scan QR code</h2>
-      <p class="dialog-lead">Point the camera at a Keychain account or CyberSpace private key QR code.</p>
+      <p class="dialog-lead" id="keyQrLead">Point the camera at a Keychain account or CyberSpace private key QR code.</p>
       <div class="key-qr-view">
         <video id="keyQrVideo" playsinline muted></video>
       </div>
@@ -497,7 +497,29 @@
         <label class="dialog-label" for="walletFrom">From</label>
         <input id="walletFrom" type="text" readonly autocomplete="off" spellcheck="false" autocapitalize="off">
         <label class="dialog-label" for="walletTo">To</label>
-        <input id="walletTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+        <div class="auth-key-row">
+          <input id="walletTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+          <button type="button" class="auth-scan-qr" id="walletToScan" aria-label="Scan QR code">
+            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+              <g fill="currentColor">
+                <circle cx="9.6" cy="3.2" r="2.2"/>
+                <circle cx="22.4" cy="3.2" r="2.2"/>
+                <circle cx="22.4" cy="9.6" r="2.2"/>
+                <circle cx="28.8" cy="9.6" r="2.2"/>
+                <circle cx="3.2" cy="16" r="2.2"/>
+                <circle cx="9.6" cy="16" r="2.2"/>
+                <circle cx="16" cy="16" r="2.2"/>
+                <circle cx="28.8" cy="16" r="2.2"/>
+                <circle cx="3.2" cy="22.4" r="2.2"/>
+                <circle cx="16" cy="22.4" r="2.2"/>
+                <circle cx="22.4" cy="22.4" r="2.2"/>
+                <circle cx="28.8" cy="22.4" r="2.2"/>
+                <circle cx="16" cy="28.8" r="2.2"/>
+                <circle cx="22.4" cy="28.8" r="2.2"/>
+              </g>
+            </svg>
+          </button>
+        </div>
       </div>
       <label class="dialog-label" for="walletAmount">Amount</label>
       <div class="wallet-amount-row">
@@ -524,7 +546,29 @@
       <label class="dialog-label" for="sendFrom">From</label>
       <input id="sendFrom" type="text" readonly autocomplete="off" spellcheck="false" autocapitalize="off">
       <label class="dialog-label" for="sendTo">To</label>
-      <input id="sendTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+      <div class="auth-key-row">
+        <input id="sendTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+        <button type="button" class="auth-scan-qr" id="sendToScan" aria-label="Scan QR code">
+          <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <g fill="currentColor">
+              <circle cx="9.6" cy="3.2" r="2.2"/>
+              <circle cx="22.4" cy="3.2" r="2.2"/>
+              <circle cx="22.4" cy="9.6" r="2.2"/>
+              <circle cx="28.8" cy="9.6" r="2.2"/>
+              <circle cx="3.2" cy="16" r="2.2"/>
+              <circle cx="9.6" cy="16" r="2.2"/>
+              <circle cx="16" cy="16" r="2.2"/>
+              <circle cx="28.8" cy="16" r="2.2"/>
+              <circle cx="3.2" cy="22.4" r="2.2"/>
+              <circle cx="16" cy="22.4" r="2.2"/>
+              <circle cx="22.4" cy="22.4" r="2.2"/>
+              <circle cx="28.8" cy="22.4" r="2.2"/>
+              <circle cx="16" cy="28.8" r="2.2"/>
+              <circle cx="22.4" cy="28.8" r="2.2"/>
+            </g>
+          </svg>
+        </button>
+      </div>
       <label class="dialog-label" for="sendAmount">Amount</label>
       <div class="wallet-amount-row">
         <div class="send-amount-field">
@@ -721,7 +765,29 @@
       </div>
       <div id="delegateForm">
         <label class="dialog-label" for="delegateUser">Delegate to</label>
-        <input id="delegateUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+        <div class="auth-key-row">
+          <input id="delegateUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+          <button type="button" class="auth-scan-qr" id="delegateUserScan" aria-label="Scan QR code">
+            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+              <g fill="currentColor">
+                <circle cx="9.6" cy="3.2" r="2.2"/>
+                <circle cx="22.4" cy="3.2" r="2.2"/>
+                <circle cx="22.4" cy="9.6" r="2.2"/>
+                <circle cx="28.8" cy="9.6" r="2.2"/>
+                <circle cx="3.2" cy="16" r="2.2"/>
+                <circle cx="9.6" cy="16" r="2.2"/>
+                <circle cx="16" cy="16" r="2.2"/>
+                <circle cx="28.8" cy="16" r="2.2"/>
+                <circle cx="3.2" cy="22.4" r="2.2"/>
+                <circle cx="16" cy="22.4" r="2.2"/>
+                <circle cx="22.4" cy="22.4" r="2.2"/>
+                <circle cx="28.8" cy="22.4" r="2.2"/>
+                <circle cx="16" cy="28.8" r="2.2"/>
+                <circle cx="22.4" cy="28.8" r="2.2"/>
+              </g>
+            </svg>
+          </button>
+        </div>
         <label class="dialog-label" for="delegateAmount" id="delegateAmountLabel">Amount</label>
         <div class="wallet-amount-row">
           <input id="delegateAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false">
@@ -1026,6 +1092,6 @@
   <script src="/js/auth.js?v=0.22.9"></script>
   <script src="/js/chain-queue.js?v=0.22.0"></script>
   <script src="/js/blacklist.js?v=0.22.0"></script>
-  <script src="/js/app.js?v=0.22.18"></script>
+  <script src="/js/app.js?v=0.22.19"></script>
 </body>
 </html>

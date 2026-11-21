@@ -6873,12 +6873,17 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   margin-bottom: 0.85rem;
 }
 
-#loginKeyBlock .auth-key-row input,
-#ownerSignKeyBlock .auth-key-row input {
+.dialog-card .auth-key-row input {
   flex: 1 1 auto;
   width: auto;
   min-width: 0;
   margin-bottom: 0;
+}
+
+#walletOverlay .auth-key-row,
+#sendOverlay .auth-key-row,
+#delegateOverlay .auth-key-row {
+  margin-bottom: 1rem;
 }
 
 .auth-scan-qr {
@@ -6902,10 +6907,15 @@ html:has(#zapPayOverlay:not([hidden])) #lightningOverlay {
   display: block;
 }
 
-.auth-scan-qr:hover,
+.auth-scan-qr:hover:not(:disabled),
 .auth-scan-qr:focus-visible {
   color: var(--yellow);
   border-color: var(--red-bright);
+}
+
+.auth-scan-qr:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .auth-scan-qr:focus-visible {

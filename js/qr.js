@@ -38,6 +38,10 @@
  *   cs77Qr.privateKeyText(wif);  // the text to encode, or ""
  *   cs77Qr.privateKey(text);     // { ok, wif, error: "" | "format" }
  * The symbol is only the WIF. It has no username.
+ *
+ * A CyberSpace profile QR from the profile dialog:
+ *   cs77Qr.profileUser(text);    // { ok, name, error: "" | "format" }
+ * text is https://cyberspace77.com/@username. name has no @.
  */
 (function (global) {
   "use strict";
@@ -2934,6 +2938,44 @@
 
   cs77Qr.privateKeyText = privateKeyText;
   cs77Qr.privateKey = privateKey;
+
+  // The username in a CyberSpace profile URL. The profile dialog encodes
+  // https://cyberspace77.com/@username and nothing after the name.
+  function profileUser(text) {
+    var raw = String(text || "").trim();
+    var url;
+    var host;
+    var path;
+    var name;
+    var empty = { ok: false, name: "", error: "format" };
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1).trim();
+    if (!raw) return empty;
+    try {
+      url = new URL(raw);
+    } catch (err) {
+      return empty;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return empty;
+    host = String(url.hostname || "").replace(/\.$/, "").toLowerCase();
+    if (host !== "cyberspace77.com" && host !== "www.cyberspace77.com" && host !== "alpha.cyberspace77.com") {
+      return empty;
+    }
+    path = String(url.pathname || "");
+    try {
+      path = decodeURIComponent(path);
+    } catch (err) {
+      return empty;
+    }
+    if (path.length > 1) path = path.replace(/\/+$/, "");
+    if (path.charAt(0) !== "/" || path.charAt(1) !== "@") return empty;
+    name = path.slice(2).toLowerCase();
+    if (!name || name.indexOf("/") !== -1) return empty;
+    if (name.length < 3 || name.length > 16) return empty;
+    if (!/^[a-z][a-z0-9.-]*[a-z0-9]$/.test(name)) return empty;
+    return { ok: true, name: name, error: "" };
+  }
+
+  cs77Qr.profileUser = profileUser;
 
   global.cs77Qr = cs77Qr;
 })(typeof window !== "undefined" ? window : globalThis);
