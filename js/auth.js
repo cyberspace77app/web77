@@ -788,13 +788,14 @@
     throw new Error("Could not encode the Hive signature.");
   }
 
-  async function broadcastKeyBytes(keyBytes, operations) {
-    if (!Array.isArray(operations) || !operations.length) {
+  async function broadcastKeyList(keyList, operations) {
+    if (!Array.isArray(keyList) || !keyList.length || !Array.isArray(operations) || !operations.length) {
       throw new Error("Invalid blockchain operation.");
     }
     const lib = await loadHiveTx();
-    const pk = lib.PrivateKey.from(keyBytes);
+    const keys = [];
     try {
+      for (let i = 0; i < keyList.length; i++) keys.push(lib.PrivateKey.from(keyList[i]));
       const tx = new lib.Transaction();
       for (let i = 0; i < operations.length; i++) {
         const op = operations[i];
@@ -803,12 +804,19 @@
         }
         await tx.addOperation(op[0], op[1]);
       }
-      tx.sign(pk);
+      tx.sign(keys);
       const result = await tx.broadcast();
       return { success: true, result: result || null };
     } finally {
-      if (pk && pk.key && pk.key !== keyBytes) wipe(pk.key);
+      for (let i = 0; i < keys.length; i++) {
+        const pk = keys[i];
+        if (pk && pk.key && pk.key !== keyList[i]) wipe(pk.key);
+      }
     }
+  }
+
+  async function broadcastKeyBytes(keyBytes, operations) {
+    return broadcastKeyList([keyBytes], operations);
   }
 
   async function broadcast(username, operations) {
@@ -939,6 +947,41 @@
       return await broadcastKeyBytes(opened.bytes, operations);
     } finally {
       wipe(opened.bytes);
+    }
+  }
+
+  // Two owner secrets for recover_account. Neither is checked against the
+  // current owner. The recent key is an old owner, and the new key is not
+  // on the account yet. Both are used once and wiped.
+  async function broadcastRecoverySecrets(username, recentSecret, newSecret, operations) {
+    const recentJob = openRoleSecret(username, recentSecret, "owner");
+    recentSecret = "";
+    let recent = null;
+    try {
+      recent = await recentJob;
+    } catch (err) {
+      newSecret = "";
+      throw err;
+    }
+    let fresh = null;
+    try {
+      fresh = await openRoleSecret(username, newSecret, "owner");
+      newSecret = "";
+    } catch (err) {
+      newSecret = "";
+      wipe(recent.bytes);
+      throw err;
+    }
+    if (recent.pub === fresh.pub) {
+      wipe(recent.bytes);
+      wipe(fresh.bytes);
+      throw new Error("The new owner key must be different from the recent owner key.");
+    }
+    try {
+      return await broadcastKeyList([recent.bytes, fresh.bytes], operations);
+    } finally {
+      wipe(recent.bytes);
+      wipe(fresh.bytes);
     }
   }
 
@@ -1107,6 +1150,7 @@
     wifFromLogin,
     loginMaster,
     broadcastRoleSecret,
+    broadcastRecoverySecrets,
     encodeMemo,
     decodeMemo,
     broadcastWithKey,

@@ -10362,7 +10362,9 @@ min-height: 0;
 #settingsKeysForm h2.settings-section-line,
 #settingsStoredKeys h2.settings-section-line,
 #settingsPasswordForm h2.settings-section-line,
-#settingsRecoveryForm h2.settings-section-line {
+#settingsRecoveryForm h2.settings-section-line,
+#settingsRecoverRequestForm h2.settings-section-line,
+#settingsRecoverConfirmForm h2.settings-section-line {
   display: flex;
   align-items: center;
   gap: 0.85rem;
@@ -10379,14 +10381,18 @@ min-height: 0;
 #settingsKeysForm h2.settings-section-line span,
 #settingsStoredKeys h2.settings-section-line span,
 #settingsPasswordForm h2.settings-section-line span,
-#settingsRecoveryForm h2.settings-section-line span {
+#settingsRecoveryForm h2.settings-section-line span,
+#settingsRecoverRequestForm h2.settings-section-line span,
+#settingsRecoverConfirmForm h2.settings-section-line span {
   white-space: nowrap;
 }
 
 #settingsKeysForm h2.settings-section-line::after,
 #settingsStoredKeys h2.settings-section-line::after,
 #settingsPasswordForm h2.settings-section-line::after,
-#settingsRecoveryForm h2.settings-section-line::after {
+#settingsRecoveryForm h2.settings-section-line::after,
+#settingsRecoverRequestForm h2.settings-section-line::after,
+#settingsRecoverConfirmForm h2.settings-section-line::after {
   content: "";
   flex: 1 1 auto;
   height: 0;
@@ -10559,7 +10565,9 @@ min-height: 0;
 }
 
 #settingsPasswordForm,
-#settingsRecoveryForm {
+#settingsRecoveryForm,
+#settingsRecoverRequestForm,
+#settingsRecoverConfirmForm {
   margin-top: 2.35rem;
 }
 
@@ -10572,16 +10580,31 @@ min-height: 0;
 }
 
 #settingsRecoveryCurrent a,
-#settingsRecoveryPending a {
+#settingsRecoveryPending a,
+#settingsRecoverRequestInfo a,
+#settingsRecoverConfirmInfo a {
   color: var(--yellow);
+}
+
+#settingsRecoverRequestInfo,
+#settingsRecoverConfirmInfo {
+  margin: 0.55rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 #settingsRecoveryPending:not([hidden]) {
   margin-top: -0.35rem;
 }
 
-#settingsPasswordForm .settings-field > input + .settings-note {
+#settingsPasswordForm .settings-field > input + .settings-note,
+#settingsRecoverRequestForm .settings-field > input + .settings-note,
+#settingsRecoverConfirmForm .settings-field > input + .settings-note {
   margin-top: 0.55rem;
+  margin-bottom: 0;
 }
 
 #settingsPasswordNext {

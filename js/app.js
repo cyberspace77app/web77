@@ -34070,8 +34070,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   // One signer for subspace owner settings, role changes, creating a subspace,
   // wallet stake, unstake, send, convert, claim, or account creation,
-  // delegations, creating a proposal, the recovery account, and encrypting or
-  // decrypting a transfer memo. Pass the account, operations, authority, and
+  // delegations, creating a proposal, the recovery account, requesting
+  // recovery for another account, and encrypting or decrypting a transfer
+  // memo. Pass the account, operations, authority, and
   // the dialog copy. A stored posting key signs Posting with no dialog. A
   // Keychain login signs Posting, Active, and Memo through Keychain with no
   // dialog, when the account is the one that is logged in. Owner always opens
@@ -38208,6 +38209,8 @@ let CS77_FILTER_LOW_REP = 20;
       </form>
       ${settingsPasswordHtml(username)}
       ${settingsRecoveryHtml(username)}
+      ${settingsRecoverRequestHtml(username)}
+      ${settingsRecoverConfirmHtml(username)}
     `;
   }
 
@@ -38292,6 +38295,81 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="submit" class="btn-primary" id="settingsRecoverySubmit" disabled>Change recovery account</button>
         </div>
         <p class="settings-status" id="settingsRecoveryStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function settingsRecoverRequestHtml(username) {
+    const note =
+      "Request recovery for someone whose recovery account is you. They send you only the new public owner key. Your active key signs the request. It lasts 24 hours, and they confirm it with a recent owner key.";
+    const name = normalizeLoginUser(username || "");
+    if (!validLoginUser(name)) {
+      return `
+      <form class="settings-form" id="settingsRecoverRequestForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Request recovery</span></h2>
+        <p class="settings-note">${note}</p>
+        <p class="settings-note">Log in to request a recovery.</p>
+        <div class="settings-actions">
+          <button type="button" class="btn-primary" id="settingsRecoverRequestLogin">Login</button>
+        </div>
+      </form>
+    `;
+    }
+    return `
+      <form class="settings-form" id="settingsRecoverRequestForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Request recovery</span></h2>
+        <p class="settings-note">${note}</p>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsRecoverRequestUser">Account to recover</label>
+          <input id="settingsRecoverRequestUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+          <p id="settingsRecoverRequestInfo" hidden></p>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsRecoverRequestKey">New public owner key</label>
+          <input id="settingsRecoverRequestKey" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="STM…" aria-describedby="settingsRecoverRequestKeyNote">
+          <p class="settings-note" id="settingsRecoverRequestKeyNote">The other person generates this with the key tool and sends only the public owner key.</p>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsRecoverRequestSubmit">Request recovery</button>
+          <button type="button" class="btn-ghost" id="settingsRecoverRequestCancel" hidden>Cancel request</button>
+        </div>
+        <p class="settings-status" id="settingsRecoverRequestStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function settingsRecoverConfirmHtml(username) {
+    const name = normalizeLoginUser(username || "");
+    const user = HiveMd.escapeHtml(validLoginUser(name) ? name : "");
+    return `
+      <form class="settings-form" id="settingsRecoverConfirmForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Confirm recovery</span></h2>
+        <p class="settings-note">Confirm a recovery that was already requested. Enter a recent owner key from the last 30 days and the new owner key. Both are used once on this device and are not saved. This changes only the owner key.</p>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsRecoverConfirmUser">Account to recover</label>
+          <input id="settingsRecoverConfirmUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username" value="${user}">
+          <p id="settingsRecoverConfirmInfo" hidden></p>
+        </div>
+        <div id="settingsRecoverConfirmKeys">
+          <div class="settings-field">
+            <label class="settings-label" for="settingsRecoverConfirmRecent">Recent owner key or master password</label>
+            <input id="settingsRecoverConfirmRecent" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="settingsRecoverConfirmRecentNote">
+            <p class="settings-note" id="settingsRecoverConfirmRecentNote">An owner key or master password from before the last owner change.</p>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label" for="settingsRecoverConfirmNew">New owner key or master password</label>
+            <input id="settingsRecoverConfirmNew" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="settingsRecoverConfirmNewNote">
+            <p class="settings-note" id="settingsRecoverConfirmNewNote">The private key for the public owner key in the request, or the master password that created it.</p>
+          </div>
+        </div>
+        <div id="settingsRecoverConfirmNext" hidden>
+          <p class="settings-note" id="settingsRecoverConfirmNextNote">Active, Posting, and Memo can be set from the new master password. The owner key stays as it is.</p>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsRecoverConfirmSubmit">Confirm recovery</button>
+          <button type="button" class="btn-ghost" id="settingsRecoverConfirmSkip" hidden>Skip</button>
+        </div>
+        <p class="settings-status" id="settingsRecoverConfirmStatus" role="status"></p>
       </form>
     `;
   }
@@ -38726,6 +38804,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
     bindSettingsPassword();
     bindSettingsRecovery();
+    bindSettingsRecoverRequest();
+    bindSettingsRecoverConfirm();
   }
 
   // The offered master password and the owner secret stay here until Reset,
@@ -39556,11 +39636,1028 @@ let CS77_FILTER_LOW_REP = 20;
     loadSettingsRecovery();
   }
 
+  // Owner history stays usable for 30 days after that owner key was replaced.
+  const SETTINGS_OWNER_HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
+
+  function settingsPublicOwnerKey(value) {
+    const text = String(value || "").replace(/\s+/g, "");
+    if (!/^STM[1-9A-HJ-NP-Za-km-z]{50}$/.test(text)) return "";
+    if (text.slice(-39) === "1111111111111111111111111111111114T1Anm") return "";
+    return text;
+  }
+
+  function settingsRecoverCopyAuthority(auth) {
+    if (!auth || typeof auth !== "object") return null;
+    const threshold = Number(auth.weight_threshold);
+    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 4294967295) return null;
+    const accounts = [];
+    const accountRows = Array.isArray(auth.account_auths) ? auth.account_auths : [];
+    for (let i = 0; i < accountRows.length; i++) {
+      const row = accountRows[i];
+      if (!Array.isArray(row) || row.length < 2) return null;
+      const name = normalizeLoginUser(row[0]);
+      const weight = Number(row[1]);
+      if (!validLoginUser(name) || !Number.isInteger(weight) || weight < 1 || weight > 65535) return null;
+      accounts.push([name, weight]);
+    }
+    const keys = [];
+    const keyRows = Array.isArray(auth.key_auths) ? auth.key_auths : [];
+    for (let i = 0; i < keyRows.length; i++) {
+      const row = keyRows[i];
+      if (!Array.isArray(row) || row.length < 2) return null;
+      const pub = settingsPublicOwnerKey(row[0]);
+      const weight = Number(row[1]);
+      if (!pub || !Number.isInteger(weight) || weight < 1 || weight > 65535) return null;
+      keys.push([pub, weight]);
+    }
+    return { weight_threshold: threshold, account_auths: accounts, key_auths: keys };
+  }
+
+  function settingsRecoverSimpleKey(auth) {
+    if (!auth || auth.account_auths.length || auth.key_auths.length !== 1) return "";
+    const row = auth.key_auths[0];
+    if (row[1] < auth.weight_threshold || auth.weight_threshold < 1) return "";
+    return row[0];
+  }
+
+  function settingsRecoverKeySatisfies(auth, pub) {
+    const threshold = Number(auth && auth.weight_threshold) || 0;
+    if (threshold < 1) return false;
+    return settingsKeyWeight(auth, pub) >= threshold;
+  }
+
+  function settingsRecoverSameAuthority(a, b) {
+    if (!a || !b) return false;
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function settingsRecoverHistoryOpen(row, now) {
+    const ms = settingsOwnerStampMs(row && row.last_valid_time);
+    if (!Number.isFinite(ms)) return false;
+    return ms + SETTINGS_OWNER_HISTORY_MS > now;
+  }
+
+  function settingsRecoverHistoryRows(result, user) {
+    const list = Array.isArray(result)
+      ? result
+      : result && Array.isArray(result.owner_auths)
+        ? result.owner_auths
+        : [];
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || typeof row !== "object") continue;
+      const owner = normalizeLoginUser(row.account || "");
+      if (owner && owner !== user) continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function settingsRecoverHistoryWindow(rows) {
+    const now = Date.now();
+    let latest = "";
+    let latestMs = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!settingsRecoverHistoryOpen(row, now)) continue;
+      const ms = settingsOwnerStampMs(row.last_valid_time);
+      if (!Number.isFinite(ms) || ms < latestMs) continue;
+      latestMs = ms;
+      latest = String(row.last_valid_time || "");
+    }
+    if (!latest) return null;
+    return { changed: latest, untilMs: latestMs + SETTINGS_OWNER_HISTORY_MS };
+  }
+
+  function settingsRecoverMatchHistory(rows, pub) {
+    const now = Date.now();
+    let best = null;
+    let bestMs = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!settingsRecoverHistoryOpen(row, now)) continue;
+      const authority = settingsRecoverCopyAuthority(row.previous_owner_authority);
+      if (!authority || !settingsRecoverKeySatisfies(authority, pub)) continue;
+      const ms = settingsOwnerStampMs(row.last_valid_time);
+      if (!Number.isFinite(ms) || ms < bestMs) continue;
+      bestMs = ms;
+      best = authority;
+    }
+    return best;
+  }
+
+  function settingsRecoverPending(result, user) {
+    const list = Array.isArray(result)
+      ? result
+      : result && Array.isArray(result.requests)
+        ? result.requests
+        : [];
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || typeof row !== "object") continue;
+      const owner = normalizeLoginUser(row.account_to_recover || "");
+      if (owner && owner !== user) continue;
+      const expires = String(row.expires || "");
+      const ms = settingsOwnerStampMs(expires);
+      if (Number.isFinite(ms) && ms <= Date.now()) continue;
+      const authority = settingsRecoverCopyAuthority(row.new_owner_authority);
+      if (!authority || authority.weight_threshold < 1) continue;
+      if (!authority.key_auths.length && !authority.account_auths.length) {
+        return { unreadable: true, expires: expires, authority: null, key: "" };
+      }
+      return {
+        unreadable: false,
+        expires: expires,
+        authority: authority,
+        key: settingsRecoverSimpleKey(authority),
+      };
+    }
+    return null;
+  }
+
+  async function fetchSettingsRecoverAccount(user) {
+    const [rows, requests, history] = await Promise.all([
+      HiveApi.getAccounts([user]),
+      HiveApi.hiveRpc("database_api.find_account_recovery_requests", { accounts: [user] }),
+      HiveApi.hiveRpc("database_api.find_owner_histories", { owner: user }),
+    ]);
+    const account = rows && rows[0];
+    if (!account || normalizeLoginUser(account.name) !== user) {
+      throw new Error("Unknown Hive account @" + user + ".");
+    }
+    return {
+      partner: normalizeLoginUser(account.recovery_account || ""),
+      request: settingsRecoverPending(requests, user),
+      history: settingsRecoverHistoryRows(history, user),
+    };
+  }
+
+  const settingsRecoverRequest = {
+    token: 0,
+    timer: 0,
+    pending: false,
+    loading: false,
+    loaded: false,
+    user: "",
+    target: "",
+    partner: "",
+    history: null,
+    request: null,
+  };
+
+  function clearSettingsRecoverRequestTimer() {
+    if (!settingsRecoverRequest.timer) return;
+    clearTimeout(settingsRecoverRequest.timer);
+    settingsRecoverRequest.timer = 0;
+  }
+
+  function setSettingsRecoverRequestStatus(message, isError) {
+    const status = $("#settingsRecoverRequestStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function settingsRecoverRequestInfoHtml() {
+    const target = settingsRecoverRequest.target;
+    const partner = settingsRecoverRequest.partner;
+    const session = settingsRecoverRequest.user;
+    const history = settingsRecoverRequest.history;
+    const request = settingsRecoverRequest.request;
+    const parts = [];
+    if (!validLoginUser(partner)) {
+      parts.push("No recovery account is listed. The top witness can recover this account.");
+    } else if (partner !== session) {
+      parts.push("Only " + settingsRecoveryLink(partner) + " can request recovery for this account.");
+    } else if (!history) {
+      parts.push("This account cannot be recovered. The owner key has not changed in the last 30 days.");
+    } else {
+      const changed = settingsRecoveryWhen(history.changed);
+      const until = formatCreated(new Date(history.untilMs).toISOString());
+      let line = "You can request recovery for " + settingsRecoveryLink(target) + ".";
+      if (changed && until) {
+        line += " An owner change on " + HiveMd.escapeHtml(changed) + " can still be recovered until " + HiveMd.escapeHtml(until) + ".";
+      }
+      parts.push(line);
+    }
+    if (request && request.unreadable) {
+      parts.push("A recovery request is waiting, and this form cannot read that owner authority.");
+    } else if (request) {
+      const when = settingsRecoveryWhen(request.expires);
+      let line = "A recovery request is waiting";
+      if (when) line += " until " + HiveMd.escapeHtml(when);
+      line += ".";
+      if (request.key) line += " Public owner key " + HiveMd.escapeHtml(request.key) + ".";
+      parts.push(line);
+    }
+    return parts.join(" ");
+  }
+
+  function paintSettingsRecoverRequest() {
+    const input = $("#settingsRecoverRequestUser");
+    const key = $("#settingsRecoverRequestKey");
+    const submit = $("#settingsRecoverRequestSubmit");
+    const cancel = $("#settingsRecoverRequestCancel");
+    const info = $("#settingsRecoverRequestInfo");
+    const busy = settingsRecoverRequest.pending;
+    const session = normalizeLoginUser(observer());
+    const typed = normalizeLoginUser(input && input.value);
+    const current =
+      settingsRecoverRequest.loaded &&
+      settingsRecoverRequest.user === session &&
+      settingsRecoverRequest.target === typed;
+    const canCancel = current && settingsRecoverRequest.partner === session && Boolean(settingsRecoverRequest.request);
+    if (input) input.disabled = busy;
+    if (key) key.disabled = busy;
+    if (submit) submit.disabled = busy;
+    if (cancel) {
+      cancel.hidden = !canCancel;
+      cancel.disabled = busy || !canCancel;
+    }
+    if (!info) return;
+    if (settingsRecoverRequest.loading && validLoginUser(typed)) {
+      info.hidden = false;
+      info.textContent = "Loading @" + typed + "…";
+      return;
+    }
+    if (!current) {
+      info.hidden = true;
+      info.textContent = "";
+      return;
+    }
+    info.hidden = false;
+    info.innerHTML = settingsRecoverRequestInfoHtml();
+  }
+
+  function wipeSettingsRecoverRequest() {
+    clearSettingsRecoverRequestTimer();
+    settingsRecoverRequest.token += 1;
+    settingsRecoverRequest.pending = false;
+    settingsRecoverRequest.loading = false;
+    settingsRecoverRequest.loaded = false;
+    settingsRecoverRequest.user = "";
+    settingsRecoverRequest.target = "";
+    settingsRecoverRequest.partner = "";
+    settingsRecoverRequest.history = null;
+    settingsRecoverRequest.request = null;
+    const input = $("#settingsRecoverRequestUser");
+    if (input) input.value = "";
+    blankSettingsControl("settingsRecoverRequestKey");
+    setSettingsRecoverRequestStatus("");
+    paintSettingsRecoverRequest();
+  }
+
+  async function loadSettingsRecoverRequest() {
+    clearSettingsRecoverRequestTimer();
+    const session = normalizeLoginUser(observer());
+    const input = $("#settingsRecoverRequestUser");
+    const target = normalizeLoginUser((input && input.value) || "");
+    if (input && target && input.value !== target) input.value = target;
+    const token = (settingsRecoverRequest.token += 1);
+    settingsRecoverRequest.pending = false;
+    settingsRecoverRequest.loading = validLoginUser(target);
+    settingsRecoverRequest.loaded = false;
+    settingsRecoverRequest.user = session;
+    settingsRecoverRequest.target = target;
+    settingsRecoverRequest.partner = "";
+    settingsRecoverRequest.history = null;
+    settingsRecoverRequest.request = null;
+    setSettingsRecoverRequestStatus("");
+    paintSettingsRecoverRequest();
+    if (!validLoginUser(session) || !validLoginUser(target)) {
+      settingsRecoverRequest.loading = false;
+      paintSettingsRecoverRequest();
+      return;
+    }
+    try {
+      const seen = await fetchSettingsRecoverAccount(target);
+      if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+      if (normalizeLoginUser(($("#settingsRecoverRequestUser") || {}).value) !== target) return;
+      settingsRecoverRequest.partner = seen.partner;
+      settingsRecoverRequest.history = settingsRecoverHistoryWindow(seen.history);
+      settingsRecoverRequest.request = seen.request;
+      settingsRecoverRequest.loaded = true;
+    } catch (err) {
+      if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+      setSettingsRecoverRequestStatus((err && err.message) || "Could not load that account.", true);
+    } finally {
+      if (token === settingsRecoverRequest.token) {
+        settingsRecoverRequest.loading = false;
+        paintSettingsRecoverRequest();
+      }
+    }
+  }
+
+  function scheduleSettingsRecoverRequest() {
+    if (settingsRecoverRequest.pending) return;
+    const input = $("#settingsRecoverRequestUser");
+    const target = normalizeLoginUser((input && input.value) || "");
+    if (
+      settingsRecoverRequest.loaded &&
+      settingsRecoverRequest.target === target &&
+      settingsRecoverRequest.user === normalizeLoginUser(observer())
+    ) {
+      paintSettingsRecoverRequest();
+      return;
+    }
+    settingsRecoverRequest.loaded = false;
+    settingsRecoverRequest.history = null;
+    settingsRecoverRequest.request = null;
+    setSettingsRecoverRequestStatus("");
+    paintSettingsRecoverRequest();
+    clearSettingsRecoverRequestTimer();
+    if (!validLoginUser(target)) return;
+    settingsRecoverRequest.timer = setTimeout(() => {
+      settingsRecoverRequest.timer = 0;
+      loadSettingsRecoverRequest();
+    }, 350);
+  }
+
+  async function signSettingsRecoverRequest(cancel) {
+    if (settingsRecoverRequest.pending) return;
+    const session = normalizeLoginUser(observer());
+    if (!validLoginUser(session) || normalizeLoginUser(observer()) !== session) {
+      setSettingsRecoverRequestStatus("Log in to request a recovery.", true);
+      return;
+    }
+    const input = $("#settingsRecoverRequestUser");
+    const target = normalizeLoginUser((input && input.value) || "");
+    if (input && input.value !== target) input.value = target;
+    if (!validLoginUser(target)) {
+      setSettingsRecoverRequestStatus("Enter a valid Hive username.", true);
+      return;
+    }
+    const keyEl = $("#settingsRecoverRequestKey");
+    let pub = "";
+    if (!cancel) {
+      pub = settingsPublicOwnerKey(keyEl && keyEl.value);
+      if (keyEl && pub && keyEl.value !== pub) keyEl.value = pub;
+      if (!pub) {
+        setSettingsRecoverRequestStatus("Enter a valid public owner key.", true);
+        return;
+      }
+    }
+    if (
+      !settingsRecoverRequest.loaded ||
+      settingsRecoverRequest.target !== target ||
+      settingsRecoverRequest.user !== session
+    ) {
+      await loadSettingsRecoverRequest();
+    }
+    if (normalizeLoginUser(observer()) !== session) return;
+    if (!settingsRecoverRequest.loaded || settingsRecoverRequest.target !== target) return;
+    const token = settingsRecoverRequest.token;
+    if (!validLoginUser(settingsRecoverRequest.partner)) {
+      setSettingsRecoverRequestStatus("No recovery account is listed. The top witness can recover this account.", true);
+      return;
+    }
+    if (settingsRecoverRequest.partner !== session) {
+      setSettingsRecoverRequestStatus(
+        "Only @" + settingsRecoverRequest.partner + " can request recovery for this account.",
+        true
+      );
+      return;
+    }
+    const request = settingsRecoverRequest.request;
+    if (cancel && !request) {
+      setSettingsRecoverRequestStatus("No recovery request is waiting for this account.", true);
+      return;
+    }
+    if (!cancel && !settingsRecoverRequest.history) {
+      setSettingsRecoverRequestStatus(
+        "This account cannot be recovered. The owner key has not changed in the last 30 days.",
+        true
+      );
+      return;
+    }
+    if (!cancel && request && request.key && request.key === pub) {
+      const when = settingsRecoveryWhen(request.expires);
+      setSettingsRecoverRequestStatus(
+        "This public owner key is already waiting for @" +
+          target +
+          (when ? " until " + when : "") +
+          ".",
+        true
+      );
+      return;
+    }
+    const authority = cancel
+      ? { weight_threshold: 0, account_auths: [], key_auths: [] }
+      : { weight_threshold: 1, account_auths: [], key_auths: [[pub, 1]] };
+    settingsRecoverRequest.pending = true;
+    paintSettingsRecoverRequest();
+    setSettingsRecoverRequestStatus(cancel ? "Waiting for the active key…" : "Waiting for the active key…");
+    try {
+      await signWithDialog(
+        session,
+        [
+          [
+            "request_account_recovery",
+            {
+              recovery_account: session,
+              account_to_recover: target,
+              new_owner_authority: authority,
+              extensions: [],
+            },
+          ],
+        ],
+        {
+          authority: "Active",
+          title: cancel ? "Cancel recovery request" : "Request recovery",
+          lead: cancel
+            ? "This cancels the recovery request for @" + target + ". Their owner key stays as it is."
+            : "This starts a 24 hour recovery for @" +
+              target +
+              ". The new owner authority is the public key in the form. @" +
+              target +
+              " confirms it with a recent owner key.",
+          action: cancel ? "Cancel request" : "Request",
+          source: "settings",
+          failMessage: cancel ? "The recovery request was not cancelled." : "The recovery was not requested.",
+          cancelMessage: cancel ? "The recovery request was not cancelled." : "The recovery was not requested.",
+        }
+      );
+      if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+      setSettingsRecoverRequestStatus(cancel ? "Waiting for the cancellation…" : "Waiting for the recovery request…");
+      let seen = null;
+      for (let i = 0; i < 4; i++) {
+        if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+        try {
+          seen = await fetchSettingsRecoverAccount(target);
+        } catch {
+          seen = null;
+        }
+        if (token !== settingsRecoverRequest.token) return;
+        const ready = Boolean(
+          seen && (cancel ? !seen.request : seen.request && seen.request.key === pub)
+        );
+        if (ready || i === 3) break;
+        await subspaceWait(1000);
+      }
+      if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+      if (seen) {
+        settingsRecoverRequest.partner = seen.partner;
+        settingsRecoverRequest.history = settingsRecoverHistoryWindow(seen.history);
+        settingsRecoverRequest.request = seen.request;
+        settingsRecoverRequest.loaded = true;
+      }
+      if (!cancel) blankSettingsControl("settingsRecoverRequestKey");
+      if (cancel) {
+        setSettingsRecoverRequestStatus("The recovery request for @" + target + " was cancelled.", false);
+      } else {
+        const when = seen && seen.request && settingsRecoveryWhen(seen.request.expires);
+        setSettingsRecoverRequestStatus(
+          when
+            ? "A recovery request for @" + target + " is waiting until " + when + ". They have 24 hours to confirm."
+            : "A recovery request for @" + target + " was broadcast. It lasts 24 hours.",
+          false
+        );
+      }
+    } catch (err) {
+      if (token !== settingsRecoverRequest.token || normalizeLoginUser(observer()) !== session) return;
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsRecoverRequestStatus(
+        cancelled
+          ? (err && err.message) || "The recovery was not requested."
+          : (err && err.message) || (cancel ? "Could not cancel the recovery request." : "Could not request the recovery."),
+        !cancelled
+      );
+    } finally {
+      if (token === settingsRecoverRequest.token) {
+        settingsRecoverRequest.pending = false;
+        paintSettingsRecoverRequest();
+      }
+    }
+  }
+
+  function submitSettingsRecoverRequest(e) {
+    if (e) e.preventDefault();
+    signSettingsRecoverRequest(false);
+  }
+
+  function bindSettingsRecoverRequest() {
+    const form = $("#settingsRecoverRequestForm");
+    if (!form) return;
+    const login = $("#settingsRecoverRequestLogin");
+    if (login) {
+      login.addEventListener("click", openLogin);
+      return;
+    }
+    form.addEventListener("submit", submitSettingsRecoverRequest);
+    const input = $("#settingsRecoverRequestUser");
+    if (input) {
+      input.addEventListener("input", scheduleSettingsRecoverRequest);
+      input.addEventListener("blur", () => {
+        if (settingsRecoverRequest.pending) return;
+        const target = normalizeLoginUser(input.value || "");
+        if (settingsRecoverRequest.loaded && settingsRecoverRequest.target === target) return;
+        loadSettingsRecoverRequest();
+      });
+    }
+    const cancel = $("#settingsRecoverRequestCancel");
+    if (cancel) {
+      cancel.addEventListener("click", () => {
+        signSettingsRecoverRequest(true);
+      });
+    }
+  }
+
+  const settingsRecoverConfirm = {
+    token: 0,
+    timer: 0,
+    pending: false,
+    loading: false,
+    phase: "idle",
+    looked: "",
+    partner: "",
+    request: null,
+    history: false,
+    password: "",
+    ownerPub: "",
+  };
+
+  function clearSettingsRecoverConfirmTimer() {
+    if (!settingsRecoverConfirm.timer) return;
+    clearTimeout(settingsRecoverConfirm.timer);
+    settingsRecoverConfirm.timer = 0;
+  }
+
+  function setSettingsRecoverConfirmStatus(message, isError) {
+    const status = $("#settingsRecoverConfirmStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function settingsRecoverConfirmInfoHtml() {
+    const request = settingsRecoverConfirm.request;
+    if (!request) {
+      return "No recovery request is waiting for this account. The recovery account has to request it, and a request lasts 24 hours.";
+    }
+    if (request.unreadable || !request.key) {
+      return "This recovery request needs more than one owner key.";
+    }
+    const when = settingsRecoveryWhen(request.expires);
+    let line = "A recovery request is waiting";
+    if (when) line += " until " + HiveMd.escapeHtml(when);
+    line += ". Public owner key " + HiveMd.escapeHtml(request.key) + ".";
+    if (!settingsRecoverConfirm.history) {
+      line += " The owner key has not changed in the last 30 days, so this request cannot be confirmed.";
+    }
+    return line;
+  }
+
+  function paintSettingsRecoverConfirm() {
+    const offered = settingsRecoverConfirm.phase === "offered";
+    const busy = settingsRecoverConfirm.pending;
+    const user = $("#settingsRecoverConfirmUser");
+    const recent = $("#settingsRecoverConfirmRecent");
+    const fresh = $("#settingsRecoverConfirmNew");
+    const keys = $("#settingsRecoverConfirmKeys");
+    const next = $("#settingsRecoverConfirmNext");
+    const submit = $("#settingsRecoverConfirmSubmit");
+    const skip = $("#settingsRecoverConfirmSkip");
+    const info = $("#settingsRecoverConfirmInfo");
+    const typed = normalizeLoginUser(user && user.value);
+    if (user) user.disabled = busy;
+    if (recent) recent.disabled = busy;
+    if (fresh) fresh.disabled = busy;
+    if (keys) keys.hidden = offered;
+    if (next) next.hidden = !offered;
+    if (submit) {
+      submit.disabled = busy;
+      submit.textContent = offered ? "Update the other keys" : "Confirm recovery";
+    }
+    if (skip) {
+      skip.hidden = !offered;
+      skip.disabled = busy;
+    }
+    if (!info) return;
+    if (offered) {
+      info.hidden = true;
+      return;
+    }
+    if (settingsRecoverConfirm.loading && validLoginUser(typed)) {
+      info.hidden = false;
+      info.textContent = "Loading @" + typed + "…";
+      return;
+    }
+    if (settingsRecoverConfirm.looked !== typed || !validLoginUser(typed)) {
+      info.hidden = true;
+      info.textContent = "";
+      return;
+    }
+    info.hidden = false;
+    info.innerHTML = settingsRecoverConfirmInfoHtml();
+  }
+
+  function wipeSettingsRecoverConfirm() {
+    clearSettingsRecoverConfirmTimer();
+    settingsRecoverConfirm.token += 1;
+    settingsRecoverConfirm.pending = false;
+    settingsRecoverConfirm.loading = false;
+    settingsRecoverConfirm.phase = "idle";
+    settingsRecoverConfirm.looked = "";
+    settingsRecoverConfirm.partner = "";
+    settingsRecoverConfirm.request = null;
+    settingsRecoverConfirm.history = false;
+    settingsRecoverConfirm.password = "";
+    settingsRecoverConfirm.ownerPub = "";
+    const name = normalizeLoginUser(observer());
+    const user = $("#settingsRecoverConfirmUser");
+    if (user) user.value = validLoginUser(name) ? name : "";
+    blankSettingsControl("settingsRecoverConfirmRecent");
+    blankSettingsControl("settingsRecoverConfirmNew");
+    setSettingsRecoverConfirmStatus("");
+    paintSettingsRecoverConfirm();
+  }
+
+  async function loadSettingsRecoverConfirm() {
+    clearSettingsRecoverConfirmTimer();
+    if (settingsRecoverConfirm.phase === "offered" || settingsRecoverConfirm.pending) return;
+    const input = $("#settingsRecoverConfirmUser");
+    const target = normalizeLoginUser((input && input.value) || "");
+    if (input && target && input.value !== target) input.value = target;
+    const token = (settingsRecoverConfirm.token += 1);
+    settingsRecoverConfirm.loading = validLoginUser(target);
+    settingsRecoverConfirm.looked = "";
+    settingsRecoverConfirm.partner = "";
+    settingsRecoverConfirm.request = null;
+    settingsRecoverConfirm.history = false;
+    setSettingsRecoverConfirmStatus("");
+    paintSettingsRecoverConfirm();
+    if (!validLoginUser(target)) {
+      settingsRecoverConfirm.loading = false;
+      paintSettingsRecoverConfirm();
+      return;
+    }
+    try {
+      const seen = await fetchSettingsRecoverAccount(target);
+      if (token !== settingsRecoverConfirm.token || settingsRecoverConfirm.phase === "offered") return;
+      if (normalizeLoginUser(($("#settingsRecoverConfirmUser") || {}).value) !== target) return;
+      settingsRecoverConfirm.looked = target;
+      settingsRecoverConfirm.partner = seen.partner;
+      settingsRecoverConfirm.request = seen.request;
+      settingsRecoverConfirm.history = Boolean(settingsRecoverHistoryWindow(seen.history));
+    } catch (err) {
+      if (token !== settingsRecoverConfirm.token || settingsRecoverConfirm.phase === "offered") return;
+      setSettingsRecoverConfirmStatus((err && err.message) || "Could not load that account.", true);
+    } finally {
+      if (token === settingsRecoverConfirm.token) {
+        settingsRecoverConfirm.loading = false;
+        paintSettingsRecoverConfirm();
+      }
+    }
+  }
+
+  function scheduleSettingsRecoverConfirm() {
+    if (settingsRecoverConfirm.pending) return;
+    const input = $("#settingsRecoverConfirmUser");
+    const typed = (input && input.value) || "";
+    let discarded = false;
+    if (settingsRecoverConfirm.phase === "offered") {
+      discarded = true;
+      wipeSettingsRecoverConfirm();
+      if (input && input.isConnected) input.value = typed;
+    }
+    const target = normalizeLoginUser(($("#settingsRecoverConfirmUser") || {}).value || "");
+    if (settingsRecoverConfirm.looked === target && validLoginUser(target)) {
+      paintSettingsRecoverConfirm();
+      if (discarded) setSettingsRecoverConfirmStatus("That master password was discarded.");
+      return;
+    }
+    settingsRecoverConfirm.looked = "";
+    settingsRecoverConfirm.request = null;
+    settingsRecoverConfirm.history = false;
+    setSettingsRecoverConfirmStatus(discarded ? "That master password was discarded." : "");
+    paintSettingsRecoverConfirm();
+    clearSettingsRecoverConfirmTimer();
+    if (!validLoginUser(target)) return;
+    settingsRecoverConfirm.timer = setTimeout(() => {
+      settingsRecoverConfirm.timer = 0;
+      loadSettingsRecoverConfirm();
+    }, 350);
+  }
+
+  function settingsRecoverRotateOperation(user, keys, account) {
+    return [
+      "account_update2",
+      {
+        account: user,
+        active: settingsPasswordAuthority(account && account.active, keys.activePub),
+        posting: settingsPasswordAuthority(account && account.posting, keys.postingPub),
+        memo_key: keys.memoPub,
+        json_metadata: "",
+        posting_json_metadata: "",
+        extensions: [],
+      },
+    ];
+  }
+
+  async function settingsRecoverWaitForOwner(user, pub, token) {
+    for (let i = 0; i < 8; i++) {
+      if (token !== settingsRecoverConfirm.token) return null;
+      let account = null;
+      try {
+        account = await hiveAccountRecord(user);
+      } catch {
+        account = null;
+      }
+      if (token !== settingsRecoverConfirm.token) return null;
+      if (account && settingsAccountHasKey(account, "owner", pub)) return account;
+      await subspaceWait(1500);
+    }
+    throw new Error("The owner key was recovered, but the network has not shown it yet. Update the other keys in a moment.");
+  }
+
+  async function rotateSettingsRecoverConfirm() {
+    if (settingsRecoverConfirm.pending || settingsRecoverConfirm.phase !== "offered") return;
+    const token = settingsRecoverConfirm.token;
+    const user = settingsRecoverConfirm.looked;
+    const ownerPub = settingsRecoverConfirm.ownerPub;
+    let password = settingsRecoverConfirm.password;
+    if (!password || !ownerPub || !validLoginUser(user)) {
+      password = "";
+      wipeSettingsRecoverConfirm();
+      setSettingsRecoverConfirmStatus("Confirm the recovery again to update the other keys.", true);
+      return;
+    }
+    if (!window.cs77Auth || typeof cs77Auth.keysFromLogin !== "function" || typeof cs77Auth.broadcastRoleSecret !== "function") {
+      password = "";
+      setSettingsRecoverConfirmStatus("Could not update the other keys in this browser.", true);
+      return;
+    }
+    settingsRecoverConfirm.pending = true;
+    paintSettingsRecoverConfirm();
+    setSettingsRecoverConfirmStatus("Waiting for the recovered owner key…");
+    let keys = null;
+    try {
+      const account = await settingsRecoverWaitForOwner(user, ownerPub, token);
+      if (token !== settingsRecoverConfirm.token) return;
+      if (!account) return;
+      setSettingsRecoverConfirmStatus("Updating the other keys…");
+      keys = await cs77Auth.keysFromLogin(user, password);
+      if (token !== settingsRecoverConfirm.token) return;
+      if (keys.ownerPub !== ownerPub) {
+        throw new Error("This master password does not match the recovered owner key.");
+      }
+      const operation = settingsRecoverRotateOperation(user, keys, account);
+      await cs77Auth.broadcastRoleSecret(user, password, "owner", [operation]);
+      password = "";
+      if (token !== settingsRecoverConfirm.token) return;
+      setSettingsRecoverConfirmStatus("Waiting for the new keys…");
+      let posted = false;
+      for (let i = 0; i < 8; i++) {
+        if (token !== settingsRecoverConfirm.token) return;
+        let seen = null;
+        try {
+          seen = await hiveAccountRecord(user);
+        } catch {
+          seen = null;
+        }
+        if (token !== settingsRecoverConfirm.token) return;
+        if (seen && settingsAccountHasKey(seen, "posting", keys.postingPub)) {
+          posted = true;
+          break;
+        }
+        await subspaceWait(1500);
+      }
+      if (token !== settingsRecoverConfirm.token) return;
+      if (!posted) {
+        throw new Error("The other keys were broadcast, but the network has not shown them yet. Keep the new master password.");
+      }
+      const session = normalizeLoginUser(observer());
+      const stored = typeof cs77Auth.hasKey === "function" && cs77Auth.hasKey(user);
+      const keychain = keychainLoginActive() === user;
+      let done = "Active, Posting, and Memo now use the new master password. The owner key was already recovered.";
+      if (stored && !keychain && session === user && typeof cs77Auth.login === "function") {
+        try {
+          await cs77Auth.login(user, keys.posting);
+          done = "Active, Posting, and Memo now use the new master password. This browser uses the new posting key. Update Hive Keychain if it still has the old keys.";
+        } catch {
+          done = "Active, Posting, and Memo now use the new master password. Log in again with that password.";
+        }
+      } else if (keychain && session === user) {
+        done = "Active, Posting, and Memo now use the new master password. Update Hive Keychain with the new keys.";
+      }
+      wipeSettingsRecoverConfirm();
+      const field = $("#settingsRecoverConfirmUser");
+      if (field && validLoginUser(user)) field.value = user;
+      setSettingsRecoverConfirmStatus(done, false);
+    } catch (err) {
+      if (token !== settingsRecoverConfirm.token) return;
+      setSettingsRecoverConfirmStatus(settingsPasswordErrorText(err), true);
+    } finally {
+      password = "";
+      if (keys) {
+        keys.posting = "";
+        keys.ownerPub = "";
+        keys.activePub = "";
+        keys.postingPub = "";
+        keys.memoPub = "";
+      }
+      keys = null;
+      if (token === settingsRecoverConfirm.token) {
+        settingsRecoverConfirm.pending = false;
+        paintSettingsRecoverConfirm();
+      }
+    }
+  }
+
+  async function submitSettingsRecoverConfirm(e) {
+    if (e) e.preventDefault();
+    if (settingsRecoverConfirm.phase === "offered") {
+      rotateSettingsRecoverConfirm();
+      return;
+    }
+    if (settingsRecoverConfirm.pending) return;
+    clearSettingsRecoverConfirmTimer();
+    const input = $("#settingsRecoverConfirmUser");
+    const user = normalizeLoginUser((input && input.value) || "");
+    if (input && user && input.value !== user) input.value = user;
+    if (!validLoginUser(user)) {
+      setSettingsRecoverConfirmStatus("Enter a valid Hive username.", true);
+      return;
+    }
+    const recentEl = $("#settingsRecoverConfirmRecent");
+    const newEl = $("#settingsRecoverConfirmNew");
+    let recentSecret = (recentEl && recentEl.value) || "";
+    let newSecret = (newEl && newEl.value) || "";
+    if (settingsPasswordLooksPublic(recentSecret) || settingsPasswordLooksPublic(newSecret)) {
+      recentSecret = "";
+      newSecret = "";
+      setSettingsRecoverConfirmStatus("Enter the private owner key or the master password.", true);
+      return;
+    }
+    if (!String(recentSecret).replace(/\s+/g, "")) {
+      recentSecret = "";
+      newSecret = "";
+      setSettingsRecoverConfirmStatus("Enter the recent owner key or master password.", true);
+      return;
+    }
+    if (!String(newSecret).replace(/\s+/g, "")) {
+      recentSecret = "";
+      newSecret = "";
+      setSettingsRecoverConfirmStatus("Enter the new owner key or master password.", true);
+      return;
+    }
+    if (!window.cs77Auth || typeof cs77Auth.publicFromSecret !== "function" || typeof cs77Auth.broadcastRecoverySecrets !== "function" || typeof cs77Auth.secretKind !== "function") {
+      recentSecret = "";
+      newSecret = "";
+      setSettingsRecoverConfirmStatus("Could not confirm the recovery in this browser.", true);
+      return;
+    }
+    const token = (settingsRecoverConfirm.token += 1);
+    settingsRecoverConfirm.pending = true;
+    settingsRecoverConfirm.password = "";
+    settingsRecoverConfirm.ownerPub = "";
+    paintSettingsRecoverConfirm();
+    setSettingsRecoverConfirmStatus("Checking the owner keys…");
+    let keptPassword = "";
+    try {
+      const kind = await cs77Auth.secretKind(newSecret);
+      if (token !== settingsRecoverConfirm.token) return;
+      if (kind === "invalid") throw new Error("That key is not valid.");
+      const recentPub = await cs77Auth.publicFromSecret(user, recentSecret, "owner");
+      if (token !== settingsRecoverConfirm.token) return;
+      const newPub = await cs77Auth.publicFromSecret(user, newSecret, "owner");
+      if (token !== settingsRecoverConfirm.token) return;
+      if (recentPub === newPub) {
+        throw new Error("The new owner key must be different from the recent owner key.");
+      }
+      const seen = await fetchSettingsRecoverAccount(user);
+      if (token !== settingsRecoverConfirm.token) return;
+      settingsRecoverConfirm.looked = user;
+      settingsRecoverConfirm.partner = seen.partner;
+      settingsRecoverConfirm.request = seen.request;
+      settingsRecoverConfirm.history = Boolean(settingsRecoverHistoryWindow(seen.history));
+      paintSettingsRecoverConfirm();
+      const request = seen.request;
+      if (!request) {
+        throw new Error(
+          "No recovery request is waiting for this account. The recovery account has to request it, and a request lasts 24 hours."
+        );
+      }
+      if (request.unreadable || !request.key || !request.authority) {
+        throw new Error("This recovery request needs more than one owner key.");
+      }
+      if (request.key !== newPub) {
+        throw new Error("This key does not match the owner key in the recovery request.");
+      }
+      const recentAuthority = settingsRecoverMatchHistory(seen.history, recentPub);
+      if (!recentAuthority) {
+        throw new Error(
+          "This owner key is not a recent owner key for @" +
+            user +
+            ". Recovery only works with an owner key from the last 30 days."
+        );
+      }
+      if (settingsRecoverSameAuthority(recentAuthority, request.authority)) {
+        throw new Error("The new owner key must be different from the recent owner key.");
+      }
+      setSettingsRecoverConfirmStatus("Confirming the recovery…");
+      try {
+        await cs77Auth.broadcastRecoverySecrets(user, recentSecret, newSecret, [
+          [
+            "recover_account",
+            {
+              account_to_recover: user,
+              new_owner_authority: request.authority,
+              recent_owner_authority: recentAuthority,
+              extensions: [],
+            },
+          ],
+        ]);
+      } catch (err) {
+        let now = null;
+        try {
+          now = await hiveAccountRecord(user);
+        } catch {
+          now = null;
+        }
+        if (token !== settingsRecoverConfirm.token) return;
+        if (!(now && settingsAccountHasKey(now, "owner", newPub))) throw err;
+      }
+      recentSecret = "";
+      if (token !== settingsRecoverConfirm.token) return;
+      blankSettingsControl("settingsRecoverConfirmRecent");
+      blankSettingsControl("settingsRecoverConfirmNew");
+      settingsRecoverConfirm.request = null;
+      if (kind === "master") {
+        keptPassword = newSecret;
+        newSecret = "";
+        settingsRecoverConfirm.password = keptPassword;
+        keptPassword = "";
+        settingsRecoverConfirm.ownerPub = newPub;
+        settingsRecoverConfirm.phase = "offered";
+        settingsRecoverConfirm.looked = user;
+        setSettingsRecoverConfirmStatus(
+          "The owner key of @" + user + " was recovered. Active, Posting, and Memo were not changed.",
+          false
+        );
+      } else {
+        newSecret = "";
+        setSettingsRecoverConfirmStatus(
+          "The owner key of @" +
+            user +
+            " was recovered. Active, Posting, and Memo were not changed. Change those keys after an hour.",
+          false
+        );
+      }
+    } catch (err) {
+      if (token !== settingsRecoverConfirm.token) return;
+      setSettingsRecoverConfirmStatus(settingsPasswordErrorText(err), true);
+    } finally {
+      recentSecret = "";
+      newSecret = "";
+      keptPassword = "";
+      if (token === settingsRecoverConfirm.token) {
+        settingsRecoverConfirm.pending = false;
+        paintSettingsRecoverConfirm();
+      }
+    }
+  }
+
+  function bindSettingsRecoverConfirm() {
+    const form = $("#settingsRecoverConfirmForm");
+    if (!form) return;
+    form.addEventListener("submit", submitSettingsRecoverConfirm);
+    const user = $("#settingsRecoverConfirmUser");
+    if (user) {
+      user.addEventListener("input", scheduleSettingsRecoverConfirm);
+      user.addEventListener("blur", () => {
+        if (settingsRecoverConfirm.pending || settingsRecoverConfirm.phase === "offered") return;
+        const target = normalizeLoginUser(user.value || "");
+        if (settingsRecoverConfirm.looked === target) return;
+        loadSettingsRecoverConfirm();
+      });
+    }
+    const skip = $("#settingsRecoverConfirmSkip");
+    if (skip) {
+      skip.addEventListener("click", () => {
+        const name = settingsRecoverConfirm.looked;
+        wipeSettingsRecoverConfirm();
+        const field = $("#settingsRecoverConfirmUser");
+        if (field && validLoginUser(name)) field.value = name;
+        setSettingsRecoverConfirmStatus(
+          validLoginUser(name)
+            ? "The owner key of @" + name + " was recovered. Active, Posting, and Memo were left as they are."
+            : "Active, Posting, and Memo were left as they are.",
+          false
+        );
+      });
+    }
+    if (user && validLoginUser(normalizeLoginUser(user.value))) loadSettingsRecoverConfirm();
+  }
+
   async function renderSettings(page) {
     settingsNodeToken += 1;
     clearSettingsKeys();
     wipeSettingsPassword();
     wipeSettingsRecovery();
+    wipeSettingsRecoverRequest();
+    wipeSettingsRecoverConfirm();
     const tab = page === "profile" || page === "keys" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
@@ -41600,6 +42697,8 @@ let CS77_FILTER_LOW_REP = 20;
       clearSettingsKeys();
       wipeSettingsPassword();
       wipeSettingsRecovery();
+      wipeSettingsRecoverRequest();
+      wipeSettingsRecoverConfirm();
     }
     if (r.name !== "publish") {
       document.body.classList.toggle(
