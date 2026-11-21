@@ -38203,7 +38203,13 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
         <p class="settings-note settings-keys-hint" id="settingsKeysHint" hidden>Click Clear after you copied the keys to clear the keys from memory and the clipboard.</p>
         <div class="settings-keys-fields" id="settingsKeysBox" hidden>
-          ${rows}
+          <div class="settings-keys-switch" role="tablist" aria-label="Key type">
+            <button type="button" class="is-active" id="settingsKeysPrivateTab" data-settings-keys-mode="private" role="tab" aria-selected="true" aria-controls="settingsKeysRows">Private keys</button>
+            <button type="button" id="settingsKeysPublicTab" data-settings-keys-mode="public" role="tab" aria-selected="false" aria-controls="settingsKeysRows">Public keys</button>
+          </div>
+          <div id="settingsKeysRows">
+            ${rows}
+          </div>
         </div>
         <p class="settings-status" id="settingsKeysStatus" role="status"></p>
       </form>
@@ -38379,17 +38385,89 @@ let CS77_FILTER_LOW_REP = 20;
     if (el) el.value = "";
   }
 
+  let settingsKeysMode = "private";
+
+  function settingsKeysModeName() {
+    return settingsKeysMode === "public" ? "public" : "private";
+  }
+
+  function settingsKeyKindLabel(role, mode) {
+    const known = role === "owner" || role === "active" || role === "memo" || role === "posting";
+    const name = known ? role : "private";
+    const title = name.charAt(0).toUpperCase() + name.slice(1);
+    if (mode === "public" && known) return title + " public key";
+    return title + " key";
+  }
+
+  function syncSettingsKeysSwitch() {
+    const mode = settingsKeysModeName();
+    const buttons = document.querySelectorAll("#settingsKeysForm [data-settings-keys-mode]");
+    for (let i = 0; i < buttons.length; i++) {
+      const on = buttons[i].getAttribute("data-settings-keys-mode") === mode;
+      buttons[i].classList.toggle("is-active", on);
+      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+  }
+
+  function settingsKeyStored(input, mode) {
+    if (!input) return "";
+    return input.getAttribute(mode === "public" ? "data-public" : "data-private") || "";
+  }
+
+  function paintSettingsKeysFace() {
+    const mode = settingsKeysModeName();
+    for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
+      const role = SETTINGS_KEY_FIELDS[i][0];
+      const id = SETTINGS_KEY_FIELDS[i][1];
+      const input = document.getElementById(id);
+      if (input) input.value = settingsKeyStored(input, mode);
+      const kind = settingsKeyKindLabel(role, mode);
+      const qr = document.querySelector('#settingsKeysForm [data-settings-key-qr="' + id + '"]');
+      if (qr) qr.setAttribute("aria-label", kind + " QR code");
+      const copy = document.querySelector('#settingsKeysForm [data-settings-key-copy="' + id + '"]');
+      if (copy) copy.setAttribute("aria-label", "Copy " + kind);
+    }
+  }
+
+  function setSettingsKeysMode(mode) {
+    const next = mode === "public" ? "public" : "private";
+    if (next === settingsKeysMode) return;
+    settingsKeysMode = next;
+    syncSettingsKeysSwitch();
+    paintSettingsKeysFace();
+    clearSettingsKeyCopyButtons();
+    const open = document.querySelector("#settingsKeysForm .settings-key-qr.is-open");
+    if (open && settingsKeyQrOpen()) paintSettingsKeyQr(open);
+  }
+
+  function blankSettingsKeyField(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = "";
+    el.setAttribute("data-private", "");
+    el.setAttribute("data-public", "");
+  }
+
+  function dropSettingsKeyPair(pair) {
+    if (!pair) return;
+    pair.wif = "";
+    pair.pub = "";
+  }
+
   function clearSettingsKeys() {
     settingsKeysToken += 1;
+    settingsKeysMode = "private";
     closeSettingsKeyQr();
     blankSettingsControl("settingsKeysUser");
     blankSettingsControl("settingsKeysPass");
     for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
-      blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+      blankSettingsKeyField(SETTINGS_KEY_FIELDS[i][1]);
     }
     setSettingsKeysHint(false);
     setSettingsKeysBox(false);
     clearSettingsKeyCopyButtons();
+    syncSettingsKeysSwitch();
+    paintSettingsKeysFace();
   }
 
   function setSettingsKeysStatus(message, isError) {
@@ -38452,7 +38530,7 @@ let CS77_FILTER_LOW_REP = 20;
     setSettingsKeysBox(false);
     clearSettingsKeyCopyButtons();
     for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
-      blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+      blankSettingsKeyField(SETTINGS_KEY_FIELDS[i][1]);
     }
     if (!validLoginUser(user)) {
       password = "";
@@ -38463,7 +38541,7 @@ let CS77_FILTER_LOW_REP = 20;
       setSettingsKeysStatus("Enter the master password.", true);
       return;
     }
-    if (!window.cs77Auth || typeof cs77Auth.wifFromLogin !== "function") {
+    if (!window.cs77Auth || typeof cs77Auth.pairFromLogin !== "function") {
       password = "";
       setSettingsKeysStatus("Could not derive the keys in this browser.", true);
       return;
@@ -38471,30 +38549,39 @@ let CS77_FILTER_LOW_REP = 20;
     setSettingsKeysStatus("");
     try {
       for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
-        jobs.push(cs77Auth.wifFromLogin(user, password, SETTINGS_KEY_FIELDS[i][0]));
+        jobs.push(cs77Auth.pairFromLogin(user, password, SETTINGS_KEY_FIELDS[i][0]));
       }
       password = "";
+      const pairs = new Array(jobs.length);
       for (let i = 0; i < jobs.length; i++) {
-        let wif = await jobs[i];
+        pairs[i] = await jobs[i];
         jobs[i] = null;
         if (token !== settingsKeysToken) {
-          wif = "";
+          for (let j = 0; j < pairs.length; j++) dropSettingsKeyPair(pairs[j]);
           for (let j = i + 1; j < jobs.length; j++) jobs[j] = null;
           return;
         }
+      }
+      if (token !== settingsKeysToken) {
+        for (let j = 0; j < pairs.length; j++) dropSettingsKeyPair(pairs[j]);
+        return;
+      }
+      for (let i = 0; i < pairs.length; i++) {
         const field = document.getElementById(SETTINGS_KEY_FIELDS[i][1]);
-        if (field) field.value = wif;
-        wif = "";
+        if (field && pairs[i]) {
+          field.setAttribute("data-private", pairs[i].wif || "");
+          field.setAttribute("data-public", pairs[i].pub || "");
+        }
+        dropSettingsKeyPair(pairs[i]);
       }
-      if (token === settingsKeysToken) {
-        setSettingsKeysHint(true);
-        setSettingsKeysBox(true);
-      }
+      paintSettingsKeysFace();
+      setSettingsKeysHint(true);
+      setSettingsKeysBox(true);
     } catch (err) {
       for (let i = 0; i < jobs.length; i++) jobs[i] = null;
       if (token === settingsKeysToken) {
         for (let i = 0; i < SETTINGS_KEY_FIELDS.length; i++) {
-          blankSettingsControl(SETTINGS_KEY_FIELDS[i][1]);
+          blankSettingsKeyField(SETTINGS_KEY_FIELDS[i][1]);
         }
         setSettingsKeysHint(false);
         setSettingsKeysBox(false);
@@ -38512,9 +38599,14 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(el && !el.hidden);
   }
 
-  function settingsKeyQrLabel(role) {
-    const name = role === "active" || role === "memo" || role === "owner" || role === "posting" ? role : "private";
-    return name.charAt(0).toUpperCase() + name.slice(1) + " key";
+  // The text painted into a key symbol: a WIF, or the STM public key on screen.
+  function settingsKeySymbol(Qr, text) {
+    const compact = String(text || "").replace(/^\uFEFF/, "").replace(/\s+/g, "");
+    if (Qr && typeof Qr.privateKeyText === "function") {
+      const wif = Qr.privateKeyText(compact);
+      if (wif) return wif;
+    }
+    return settingsPublicOwnerKey(compact);
   }
 
   function setSettingsKeyQrCaption(text, isError) {
@@ -38537,6 +38629,14 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function openSettingsKeyQr(button) {
+    if (settingsKeyQrOpen() && button.classList.contains("is-open")) {
+      closeSettingsKeyQr();
+      return;
+    }
+    return paintSettingsKeyQr(button);
+  }
+
+  async function paintSettingsKeyQr(button) {
     const storedUser = button.getAttribute("data-settings-stored-user") || "";
     const id = button.getAttribute("data-settings-key-qr") || "";
     const role = button.getAttribute("data-settings-key-role") || "";
@@ -38544,12 +38644,8 @@ let CS77_FILTER_LOW_REP = 20;
     const el = $("#settingsKeyQrOverlay");
     const box = $("#settingsKeyQrCode");
     if (!el || !box || (!storedUser && !input)) return;
-    if (settingsKeyQrOpen() && button.classList.contains("is-open")) {
-      closeSettingsKeyQr();
-      return;
-    }
     const look = ++settingsKeyQrLook;
-    const label = settingsKeyQrLabel(role);
+    const label = settingsKeyKindLabel(role, storedUser ? "private" : settingsKeysModeName());
     document.querySelectorAll(".settings-key-qr.is-open").forEach((btn) => {
       btn.classList.remove("is-open");
       btn.setAttribute("aria-pressed", "false");
@@ -38558,10 +38654,13 @@ let CS77_FILTER_LOW_REP = 20;
     button.setAttribute("aria-pressed", "true");
     box.replaceChildren();
     setSettingsKeyQrCaption(label, false);
-    const focusFrom = document.activeElement;
-    el.hidden = false;
-    focusDialog(el, focusFrom);
-    let wif = "";
+    const already = !el.hidden;
+    if (!already) {
+      const focusFrom = document.activeElement;
+      el.hidden = false;
+      focusDialog(el, focusFrom);
+    }
+    let symbol = "";
     try {
       const Qr = await loadQrScript();
       if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
@@ -38569,18 +38668,18 @@ let CS77_FILTER_LOW_REP = 20;
         if (!window.cs77Auth || typeof cs77Auth.storedKeyWif !== "function") {
           throw new Error("Could not make a QR code.");
         }
-        wif = await cs77Auth.storedKeyWif(storedUser, role);
+        symbol = await cs77Auth.storedKeyWif(storedUser, role);
         if (look !== settingsKeyQrLook || !settingsKeyQrOpen() || !button.isConnected) return;
+        symbol = Qr && typeof Qr.privateKeyText === "function" ? Qr.privateKeyText(symbol) : "";
       } else {
-        wif = input.value;
+        symbol = settingsKeySymbol(Qr, input.value);
       }
-      wif = Qr && typeof Qr.privateKeyText === "function" ? Qr.privateKeyText(wif) : "";
-      if (!wif) throw new Error("Could not make a QR code.");
-      const svg = await renderQrCode(wif);
+      if (!symbol) throw new Error("Could not make a QR code.");
+      const svg = await renderQrCode(symbol);
       if (look !== settingsKeyQrLook || !settingsKeyQrOpen()) return;
       if (storedUser) {
         if (!button.isConnected) return;
-      } else if (!input.isConnected || Qr.privateKeyText(input.value) !== wif) {
+      } else if (!input.isConnected || settingsKeySymbol(Qr, input.value) !== symbol) {
         return;
       }
       svg.setAttribute("aria-label", label);
@@ -38591,7 +38690,7 @@ let CS77_FILTER_LOW_REP = 20;
       box.replaceChildren();
       setSettingsKeyQrCaption((err && err.message) || "Could not make a QR code.", true);
     } finally {
-      wif = "";
+      symbol = "";
     }
   }
 
@@ -38773,6 +38872,12 @@ let CS77_FILTER_LOW_REP = 20;
         });
       }
       form.addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-settings-keys-mode]");
+        if (tab && form.contains(tab)) {
+          e.preventDefault();
+          setSettingsKeysMode(tab.getAttribute("data-settings-keys-mode"));
+          return;
+        }
         const qrBtn = e.target.closest("[data-settings-key-qr]");
         if (!qrBtn || !form.contains(qrBtn)) return;
         e.preventDefault();

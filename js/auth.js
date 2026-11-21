@@ -1083,6 +1083,21 @@
     }
   }
 
+  // Private key and its public key for one role. The password and the raw
+  // key bytes are dropped. The caller drops the returned strings.
+  async function pairFromLogin(username, password, role) {
+    const derivedJob = deriveRoleKey(username, password, role);
+    password = "";
+    const derived = await derivedJob;
+    const lib = await loadHiveTx();
+    try {
+      const pk = lib.PrivateKey.from(derived.bytes);
+      return { wif: pk.toString(), pub: derived.pub };
+    } finally {
+      wipe(derived.bytes);
+    }
+  }
+
   // Public keys for a new account, plus the posting private key used to
   // finish setup. Owner, active, and memo private keys are wiped here.
   async function keysFromLogin(username, password) {
@@ -1148,6 +1163,7 @@
     deriveRoleKey,
     publicFromSecret,
     wifFromLogin,
+    pairFromLogin,
     loginMaster,
     broadcastRoleSecret,
     broadcastRecoverySecrets,
