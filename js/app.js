@@ -38333,7 +38333,8 @@ let CS77_FILTER_LOW_REP = 20;
         <p class="settings-status" id="settingsStoredKeysStatus" role="status"></p>
       </section>
       <form class="settings-form" id="settingsKeysForm" autocomplete="off">
-        ${settingsFoldHtml("Key generation tool", tool)}
+        <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
+        ${tool}
       </form>
       ${settingsPasswordHtml(username)}
       ${settingsRecoveryHtml(username)}
@@ -38403,7 +38404,8 @@ let CS77_FILTER_LOW_REP = 20;
     `;
     return `
       <form class="settings-form" id="settingsPasswordForm" autocomplete="off">
-        ${settingsFoldHtml("Change password", body)}
+        <h2 class="settings-section-title settings-section-line"><span>Change password</span></h2>
+        ${body}
       </form>
     `;
   }

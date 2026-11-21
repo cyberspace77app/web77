@@ -10662,8 +10662,6 @@ min-height: 0;
   outline-offset: 4px;
 }
 
-#settingsKeysForm .settings-fold > summary h2.settings-section-line,
-#settingsPasswordForm .settings-fold > summary h2.settings-section-line,
 #settingsRecoveryForm .settings-fold > summary h2.settings-section-line,
 #settingsRecoverRequestForm .settings-fold > summary h2.settings-section-line,
 #settingsRecoverConfirmForm .settings-fold > summary h2.settings-section-line {
