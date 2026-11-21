@@ -395,7 +395,9 @@
     } catch {
       return "";
     }
-    if (STORED_KEY_ROLES.indexOf(roleName) < 0) return "";
+    // Owner is not written at login. A record saved under owner:name can
+    // still fill the sign dialog. It is never used without that dialog.
+    if (STORED_KEY_ROLES.indexOf(roleName) < 0 && roleName !== "owner") return "";
     const name = accountName(username);
     if (!validStoredName(name)) return "";
     let record = null;

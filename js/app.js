@@ -442,6 +442,8 @@ let CS77_FILTER_LOW_REP = 20;
   let communityEditBusy = false;
   let ownerSignSession = null;
   let ownerSignBusy = false;
+  let ownerSignStoredKey = "";
+  let ownerSignStoredGen = 0;
   // Decrypted transfer memos for this tab. The key is the # ciphertext.
   const walletMemoPlain = new Map();
   let walletMemoBusy = false;
@@ -8508,6 +8510,7 @@ let CS77_FILTER_LOW_REP = 20;
         status.classList.remove("is-error");
       }
     }
+    if (root.id === "ownerSignMethod" && next === "password") applyOwnerSignStoredKey();
     if (root.id === "loginMethod") resetLoginMasterPrompt();
   }
 
@@ -30906,6 +30909,8 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // claim_reward_balance requires posting authority. A stored posting key
+  // or Keychain signs it without the active/owner review dialog.
   function claimProfileRewards() {
     const user = observer();
     const wallet = profileState.wallet;
@@ -33936,9 +33941,20 @@ let CS77_FILTER_LOW_REP = 20;
     const connect = $("#ownerSignConnect");
     if (title) title.textContent = (opts && opts.title) || "Sign owner settings";
     if (lead) lead.textContent = (opts && opts.lead) || ownerSignDefaultLead(authority);
-    if (label) label.textContent = role.charAt(0).toUpperCase() + role.slice(1) + " key";
+    if (label) label.textContent = (opts && opts.keyLabel) || role.charAt(0).toUpperCase() + role.slice(1) + " key";
     if (hint) hint.textContent = "The " + role + " key is used once and is not saved.";
-    if (key) key.placeholder = role + " key";
+    if (key) key.placeholder = (opts && opts.keyPlaceholder) || role + " key";
+    const second = $("#ownerSignKeyBlock2");
+    const secondLabel = $("#ownerSignKey2Label");
+    const secondKey = $("#ownerSignKey2");
+    const secondHint = $("#ownerSignHint2");
+    const pair = Boolean(opts && opts.secondKey);
+    if (second) second.hidden = !pair;
+    if (pair) {
+      if (secondLabel) secondLabel.textContent = opts.secondLabel || "New owner key";
+      if (secondKey) secondKey.placeholder = opts.secondPlaceholder || "new owner key";
+      if (secondHint) secondHint.textContent = opts.secondHint || "The new owner key is used once and is not saved.";
+    }
     if (connect) connect.textContent = (opts && opts.action) || "Sign";
     const method = $("#ownerSignMethod");
     const ownerOnly = authority === "Owner";
@@ -33961,11 +33977,73 @@ let CS77_FILTER_LOW_REP = 20;
     applyOwnerSignChrome(null);
   }
 
+  function wipeOwnerSignStoredKey() {
+    ownerSignStoredGen += 1;
+    ownerSignStoredKey = "";
+  }
+
+  function applyOwnerSignStoredKey() {
+    if (!ownerSignStoredKey || !ownerSignOpen() || ownerSignBusy) return;
+    if (authMethod($("#ownerSignMethod")) !== "password") return;
+    const key = $("#ownerSignKey");
+    if (!key || key.value) return;
+    key.value = ownerSignStoredKey;
+    const hint = $("#ownerSignHint");
+    const role = ownerSignRoleName(ownerSignSession && ownerSignSession.authority);
+    if (hint && (role === "active" || role === "owner")) {
+      hint.textContent = "The stored " + role + " key is filled in so you can review this before signing.";
+    }
+  }
+
+  // A stored active or owner key fills the password field. It does not sign.
+  async function loadOwnerSignStoredKey(account, authority) {
+    const role = ownerSignRoleName(authority);
+    if (role !== "active" && role !== "owner") return;
+    const gen = ownerSignStoredGen;
+    if (!window.cs77Auth || typeof cs77Auth.storedKeyWif !== "function") return;
+    let wif = "";
+    try {
+      wif = await cs77Auth.storedKeyWif(account, role);
+    } catch {
+      wif = "";
+    }
+    if (gen !== ownerSignStoredGen || !ownerSignSession) {
+      wif = "";
+      return;
+    }
+    if (normalizeLoginUser(ownerSignSession.name) !== normalizeLoginUser(account)) {
+      wif = "";
+      return;
+    }
+    if (ownerSignRoleName(ownerSignSession.authority) !== role) {
+      wif = "";
+      return;
+    }
+    ownerSignStoredKey = wif || "";
+    wif = "";
+    applyOwnerSignStoredKey();
+  }
+
+  function fillOwnerSignPrefill(opts) {
+    const method = authMethod($("#ownerSignMethod"));
+    const key = $("#ownerSignKey");
+    const key2 = $("#ownerSignKey2");
+    if (key && opts && opts.prefill && method === "password") key.value = String(opts.prefill);
+    if (key2 && opts && opts.secondPrefill) key2.value = String(opts.secondPrefill);
+    if (opts) {
+      opts.prefill = "";
+      opts.secondPrefill = "";
+    }
+  }
+
   function hideOwnerSign() {
+    wipeOwnerSignStoredKey();
     if (keyQrTarget === "sign") closeKeyQrScanner();
     hideDialog($("#ownerSignOverlay"));
     const key = $("#ownerSignKey");
+    const key2 = $("#ownerSignKey2");
     if (key) key.value = "";
+    if (key2) key2.value = "";
     setOwnerSignStatus("", false);
     restoreOwnerSignCopy();
     ownerSignBusy = false;
@@ -34004,8 +34082,9 @@ let CS77_FILTER_LOW_REP = 20;
   // and is not the one unlocked in this tab. Anything else stays "" so the
   // dialog opens, including an active or memo operation for a posting-key
   // account, every owner operation, and a signer who is not on the list.
-  // Owner never returns "keychain". Hive Keychain stores posting, active,
-  // and memo, not the owner key.
+  // A stored active or owner key does not return a silent kind. Owner never
+  // returns "keychain". Hive Keychain stores posting, active, and memo, not
+  // the owner key.
   function signSessionKind(account, authority) {
     const name = normalizeLoginUser(account);
     if (!name) return "";
@@ -34035,6 +34114,7 @@ let CS77_FILTER_LOW_REP = 20;
       hideOwnerSign();
       user.value = name;
       applyOwnerSignChrome(opts);
+      fillOwnerSignPrefill(opts);
       const focusFrom = document.activeElement;
       el.hidden = false;
       // Desktop focus stays on the account, or on the key when Password is
@@ -34047,20 +34127,25 @@ let CS77_FILTER_LOW_REP = 20;
       }
       focusDialog(el, focusFrom);
       const mode = ownerSignMode(opts);
+      const authority = ownerSignAuthority(opts);
       ownerSignSession = {
         name,
         operations,
         resolve,
         reject,
         source: opts.source || "",
-        authority: ownerSignAuthority(opts),
+        authority: authority,
         failMessage: opts.failMessage || "",
         cancelMessage: opts.cancelMessage || "",
         mode: mode,
+        second: Boolean(opts.secondKey),
         memo: mode === "decrypt" || mode === "encode" ? String(opts.memo || "") : "",
         receiver: mode === "encode" ? String(opts.receiver || "") : "",
         publicKey: mode === "encode" ? String(opts.publicKey || "") : "",
       };
+      if (mode === "broadcast" && (authority === "Active" || authority === "Owner")) {
+        loadOwnerSignStoredKey(name, authority);
+      }
     });
   }
 
@@ -34073,21 +34158,23 @@ let CS77_FILTER_LOW_REP = 20;
   // One signer for subspace owner settings, role changes, creating a subspace,
   // wallet stake, unstake, send, convert, claim, or account creation,
   // delegations, creating a proposal, the recovery account, requesting
-  // recovery for another account, revoking a granted authority, and
-  // encrypting or decrypting a transfer memo. Pass the account, operations, authority, and
-  // the dialog copy. A stored posting key signs Posting with no dialog. A
-  // Keychain login signs Posting, Active, and Memo through Keychain with no
-  // dialog, when the account is the one that is logged in. Owner always opens
-  // this dialog on Password. Hive Keychain does not store the owner key.
-  // Another account on the multi-account list signs the same way: Keychain
-  // when that login is Keychain, or its stored posting key when the operation
-  // is Posting. A private-key login asked for an active or memo key opens the
-  // dialog. So does signing for an account that is not on the list, such as a
-  // subspace owner who was never logged in here. A stored posting key starts
-  // that dialog on Password when the account is the signed-in user. The
-  // password field accepts that role key or the master password. Decrypt mode
-  // resolves with the plaintext. Encode mode resolves with the # base58
-  // ciphertext.
+  // recovery for another account, confirming a recovery, changing a password,
+  // revoking a granted authority, and encrypting or decrypting a transfer
+  // memo. Pass the account, operations, authority, and the dialog copy. A
+  // stored posting key signs Posting with no dialog. A Keychain login signs
+  // Posting, Active, and Memo through Keychain with no dialog. Active and
+  // Owner never skip the dialog when a password or a stored key would sign.
+  // A stored active or owner key is filled into the password field. Owner
+  // always opens this dialog on Password. Hive Keychain does not store the
+  // owner key. Another account on the multi-account list signs the same way:
+  // Keychain when that login is Keychain, or its stored posting key when the
+  // operation is Posting. A private-key login asked for an active or memo key
+  // opens the dialog. So does signing for an account that is not on the list,
+  // such as a subspace owner who was never logged in here. A stored posting
+  // key starts that dialog on Password when the account is the signed-in
+  // user. The password field accepts that role key or the master password.
+  // Decrypt mode resolves with the plaintext. Encode mode resolves with the
+  // # base58 ciphertext. A recovery confirmation asks for both owner keys.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
     const authority = ownerSignAuthority(opts);
@@ -34116,6 +34203,11 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (opts.authority) {
       const kind = signSessionKind(account, authority);
+      // Active and owner password signing always reviews the transaction.
+      // Keychain still signs Active on its own. Owner has no Keychain path.
+      if (authority === "Owner" || (authority === "Active" && kind !== "keychain")) {
+        return openOwnerSignDialog(name, operations, opts);
+      }
       if (kind === "posting") {
         if (!window.cs77Auth || typeof cs77Auth.broadcast !== "function") {
           return Promise.reject(new Error(opts.failMessage || "Could not sign."));
@@ -34183,24 +34275,36 @@ let CS77_FILTER_LOW_REP = 20;
     const session = ownerSignSession;
     if (!session || ownerSignBusy) return;
     const key = $("#ownerSignKey");
+    const key2 = $("#ownerSignKey2");
     const connect = $("#ownerSignConnect");
     const cancel = $("#ownerSignCancel");
     const roleName = ownerSignRoleName(session.authority);
     const method = authMethod($("#ownerSignMethod"));
     let secret = "";
+    let second = "";
     if (session.authority === "Owner" && method !== "password") {
       setOwnerSignStatus("Hive Keychain does not store the owner key. Enter the owner key.", true);
       return;
     }
     if (method === "password") {
       secret = (key && key.value) || "";
+      if (session.second) second = (key2 && key2.value) || "";
       if (!secret.replace(/\s+/g, "")) {
         if (key) key.value = "";
         secret = "";
+        second = "";
         setOwnerSignStatus("Enter " + ownerSignEnterPhrase(session.authority) + ".", true);
         return;
       }
+      if (session.second && !second.replace(/\s+/g, "")) {
+        if (key2) key2.value = "";
+        secret = "";
+        second = "";
+        setOwnerSignStatus("Enter the new owner key.", true);
+        return;
+      }
       if (key) key.value = "";
+      if (key2) key2.value = "";
     } else if (!window.hive_keychain) {
       setOwnerSignStatus(
         "hive keychain is not available. Choose Password and enter the " + roleName + " key.",
@@ -34232,17 +34336,27 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (method === "password") {
         setOwnerSignStatus("Signing…", false);
-        if (!window.cs77Auth || typeof cs77Auth.broadcastRoleSecret !== "function") {
-          throw new Error("Could not sign with that key.");
+        if (session.second) {
+          if (!window.cs77Auth || typeof cs77Auth.broadcastRecoverySecrets !== "function") {
+            throw new Error("Could not sign with those keys.");
+          }
+          const signJob = cs77Auth.broadcastRecoverySecrets(session.name, secret, second, session.operations);
+          secret = "";
+          second = "";
+          await signJob;
+        } else {
+          if (!window.cs77Auth || typeof cs77Auth.broadcastRoleSecret !== "function") {
+            throw new Error("Could not sign with that key.");
+          }
+          const signJob = cs77Auth.broadcastRoleSecret(
+            session.name,
+            secret,
+            session.authority,
+            session.operations
+          );
+          secret = "";
+          await signJob;
         }
-        const signJob = cs77Auth.broadcastRoleSecret(
-          session.name,
-          secret,
-          session.authority,
-          session.operations
-        );
-        secret = "";
-        await signJob;
       } else {
         if (session.authority === "Owner") {
           throw new Error("Hive Keychain does not store the owner key. Enter the owner key.");
@@ -34258,10 +34372,12 @@ let CS77_FILTER_LOW_REP = 20;
       setOwnerSignStatus((err && err.message) || session.failMessage || "Could not sign these settings.", true);
     } finally {
       secret = "";
+      second = "";
       ownerSignBusy = false;
       if (ownerSignSession) {
         if (connect) connect.disabled = false;
         if (cancel) cancel.disabled = false;
+        applyOwnerSignStoredKey();
       }
     }
   }
@@ -39317,10 +39433,22 @@ let CS77_FILTER_LOW_REP = 20;
       if (!applied) {
         if (!seen) throw new Error("Could not load the account.");
         const operation = settingsPasswordOperation(user, keys, seen);
-        const signJob = cs77Auth.broadcastRoleSecret(user, secret, "owner", [operation]);
         try {
-          await signJob;
+          await signWithDialog(user, [operation], {
+            authority: "Owner",
+            title: "Change password",
+            lead:
+              "This replaces the Owner, Active, Posting, and Memo keys of @" +
+              user +
+              ". Enter the current owner key.",
+            action: "Change password",
+            source: "settings",
+            cancelMessage: "The password was not changed.",
+            failMessage: "Could not change the password.",
+            prefill: secret,
+          });
         } catch (err) {
+          if (err && err.ownerCancel) throw err;
           let now = null;
           try {
             now = await hiveAccountRecord(user);
@@ -39353,7 +39481,11 @@ let CS77_FILTER_LOW_REP = 20;
       }
     } catch (err) {
       if (token !== settingsPassword.token) return;
-      setSettingsPasswordStatus(settingsPasswordErrorText(err), true);
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsPasswordStatus(
+        cancelled ? (err && err.message) || "The password was not changed." : settingsPasswordErrorText(err),
+        !cancelled
+      );
       return;
     } finally {
       secret = "";
@@ -40512,7 +40644,19 @@ let CS77_FILTER_LOW_REP = 20;
         throw new Error("This master password does not match the recovered owner key.");
       }
       const operation = settingsRecoverRotateOperation(user, keys, account);
-      await cs77Auth.broadcastRoleSecret(user, password, "owner", [operation]);
+      await signWithDialog(user, [operation], {
+        authority: "Owner",
+        title: "Update keys",
+        lead:
+          "The recovered owner key signs new Active, Posting, and Memo keys for @" +
+          user +
+          ". The owner key stays as it is.",
+        action: "Update keys",
+        source: "settings",
+        cancelMessage: "The other keys were not updated.",
+        failMessage: "Could not update the other keys.",
+        prefill: password,
+      });
       password = "";
       if (token !== settingsRecoverConfirm.token) return;
       setSettingsRecoverConfirmStatus("Waiting for the new keys…");
@@ -40556,7 +40700,11 @@ let CS77_FILTER_LOW_REP = 20;
       setSettingsRecoverConfirmStatus(done, false);
     } catch (err) {
       if (token !== settingsRecoverConfirm.token) return;
-      setSettingsRecoverConfirmStatus(settingsPasswordErrorText(err), true);
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsRecoverConfirmStatus(
+        cancelled ? (err && err.message) || "The other keys were not updated." : settingsPasswordErrorText(err),
+        !cancelled
+      );
     } finally {
       password = "";
       if (keys) {
@@ -40667,18 +40815,39 @@ let CS77_FILTER_LOW_REP = 20;
       }
       setSettingsRecoverConfirmStatus("Confirming the recovery…");
       try {
-        await cs77Auth.broadcastRecoverySecrets(user, recentSecret, newSecret, [
+        await signWithDialog(
+          user,
           [
-            "recover_account",
-            {
-              account_to_recover: user,
-              new_owner_authority: request.authority,
-              recent_owner_authority: recentAuthority,
-              extensions: [],
-            },
+            [
+              "recover_account",
+              {
+                account_to_recover: user,
+                new_owner_authority: request.authority,
+                recent_owner_authority: recentAuthority,
+                extensions: [],
+              },
+            ],
           ],
-        ]);
+          {
+            authority: "Owner",
+            title: "Confirm recovery",
+            lead: "Both owner keys sign the recovery of @" + user + ". This changes only the owner key.",
+            action: "Confirm recovery",
+            source: "settings",
+            cancelMessage: "The recovery was not confirmed.",
+            failMessage: "Could not confirm the recovery.",
+            keyLabel: "Recent owner key",
+            keyPlaceholder: "recent owner key or master password",
+            secondKey: true,
+            secondLabel: "New owner key",
+            secondPlaceholder: "new owner key or master password",
+            secondHint: "The new owner key is used once and is not saved.",
+            prefill: recentSecret,
+            secondPrefill: newSecret,
+          }
+        );
       } catch (err) {
+        if (err && err.ownerCancel) throw err;
         let now = null;
         try {
           now = await hiveAccountRecord(user);
@@ -40716,7 +40885,11 @@ let CS77_FILTER_LOW_REP = 20;
       }
     } catch (err) {
       if (token !== settingsRecoverConfirm.token) return;
-      setSettingsRecoverConfirmStatus(settingsPasswordErrorText(err), true);
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsRecoverConfirmStatus(
+        cancelled ? (err && err.message) || "The recovery was not confirmed." : settingsPasswordErrorText(err),
+        !cancelled
+      );
     } finally {
       recentSecret = "";
       newSecret = "";
@@ -45098,6 +45271,15 @@ let CS77_FILTER_LOW_REP = 20;
     if (ownerSignCancel) ownerSignCancel.addEventListener("click", cancelOwnerSign);
     if (ownerSignKey) {
       ownerSignKey.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitOwnerSign();
+        }
+      });
+    }
+    const ownerSignKey2 = $("#ownerSignKey2");
+    if (ownerSignKey2) {
+      ownerSignKey2.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
           submitOwnerSign();
