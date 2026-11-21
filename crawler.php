@@ -167,6 +167,9 @@ function cs77_community_page(string $raw): string
 function cs77_profile_page(string $raw): string
 {
     $page = strtolower(trim($raw));
+    if ($page === "reblogs") {
+        return "reblogs";
+    }
     if ($page === "" || $page === "posts" || $page === "blog") {
         return "posts";
     }
@@ -967,6 +970,9 @@ function cs77_post_description(string $body): string
 function cs77_profile_title(string $author, string $page): string
 {
     $name = "@" . $author;
+    if ($page === "reblogs") {
+        return "Reblogs · " . $name . " — CyberSpace77";
+    }
     if ($page === "comments") {
         return "Comments · " . $name . " — CyberSpace77";
     }

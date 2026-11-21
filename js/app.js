@@ -724,7 +724,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   // One list backs every post stream. kind says which stream it is:
   // following (accounts you follow), ranked (latest / trending / hot),
-  // tag (those sorts for one tag), profile (posts / comments / replies),
+  // tag (those sorts for one tag), profile (posts / reblogs / comments / replies),
   // community (latest / trending / hot inside one community).
   // tag is only a ranked tag. scope is the profile account or community name.
   const feedState = {
@@ -5014,6 +5014,7 @@ let CS77_FILTER_LOW_REP = 20;
     const page = String(raw || "")
       .trim()
       .toLowerCase();
+    if (page === "reblogs") return "reblogs";
     if (!page || page === "posts" || page === "blog") return "posts";
     if (page === "comments") return "comments";
     if (page === "replies") return "replies";
@@ -5239,7 +5240,7 @@ let CS77_FILTER_LOW_REP = 20;
     const active = document.activeElement;
     if (!active || !active.closest) return;
     const menu = active.closest(
-      ".content-more-menu, .profile-more-menu, .wallet-more-menu, .dao-more-menu"
+      ".content-more-menu, .profile-more-menu, .wallet-more-menu, .dao-more-menu, .profile-posts-menu"
     );
     if (!menu || menu.hidden || !isDisplayed(menu)) return;
     const items = dialogTabbables(menu);
@@ -6402,6 +6403,7 @@ let CS77_FILTER_LOW_REP = 20;
   function beginSectionReload() {
     closeLogoMenu();
     hideVoteSlider();
+    closeProfilePostsMenu();
     closeProfileMore();
     closeContentMore();
     closeWalletMore();
@@ -8456,6 +8458,10 @@ let CS77_FILTER_LOW_REP = 20;
     const peopleOv = $("#peopleOverlay");
     if (peopleOv && !peopleOv.hidden) {
       closePeoplePanel();
+      return;
+    }
+    if (profilePostsMenuOpen()) {
+      closeProfilePostsMenu();
       return;
     }
     if (commentSortOpen()) {
@@ -13126,11 +13132,17 @@ let CS77_FILTER_LOW_REP = 20;
     return { kind: "ranked", sort: s, tag: "", scope: "" };
   }
 
+  // Reblogs is the account blog: authored posts and reblogs, in blog order.
+  function profileFeedSort(page) {
+    if (page === "comments" || page === "replies") return page;
+    if (page === "reblogs") return "blog";
+    return "posts";
+  }
+
   function feedSpecForProfile(author, page) {
-    const sort = page === "comments" || page === "replies" ? page : "posts";
     return {
       kind: "profile",
-      sort,
+      sort: profileFeedSort(page),
       tag: "",
       scope: String(author || "")
         .replace(/^@/, "")
@@ -13189,7 +13201,7 @@ let CS77_FILTER_LOW_REP = 20;
   // Replies are other people, so they still go through get_accounts.
   function noteProfileFeedAvatar() {
     if (feedState.kind !== "profile") return "";
-    if (feedState.sort !== "posts" && feedState.sort !== "comments") return "";
+    if (feedState.sort !== "posts" && feedState.sort !== "blog" && feedState.sort !== "comments") return "";
     if (!profileState.profile) return "";
     const name = authorImageKey(profileState.author);
     if (!name || authorImageKey(feedState.scope) !== name) return "";
@@ -25631,6 +25643,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function profilePageTitle(author, page) {
     const a = "@" + author;
+    if (page === "reblogs") return "Reblogs · " + a + " — CyberSpace77";
     if (page === "comments") return "Comments · " + a + " — CyberSpace77";
     if (page === "replies") return "Replies · " + a + " — CyberSpace77";
     if (page === "wallet") return "Wallet · " + a + " — CyberSpace77";
@@ -25650,20 +25663,136 @@ let CS77_FILTER_LOW_REP = 20;
     return `<button type="button" class="${cls}${active ? " is-active" : ""}" data-people="${kind}" data-people-id="${HiveMd.escapeHtml(id)}" aria-expanded="${active ? "true" : "false"}">${text}</button>`;
   }
 
+  const PROFILE_POSTS_ARROW =
+    '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" d="M3.4 6 8 10.6 12.6 6"/></svg>';
+
+  function profilePostsMode(page) {
+    return page === "reblogs" ? "reblogs" : "posts";
+  }
+
+  function profilePostsMenuHtml(mode) {
+    return [
+      ["posts", "Posts"],
+      ["reblogs", "Reblogs"],
+    ]
+      .map((row) => {
+        const on = row[0] === mode;
+        return `<button type="button" class="comment-sort-item${on ? " is-selected" : ""}" role="menuitemradio" data-profile-feed="${row[0]}" aria-checked="${on ? "true" : "false"}"><span class="comment-sort-check">${COMMENT_SORT_CHECK}</span>${row[1]}</button>`;
+      })
+      .join("");
+  }
+
+  function profilePostsMenuRoot() {
+    return view ? view.querySelector(".profile-posts-slot") : null;
+  }
+
+  function profilePostsMenuOpen() {
+    const root = profilePostsMenuRoot();
+    return Boolean(root && root.classList.contains("is-open"));
+  }
+
+  function focusProfilePostsMenuItem(showRing) {
+    const root = profilePostsMenuRoot();
+    const menu = root && root.querySelector(".profile-posts-menu");
+    if (!menu || menu.hidden) return;
+    const item =
+      menu.querySelector(".comment-sort-item.is-selected") ||
+      menu.querySelector(".comment-sort-item");
+    if (!item) return;
+    const opts = { preventScroll: true };
+    if (showRing) opts.focusVisible = true;
+    try {
+      item.focus(opts);
+    } catch (err) {
+      try {
+        item.focus({ preventScroll: true });
+      } catch (err2) {
+        /* not focusable */
+      }
+    }
+  }
+
+  function closeProfilePostsMenu() {
+    const root = profilePostsMenuRoot();
+    if (!root) return;
+    const menu = root.querySelector(".profile-posts-menu");
+    const btn = root.querySelector(".profile-posts-arrow");
+    const active = document.activeElement;
+    const inside = Boolean(menu && active && menu.contains(active));
+    root.classList.remove("is-open");
+    if (menu) menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (!inside || !btn) return;
+    try {
+      btn.focus({ preventScroll: true });
+    } catch (err) {
+      /* not focusable */
+    }
+  }
+
+  function toggleProfilePostsMenu(fromKey) {
+    const root = profilePostsMenuRoot();
+    if (!root) return;
+    if (root.classList.contains("is-open")) {
+      closeProfilePostsMenu();
+      return;
+    }
+    root.classList.add("is-open");
+    const menu = root.querySelector(".profile-posts-menu");
+    const btn = root.querySelector(".profile-posts-arrow");
+    if (menu) menu.hidden = false;
+    if (btn) btn.setAttribute("aria-expanded", "true");
+    focusProfilePostsMenuItem(Boolean(fromKey));
+  }
+
+  function paintProfilePostsMenu(mode) {
+    const root = profilePostsMenuRoot();
+    if (!root) return;
+    const next = mode === "reblogs" ? "reblogs" : "posts";
+    root.querySelectorAll("[data-profile-feed]").forEach((btn) => {
+      const on = btn.getAttribute("data-profile-feed") === next;
+      btn.classList.toggle("is-selected", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function chooseProfilePostsMode(mode) {
+    const next = mode === "reblogs" ? "reblogs" : "posts";
+    closeProfilePostsMenu();
+    const here = parseRoute();
+    if (!here || here.name !== "profile") return;
+    const current = normalizeProfilePage(here.page) || "posts";
+    if (current === next) return;
+    const author = String(here.author || profileState.author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!author) return;
+    profileNavSwitch = true;
+    navigate(profileHref(author, next));
+  }
+
   function profileNavHtml(author, page) {
+    const postsOn = page === "posts" || page === "reblogs";
+    const mode = profilePostsMode(page);
     const items = [
-      ["posts", "Posts", profileHref(author, "posts")],
       ["comments", "Comments", profileHref(author, "comments")],
       ["replies", "Replies", profileHref(author, "replies")],
       ["wallet", "Wallet", profileHref(author, "wallet")],
       ["about", "About", profileHref(author, "about")],
     ];
+    const postsCurrent = page === "posts" ? ' aria-current="page"' : "";
+    const slotCurrent = page === "reblogs" ? ' aria-current="page"' : "";
     return `
       <nav class="feed-nav profile-nav" aria-label="Profile">
+        <span class="profile-posts-slot${postsOn ? " is-active" : ""}" data-profile-tab="posts"${slotCurrent}>
+          <a class="profile-posts-link" href="${profileHref(author, "posts")}"${postsCurrent}>Posts</a>
+          <button type="button" class="profile-posts-arrow" aria-haspopup="menu" aria-expanded="false" aria-controls="profilePostsMenu" aria-label="Posts or reblogs" title="Posts or reblogs">${PROFILE_POSTS_ARROW}</button>
+          <div class="profile-posts-menu comment-sort-menu" id="profilePostsMenu" role="menu" hidden>${profilePostsMenuHtml(mode)}</div>
+        </span>
         ${items
           .map(
             ([id, label, href]) =>
-              `<a href="${href}"${navCurrent(id === page)}>${label}</a>`
+              `<a href="${href}" data-profile-tab="${id}"${navCurrent(id === page)}>${label}</a>`
           )
           .join("")}
       </nav>
@@ -30985,18 +31114,21 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   async function renderProfileFeed(author, page) {
-    const sort = page === "comments" ? "comments" : page === "replies" ? "replies" : "posts";
-    if (!profileRouteStill(author, sort)) return;
+    const tab = page === "comments" || page === "replies" || page === "reblogs" ? page : "posts";
+    const sort = profileFeedSort(tab);
+    if (!profileRouteStill(author, tab)) return;
     clearProfilePin();
-    resetFeed(feedSpecForProfile(author, sort));
+    resetFeed(feedSpecForProfile(author, tab));
     const emptyTitle =
-      page === "comments" ? "No comments" : page === "replies" ? "No replies" : "No posts";
+      tab === "comments" ? "No comments" : tab === "replies" ? "No replies" : "No posts";
     const emptyDetail =
-      page === "comments"
+      tab === "comments"
         ? "This account has not written comments yet."
-        : page === "replies"
+        : tab === "replies"
           ? "Nobody has replied to this account yet."
-          : "This account has no posts yet.";
+          : tab === "reblogs"
+            ? "This account has no posts or reblogs yet."
+            : "This account has no posts yet.";
     const feedShell = `
         <div id="feedList" class="feed"></div>
         <div id="feedStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
@@ -31047,7 +31179,7 @@ let CS77_FILTER_LOW_REP = 20;
             if (feedState.seen.has(key)) continue;
             feedState.seen.add(key);
             added++;
-            if (sort === "posts" && !isRootPost(post)) continue;
+            if ((sort === "posts" || sort === "blog") && !isRootPost(post)) continue;
             if (isBlacklistedPost(post)) continue;
             incoming.push(post);
           }
@@ -31092,7 +31224,7 @@ let CS77_FILTER_LOW_REP = 20;
     async function fill() {
       await runFeedFill(async () => {
         const gen = feedState.gen;
-        if (!profileRouteStill(author, sort) || !feedStill(gen)) return false;
+        if (!profileRouteStill(author, tab) || !feedStill(gen)) return false;
         hideVoteSlider();
         moreBtn.hidden = true;
         showFeedLoading(status);
@@ -31101,11 +31233,11 @@ let CS77_FILTER_LOW_REP = 20;
         try {
           await loadPage();
         } catch (err) {
-          if (!profileRouteStill(author, sort) || !feedStill(gen)) return false;
+          if (!profileRouteStill(author, tab) || !feedStill(gen)) return false;
           failed = true;
           showError(err.message || String(err));
         }
-        if (!profileRouteStill(author, sort) || !feedStill(gen) || !list.isConnected) return false;
+        if (!profileRouteStill(author, tab) || !feedStill(gen) || !list.isConnected) return false;
         if (!failed) clearError();
         paintFeedCards(list, profileCardHtml);
         if (!feedState.items.length && feedState.done) {
@@ -31123,7 +31255,7 @@ let CS77_FILTER_LOW_REP = 20;
 
     bindFeedMore(moreBtn, fill);
     await fill();
-    if (profileRouteStill(author, sort)) releaseProfileSectionHold();
+    if (profileRouteStill(author, tab)) releaseProfileSectionHold();
   }
 
   function profileRouteStill(name, tab) {
@@ -31169,14 +31301,26 @@ let CS77_FILTER_LOW_REP = 20;
   function paintProfileNavActive(page) {
     const nav = view.querySelector(".profile-nav");
     if (nav) {
-      const ids = ["posts", "comments", "replies", "wallet", "about"];
-      const links = nav.querySelectorAll("a");
+      const postsOn = page === "posts" || page === "reblogs";
+      const links = nav.querySelectorAll("a[data-profile-tab]");
       for (let i = 0; i < links.length; i++) {
-        const on = ids[i] === page;
+        const on = links[i].getAttribute("data-profile-tab") === page;
         links[i].classList.toggle("is-active", on);
         if (on) links[i].setAttribute("aria-current", "page");
         else links[i].removeAttribute("aria-current");
       }
+      const slot = nav.querySelector(".profile-posts-slot");
+      if (slot) {
+        slot.classList.toggle("is-active", postsOn);
+        if (page === "reblogs") slot.setAttribute("aria-current", "page");
+        else slot.removeAttribute("aria-current");
+        const postsLink = slot.querySelector(".profile-posts-link");
+        if (postsLink) {
+          if (page === "posts") postsLink.setAttribute("aria-current", "page");
+          else postsLink.removeAttribute("aria-current");
+        }
+      }
+      paintProfilePostsMenu(profilePostsMode(page));
     }
     paintPeopleCounts();
   }
@@ -41832,6 +41976,7 @@ let CS77_FILTER_LOW_REP = 20;
       !!key &&
       key.indexOf("profile:") === 0 &&
       (key.endsWith(":posts") ||
+        key.endsWith(":reblogs") ||
         key.endsWith(":comments") ||
         key.endsWith(":replies") ||
         key.endsWith(":wallet"))
@@ -43263,6 +43408,7 @@ let CS77_FILTER_LOW_REP = 20;
     closeLogoMenu();
     hideVoteSlider();
     hideZapTips();
+    closeProfilePostsMenu();
     closeProfileMore();
     closeLightningDialog({ skipHistory: true });
     closeContentMore();
@@ -44739,6 +44885,8 @@ let CS77_FILTER_LOW_REP = 20;
       const profileMoreEl = eventElement(e.target);
       const inCommentSort = Boolean(profileMoreEl && profileMoreEl.closest(".comment-sort"));
       if (!inCommentSort) closeCommentSort();
+      const inProfilePosts = Boolean(profileMoreEl && profileMoreEl.closest(".profile-posts-slot"));
+      if (!inProfilePosts) closeProfilePostsMenu();
       const inProfileMoreMenu = Boolean(profileMoreEl && profileMoreEl.closest(".profile-more-menu"));
       const inProfileMore = Boolean(
         profileMoreEl && (profileMoreEl.closest(".profile-more") || inProfileMoreMenu)
@@ -44857,6 +45005,21 @@ let CS77_FILTER_LOW_REP = 20;
         if (sortItem) applyCommentSort(sortItem.getAttribute("data-sort"));
         else toggleCommentSort();
         return;
+      }
+      if (inProfilePosts) {
+        const postsItem = profileMoreEl.closest(".profile-posts-menu [data-profile-feed]");
+        const postsArrow = profileMoreEl.closest(".profile-posts-arrow");
+        if (postsItem) {
+          e.preventDefault();
+          chooseProfilePostsMode(postsItem.getAttribute("data-profile-feed"));
+          return;
+        }
+        if (postsArrow) {
+          e.preventDefault();
+          toggleProfilePostsMenu(e.detail === 0);
+          return;
+        }
+        closeProfilePostsMenu();
       }
       if (!inInteractiveSurface(e.target)) return;
       const profileMoreBtn = e.target.closest(".profile-more-btn");

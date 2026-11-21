@@ -4840,6 +4840,85 @@ a.tag:hover {
   margin-top: 0.15rem;
 }
 
+.profile-posts-slot {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--gray);
+}
+
+.profile-nav:has(.profile-posts-slot.is-open) {
+  position: relative;
+  z-index: 5;
+}
+
+.profile-posts-slot.is-open {
+  z-index: 2;
+}
+
+.profile-nav .profile-posts-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.6rem 0.15rem 0.6rem 1.05rem;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 0;
+}
+
+.profile-nav .profile-posts-link:hover,
+.profile-posts-slot.is-active .profile-posts-link,
+.profile-posts-slot.is-open .profile-posts-link,
+.profile-posts-slot:hover .profile-posts-link {
+  color: var(--yellow);
+  text-shadow: inherit;
+}
+
+.profile-posts-arrow {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 0.85rem 0 0.2rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.profile-posts-arrow svg {
+  width: 0.62rem;
+  height: 0.62rem;
+  display: block;
+}
+
+.profile-posts-slot:hover,
+.profile-posts-slot.is-open,
+.profile-posts-slot.is-active {
+  color: var(--yellow);
+}
+
+.profile-posts-slot.is-active {
+  border-color: var(--border-hot);
+  background: rgba(227, 19, 55, 0.1);
+  text-shadow: var(--glow-yellow);
+}
+
+.profile-posts-arrow:focus-visible,
+.profile-nav .profile-posts-link:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.profile-posts-menu.comment-sort-menu {
+  right: auto;
+  left: 0;
+  min-width: 9.5rem;
+}
+
 .community-panel {
   padding-bottom: 1rem;
 }
