@@ -37889,21 +37889,18 @@ let CS77_FILTER_LOW_REP = 20;
     const name = normalizeLoginUser(username || "");
     const loggedIn = validLoginUser(name);
     const user = esc(loggedIn ? name : "");
-    const disabled = loggedIn ? "" : " disabled";
-    const note = loggedIn
-      ? "Replaces the Owner, Active, Posting, and Memo keys. Save the new master password before you change it. The old keys stop working."
-      : "Log in to change the master password.";
+    const userLock = loggedIn ? " disabled" : "";
     return `
       <form class="settings-form" id="settingsPasswordForm" autocomplete="off">
         <h2 class="settings-section-title settings-section-line"><span>Change password</span></h2>
-        <p class="settings-note">${note}</p>
+        <p class="settings-note">Replaces the Owner, Active, Posting, and Memo keys. An owner key or master password is enough. Save the new master password before you change it. The old keys stop working.</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsPasswordUser">Username</label>
-          <input id="settingsPasswordUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" value="${user}"${disabled}>
+          <input id="settingsPasswordUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" value="${user}"${userLock}>
         </div>
         <div class="settings-field">
           <label class="settings-label" for="settingsPasswordOwner">Owner key or master password</label>
-          <input id="settingsPasswordOwner" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="settingsPasswordOwnerNote"${disabled}>
+          <input id="settingsPasswordOwner" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="settingsPasswordOwnerNote">
           <p class="settings-note" id="settingsPasswordOwnerNote">A master password is turned into the owner key on this device.</p>
         </div>
         <div id="settingsPasswordNext" hidden>
@@ -37930,7 +37927,7 @@ let CS77_FILTER_LOW_REP = 20;
           <p class="settings-note" id="settingsPasswordWarn" hidden></p>
         </div>
         <div class="settings-actions">
-          <button type="submit" class="btn-primary" id="settingsPasswordSubmit"${disabled}>New password</button>
+          <button type="submit" class="btn-primary" id="settingsPasswordSubmit">New password</button>
           <button type="button" class="btn-ghost" id="settingsPasswordReset">Reset</button>
         </div>
         <p class="settings-status" id="settingsPasswordStatus" role="status"></p>
@@ -38397,9 +38394,9 @@ let CS77_FILTER_LOW_REP = 20;
     const repeat = $("#settingsPasswordRepeat");
     const saved = $("#settingsPasswordSaved");
     const copy = $("#settingsPasswordCopy");
-    if (user) user.disabled = pending || !loggedIn;
-    if (owner) owner.disabled = pending || !loggedIn;
-    if (submit) submit.disabled = pending || !loggedIn;
+    if (user) user.disabled = pending || loggedIn;
+    if (owner) owner.disabled = pending;
+    if (submit) submit.disabled = pending;
     if (reset) reset.disabled = pending;
     if (repeat) repeat.disabled = pending;
     if (saved) saved.disabled = pending;
@@ -38622,17 +38619,12 @@ let CS77_FILTER_LOW_REP = 20;
     if (userEl && userEl.value !== user) userEl.value = user;
     const ownerEl = $("#settingsPasswordOwner");
     let secret = (ownerEl && ownerEl.value) || "";
-    if (!validLoginUser(session)) {
-      secret = "";
-      setSettingsPasswordStatus("Log in to change the master password.", true);
-      return;
-    }
     if (!validLoginUser(user)) {
       secret = "";
       setSettingsPasswordStatus("Enter a valid Hive username.", true);
       return;
     }
-    if (user !== session) {
+    if (validLoginUser(session) && user !== session) {
       secret = "";
       setSettingsPasswordStatus("Log in as that account to change its password.", true);
       return;
@@ -38720,7 +38712,7 @@ let CS77_FILTER_LOW_REP = 20;
     let offered = settingsPassword.password;
     const repeated = String(($("#settingsPasswordRepeat") || {}).value || "").trim();
     const saved = Boolean(($("#settingsPasswordSaved") || {}).checked);
-    if (!validLoginUser(session) || user !== session) {
+    if (validLoginUser(session) && user !== session) {
       offered = "";
       wipeSettingsPassword();
       setSettingsPasswordStatus("Log in as that account to change its password.", true);
@@ -38803,8 +38795,10 @@ let CS77_FILTER_LOW_REP = 20;
         }
       } else if (keychain) {
         doneMessage = "Password changed. Update Hive Keychain with the new keys.";
-      } else {
+      } else if (validLoginUser(session) && session === user) {
         doneMessage = "Password changed. Log in again with the new master password.";
+      } else {
+        doneMessage = "Password changed. Log in with the new master password.";
       }
     } catch (err) {
       if (token !== settingsPassword.token) return;
