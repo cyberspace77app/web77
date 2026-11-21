@@ -493,6 +493,12 @@
     <div class="panel overlay-card dialog-card">
       <h2 id="walletOpTitle">Stake hive</h2>
       <p class="dialog-lead" id="walletOpLead"></p>
+      <div id="walletToField" hidden>
+        <label class="dialog-label" for="walletFrom">From</label>
+        <input id="walletFrom" type="text" readonly autocomplete="off" spellcheck="false" autocapitalize="off">
+        <label class="dialog-label" for="walletTo">To</label>
+        <input id="walletTo" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username">
+      </div>
       <label class="dialog-label" for="walletAmount">Amount</label>
       <div class="wallet-amount-row">
         <input id="walletAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false" aria-describedby="walletOpAvailable">
@@ -1020,6 +1026,6 @@
   <script src="/js/auth.js?v=0.22.9"></script>
   <script src="/js/chain-queue.js?v=0.22.0"></script>
   <script src="/js/blacklist.js?v=0.22.0"></script>
-  <script src="/js/app.js?v=0.22.15"></script>
+  <script src="/js/app.js?v=0.22.17"></script>
 </body>
 </html>

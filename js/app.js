@@ -639,6 +639,7 @@ let CS77_FILTER_LOW_REP = 20;
     symbol: "hive",
     pending: false,
     requestId: 0,
+    gen: 0,
   };
   // Request ids cancelled in this session. A chain read can still list them
   // until the broadcast lands, so those rows stay hidden and their hbd is
@@ -28092,7 +28093,7 @@ let CS77_FILTER_LOW_REP = 20;
     };
   }
 
-  function walletSignCopy(kind, user, amount) {
+  function walletSignCopy(kind, user, amount, recipient) {
     if (kind === "cancel-powerdown") {
       return {
         title: "Cancel unstake hive",
@@ -28120,10 +28121,16 @@ let CS77_FILTER_LOW_REP = 20;
     const unstake = kind.indexOf("unstake") === 0;
     const symbol = kind.indexOf("hbd") === -1 ? "hive" : "hbd";
     const shown = formatHiveAsset(amount, symbol);
-    let detail = "Moves " + shown + " into staked hive.";
+    const other = recipient && !walletSameAccount(recipient, user) ? recipient : "";
+    let detail = other
+      ? "Moves " + shown + " into staked hive for @" + other + "."
+      : "Moves " + shown + " into staked hive.";
     if (kind === "unstake-hive") detail = "Powers down " + shown + ". This takes 13 weeks.";
-    else if (kind === "stake-hbd") detail = "Moves " + shown + " into staked hbd.";
-    else if (kind === "unstake-hbd") detail = "Withdraws " + shown + " from staked hbd. This takes 3 days.";
+    else if (kind === "stake-hbd") {
+      detail = other
+        ? "Moves " + shown + " into staked hbd for @" + other + "."
+        : "Moves " + shown + " into staked hbd.";
+    } else if (kind === "unstake-hbd") detail = "Withdraws " + shown + " from staked hbd. This takes 3 days.";
     const action = unstake ? "unstake" : "stake";
     return {
       title: unstake ? "Sign unstake" : "Sign stake",
@@ -28148,40 +28155,44 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   // Stake moves liquid hive or hbd immediately. The chain account can still
-  // show the old balances for a moment, so the table is updated here. The
-  // staked row counts up with the same flash a claim uses.
-  function applyWalletStake(wallet, kind, amount) {
+  // show the old balances for a moment, so the table is updated here. A stake
+  // for this account counts the staked row up. A stake for someone else only
+  // lowers the liquid row, because that stake lands on their account.
+  function applyWalletStake(wallet, kind, amount, recipient) {
     if (!wallet || wallet !== profileState.wallet) return;
     const moved = roundAsset(amount, 3);
     if (!(moved >= 0.001)) return;
     if (kind !== "stake-hive" && kind !== "stake-hbd") return;
+    const toSelf = !recipient || walletSameAccount(recipient, wallet.name);
     const from = walletBalanceSnapshot(wallet);
     const accounts = walletAccounts(wallet);
     const receiveLabel = kind === "stake-hive" ? "staked hive" : "staked hbd";
     if (kind === "stake-hive") {
-      const vests = HiveApi.hiveToVests(moved, wallet.props);
       wallet.hive = roundAsset(Math.max(0, (Number(wallet.hive) || 0) - moved), 3);
-      wallet.stakedHive = roundAsset((Number(wallet.stakedHive) || 0) + moved, 3);
-      wallet.vestingShares = roundAsset((Number(wallet.vestingShares) || 0) + vests, 6);
-      wallet.availableVests = Math.max(0, wallet.vestingShares - (Number(wallet.delegatedVests) || 0));
       wallet.hiveStr = formatChainAmount(wallet.hive, "HIVE", 3);
+      if (toSelf) {
+        const vests = HiveApi.hiveToVests(moved, wallet.props);
+        wallet.stakedHive = roundAsset((Number(wallet.stakedHive) || 0) + moved, 3);
+        wallet.vestingShares = roundAsset((Number(wallet.vestingShares) || 0) + vests, 6);
+        wallet.availableVests = Math.max(0, wallet.vestingShares - (Number(wallet.delegatedVests) || 0));
+      }
       const vestsStr = formatChainAmount(wallet.vestingShares, "VESTS", 6);
       for (let i = 0; i < accounts.length; i++) {
         accounts[i].balance = wallet.hiveStr;
-        accounts[i].vesting_shares = vestsStr;
+        if (toSelf) accounts[i].vesting_shares = vestsStr;
       }
     } else {
       wallet.hbd = roundAsset(Math.max(0, (Number(wallet.hbd) || 0) - moved), 3);
-      wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + moved, 3);
       wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
+      if (toSelf) wallet.stakedHbd = roundAsset((Number(wallet.stakedHbd) || 0) + moved, 3);
       const savingsStr = formatChainAmount(wallet.stakedHbd, "HBD", 3);
       for (let i = 0; i < accounts.length; i++) {
         accounts[i].hbd_balance = wallet.hbdStr;
-        accounts[i].savings_hbd_balance = savingsStr;
+        if (toSelf) accounts[i].savings_hbd_balance = savingsStr;
       }
     }
-    if (kind === "stake-hive" && accountState.user === wallet.name) syncOwnProfileBanner();
-    animateWalletBalances(wallet, from, walletBalanceSnapshot(wallet), [receiveLabel]);
+    if (toSelf && kind === "stake-hive" && accountState.user === wallet.name) syncOwnProfileBanner();
+    animateWalletBalances(wallet, from, walletBalanceSnapshot(wallet), toSelf ? [receiveLabel] : []);
   }
 
   function applyWalletSend(wallet, asset, amount) {
@@ -28332,8 +28343,45 @@ let CS77_FILTER_LOW_REP = 20;
     el.classList.toggle("is-error", Boolean(isError));
   }
 
+  function setWalletOpBusy(on) {
+    walletOpState.pending = on;
+    const submit = $("#walletOpSubmit");
+    if (submit) submit.disabled = on;
+    const maxBtn = $("#walletOpMax");
+    if (maxBtn) maxBtn.disabled = on;
+    const amount = $("#walletAmount");
+    if (amount) amount.disabled = on;
+    const to = $("#walletTo");
+    if (to) to.disabled = on;
+    const available = $("#walletOpAvailable");
+    const availableBtn = available && available.querySelector(".wallet-available-amt");
+    if (availableBtn) availableBtn.disabled = on;
+  }
+
+  // A finished username that is not the signed-in account. A partial name
+  // keeps the default stake sentence.
+  function paintWalletStakeLead() {
+    const kind = walletOpState.kind;
+    if (kind !== "stake-hive" && kind !== "stake-hbd") return;
+    const lead = $("#walletOpLead");
+    if (!lead) return;
+    const user = observer();
+    const target = walletHiveName($("#walletTo") && $("#walletTo").value);
+    const other = target && user && !walletSameAccount(target, user) ? target : "";
+    if (kind === "stake-hive") {
+      lead.textContent = other
+        ? "Move liquid hive into staked hive for @" + other + "."
+        : "Move liquid hive into staked hive.";
+    } else {
+      lead.textContent = other
+        ? "Move liquid hbd into staked hbd for @" + other + "."
+        : "Move liquid hbd into staked hbd.";
+    }
+  }
+
   function closeWalletOverlay() {
     if (ownerSignSession && ownerSignSession.source === "wallet") return;
+    walletOpState.gen += 1;
     const ov = $("#walletOverlay");
     if (ov) {
       hideDialog(ov);
@@ -28341,15 +28389,19 @@ let CS77_FILTER_LOW_REP = 20;
     }
     walletOpState.kind = "";
     walletOpState.max = 0;
-    walletOpState.pending = false;
     walletOpState.requestId = 0;
     const input = $("#walletAmount");
     if (input) input.value = "";
+    const toField = $("#walletToField");
+    if (toField) toField.hidden = true;
+    const fromInput = $("#walletFrom");
+    if (fromInput) fromInput.value = "";
+    const toInput = $("#walletTo");
+    if (toInput) toInput.value = "";
     const available = $("#walletOpAvailable");
     if (available) available.textContent = "";
     setWalletOpStatus("");
-    const submit = $("#walletOpSubmit");
-    if (submit) submit.disabled = false;
+    setWalletOpBusy(false);
   }
 
   function openWalletOverlay(kind, requestId) {
@@ -28380,10 +28432,10 @@ let CS77_FILTER_LOW_REP = 20;
       showError("No " + copy.symbol + " available for this.");
       return;
     }
+    walletOpState.gen += 1;
     walletOpState.kind = kind;
     walletOpState.max = max;
     walletOpState.symbol = copy.symbol;
-    walletOpState.pending = false;
     walletOpState.requestId = hbdRow ? hbdRow.requestId : 0;
     const title = $("#walletOpTitle");
     if (title) title.textContent = copy.title;
@@ -28403,16 +28455,28 @@ let CS77_FILTER_LOW_REP = 20;
     if (input) {
       input.value = "";
       input.placeholder = "0.000";
+      input.disabled = false;
+    }
+    const stakeTo = kind === "stake-hive" || kind === "stake-hbd";
+    const toField = $("#walletToField");
+    if (toField) toField.hidden = !stakeTo;
+    const fromInput = $("#walletFrom");
+    if (fromInput) fromInput.value = stakeTo ? user : "";
+    const toInput = $("#walletTo");
+    if (toInput) {
+      toInput.value = stakeTo ? user : "";
+      toInput.disabled = false;
     }
     setWalletOpStatus("");
-    const submit = $("#walletOpSubmit");
-    if (submit) submit.disabled = false;
+    setWalletOpBusy(false);
+    if (stakeTo) paintWalletStakeLead();
     const ov = $("#walletOverlay");
     const focusFrom = document.activeElement;
     if (ov) {
       ov.classList.toggle("is-confirm-only", confirmOnly);
       ov.hidden = false;
     }
+    const submit = $("#walletOpSubmit");
     if (confirmOnly) {
       if (submit) submit.focus();
     } else if (input) input.focus();
@@ -28459,7 +28523,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function fillWalletMax() {
     const input = $("#walletAmount");
-    if (!input || !walletOpState.max) return;
+    if (!input || !walletOpState.max || walletOpState.pending) return;
     input.value = roundAsset(walletOpState.max, 3).toFixed(3);
   }
 
@@ -28486,7 +28550,22 @@ let CS77_FILTER_LOW_REP = 20;
     if (walletOpState.pending || ownerSignOpen()) return;
     const cancelPower = kind === "cancel-powerdown";
     const cancelHbd = kind === "cancel-hbd-unstake";
+    const stakeFor = kind === "stake-hive" || kind === "stake-hbd";
     let amount = 0;
+    let target = user;
+    if (stakeFor) {
+      const from = walletHiveName($("#walletFrom") && $("#walletFrom").value);
+      if (from !== user) {
+        setWalletOpStatus("Stake from @" + user + ".", true);
+        return;
+      }
+      target = walletHiveName($("#walletTo") && $("#walletTo").value);
+      if (!target) {
+        setWalletOpStatus("Enter a hive username.", true);
+        return;
+      }
+      if (walletSameAccount(target, user)) target = user;
+    }
     if (!cancelPower && !cancelHbd) {
       amount = roundAsset(parseAmountInput($("#walletAmount") && $("#walletAmount").value), 3);
       if (amount < 0.001) {
@@ -28499,17 +28578,44 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
     }
-    walletOpState.pending = true;
-    const submit = $("#walletOpSubmit");
-    if (submit) submit.disabled = true;
+    const gen = walletOpState.gen;
+    setWalletOpBusy(true);
     setWalletOpStatus("");
+    if (stakeFor && !walletSameAccount(target, user)) {
+      setWalletOpStatus("Checking account…", false);
+      let found = false;
+      try {
+        const accounts = await HiveApi.getAccounts([target]);
+        const rows = accounts || [];
+        for (let i = 0; i < rows.length; i++) {
+          const name = walletHiveName(rows[i] && rows[i].name);
+          if (name && walletSameAccount(name, target)) {
+            found = true;
+            target = name;
+            break;
+          }
+        }
+      } catch (err) {
+        if (walletOpState.gen !== gen) return;
+        setWalletOpStatus((err && err.message) || "Could not look up that account.", true);
+        setWalletOpBusy(false);
+        return;
+      }
+      if (walletOpState.gen !== gen) return;
+      if (!found) {
+        setWalletOpStatus("That hive account does not exist.", true);
+        setWalletOpBusy(false);
+        return;
+      }
+      setWalletOpStatus("");
+    }
     let operations;
     try {
       if (kind === "stake-hive") {
         operations = [
           [
             "transfer_to_vesting",
-            { from: user, to: user, amount: formatChainAmount(amount, "HIVE", 3) },
+            { from: user, to: target, amount: formatChainAmount(amount, "HIVE", 3) },
           ],
         ];
       } else if (kind === "unstake-hive") {
@@ -28546,7 +28652,7 @@ let CS77_FILTER_LOW_REP = 20;
             "transfer_to_savings",
             {
               from: user,
-              to: user,
+              to: target,
               amount: formatChainAmount(amount, "HBD", 3),
               memo: "",
             },
@@ -28554,6 +28660,7 @@ let CS77_FILTER_LOW_REP = 20;
         ];
       } else if (kind === "unstake-hbd") {
         const requestId = await nextSavingsRequestId(user);
+        if (walletOpState.gen !== gen) return;
         operations = [
           [
             "transfer_from_savings",
@@ -28570,16 +28677,17 @@ let CS77_FILTER_LOW_REP = 20;
         throw new Error("Unknown wallet action.");
       }
     } catch (err) {
+      if (walletOpState.gen !== gen) return;
       setWalletOpStatus((err && err.message) || String(err), true);
-      walletOpState.pending = false;
-      if (submit) submit.disabled = false;
+      setWalletOpBusy(false);
       return;
     }
-    if (walletOpState.kind !== kind || observer() !== user || !isOwnAuthor(profileState.author)) {
-      if (walletOpState.kind === kind) closeWalletOverlay();
+    if (walletOpState.gen !== gen) return;
+    if (observer() !== user || !isOwnAuthor(profileState.author)) {
+      closeWalletOverlay();
       return;
     }
-    const copy = walletSignCopy(kind, user, amount);
+    const copy = walletSignCopy(kind, user, amount, target);
     const savedRequestId = walletOpState.requestId;
     try {
       await signWithDialog(user, operations, {
@@ -28599,7 +28707,7 @@ let CS77_FILTER_LOW_REP = 20;
         // Drop a refresh that started before this signature so it cannot
         // paint the pre-stake account over the balances just applied.
         resourceGen += 1;
-        applyWalletStake(profileState.wallet, kind, amount);
+        applyWalletStake(profileState.wallet, kind, amount, target);
         return;
       }
       if (kind === "cancel-powerdown") {
@@ -28616,12 +28724,12 @@ let CS77_FILTER_LOW_REP = 20;
       route();
     } catch (err) {
       const cancelled = Boolean(err && err.ownerCancel);
+      if (walletOpState.gen !== gen) return;
       setWalletOpStatus(
         cancelled ? (err && err.message) || copy.cancelMessage : (err && err.message) || copy.failMessage,
         !cancelled
       );
-      walletOpState.pending = false;
-      if (submit) submit.disabled = false;
+      setWalletOpBusy(false);
     }
   }
 
@@ -43265,6 +43373,13 @@ let CS77_FILTER_LOW_REP = 20;
       }
       if (walletAmount) {
         walletAmount.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") submitWalletOp();
+        });
+      }
+      const walletTo = $("#walletTo");
+      if (walletTo) {
+        walletTo.addEventListener("input", paintWalletStakeLead);
+        walletTo.addEventListener("keydown", (e) => {
           if (e.key === "Enter") submitWalletOp();
         });
       }
