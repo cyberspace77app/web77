@@ -38299,15 +38299,7 @@ let CS77_FILTER_LOW_REP = 20;
         </div>
       `;
     }).join("");
-    return `
-      <section class="settings-stored-keys" id="settingsStoredKeys">
-        <h2 class="settings-section-title settings-section-line"><span>Stored keys</span></h2>
-        <p class="settings-note">Saved in this browser.</p>
-        <div id="settingsStoredKeysList"></div>
-        <p class="settings-status" id="settingsStoredKeysStatus" role="status"></p>
-      </section>
-      <form class="settings-form" id="settingsKeysForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Key generation tool</span></h2>
+    const tool = `
         <p class="settings-note">Generate the Owner, Active, Memo and  Posting key locally from the master password.</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsKeysUser">Username</label>
@@ -38332,6 +38324,16 @@ let CS77_FILTER_LOW_REP = 20;
           </div>
         </div>
         <p class="settings-status" id="settingsKeysStatus" role="status"></p>
+    `;
+    return `
+      <section class="settings-stored-keys" id="settingsStoredKeys">
+        <h2 class="settings-section-title settings-section-line"><span>Stored keys</span></h2>
+        <p class="settings-note">Saved in this browser.</p>
+        <div id="settingsStoredKeysList"></div>
+        <p class="settings-status" id="settingsStoredKeysStatus" role="status"></p>
+      </section>
+      <form class="settings-form" id="settingsKeysForm" autocomplete="off">
+        ${settingsFoldHtml("Key generation tool", tool)}
       </form>
       ${settingsPasswordHtml(username)}
       ${settingsRecoveryHtml(username)}
@@ -38340,15 +38342,26 @@ let CS77_FILTER_LOW_REP = 20;
     `;
   }
 
+  function settingsFoldHtml(title, inner) {
+    return (
+      '<details class="settings-fold">' +
+      "<summary>" +
+      '<h2 class="settings-section-title settings-section-line"><span><span class="settings-fold-mark" aria-hidden="true"></span>' +
+      title +
+      "</span></h2>" +
+      "</summary>" +
+      inner +
+      "</details>"
+    );
+  }
+
   function settingsPasswordHtml(username) {
     const esc = HiveMd.escapeHtml;
     const name = normalizeLoginUser(username || "");
     const loggedIn = validLoginUser(name);
     const user = esc(loggedIn ? name : "");
     const userLock = loggedIn ? " disabled" : "";
-    return `
-      <form class="settings-form" id="settingsPasswordForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Change password</span></h2>
+    const body = `
         <p class="settings-note">Replaces the Owner, Active, Posting, and Memo keys. An owner key or master password is enough. Save the new master password before you change it. The old keys stop working.</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsPasswordUser">Username</label>
@@ -38387,6 +38400,10 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="button" class="btn-ghost" id="settingsPasswordReset">Reset</button>
         </div>
         <p class="settings-status" id="settingsPasswordStatus" role="status"></p>
+    `;
+    return `
+      <form class="settings-form" id="settingsPasswordForm" autocomplete="off">
+        ${settingsFoldHtml("Change password", body)}
       </form>
     `;
   }
@@ -38398,18 +38415,24 @@ let CS77_FILTER_LOW_REP = 20;
     if (!validLoginUser(name)) {
       return `
       <form class="settings-form" id="settingsRecoveryForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Recovery account</span></h2>
+        ${settingsFoldHtml(
+          "Recovery account",
+          `
         <p class="settings-note">${note}</p>
         <p class="settings-note">Log in to see and change the recovery account.</p>
         <div class="settings-actions">
           <button type="button" class="btn-primary" id="settingsRecoveryLogin">Login</button>
         </div>
+        `
+        )}
       </form>
     `;
     }
     return `
       <form class="settings-form" id="settingsRecoveryForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Recovery account</span></h2>
+        ${settingsFoldHtml(
+          "Recovery account",
+          `
         <p class="settings-note">${note}</p>
         <p id="settingsRecoveryCurrent">Loading the recovery account…</p>
         <p class="settings-note" id="settingsRecoveryPending" hidden></p>
@@ -38421,6 +38444,8 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="submit" class="btn-primary" id="settingsRecoverySubmit" disabled>Change recovery account</button>
         </div>
         <p class="settings-status" id="settingsRecoveryStatus" role="status"></p>
+        `
+        )}
       </form>
     `;
   }
@@ -38432,18 +38457,24 @@ let CS77_FILTER_LOW_REP = 20;
     if (!validLoginUser(name)) {
       return `
       <form class="settings-form" id="settingsRecoverRequestForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Request recovery</span></h2>
+        ${settingsFoldHtml(
+          "Request recovery",
+          `
         <p class="settings-note">${note}</p>
         <p class="settings-note">Log in to request a recovery.</p>
         <div class="settings-actions">
           <button type="button" class="btn-primary" id="settingsRecoverRequestLogin">Login</button>
         </div>
+        `
+        )}
       </form>
     `;
     }
     return `
       <form class="settings-form" id="settingsRecoverRequestForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Request recovery</span></h2>
+        ${settingsFoldHtml(
+          "Request recovery",
+          `
         <p class="settings-note">${note}</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsRecoverRequestUser">Account to recover</label>
@@ -38460,6 +38491,8 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="button" class="btn-ghost" id="settingsRecoverRequestCancel" hidden>Cancel request</button>
         </div>
         <p class="settings-status" id="settingsRecoverRequestStatus" role="status"></p>
+        `
+        )}
       </form>
     `;
   }
@@ -38467,9 +38500,7 @@ let CS77_FILTER_LOW_REP = 20;
   function settingsRecoverConfirmHtml(username) {
     const name = normalizeLoginUser(username || "");
     const user = HiveMd.escapeHtml(validLoginUser(name) ? name : "");
-    return `
-      <form class="settings-form" id="settingsRecoverConfirmForm" autocomplete="off">
-        <h2 class="settings-section-title settings-section-line"><span>Confirm recovery</span></h2>
+    const body = `
         <p class="settings-note">Confirm a recovery that was already requested. Enter a recent owner key from the last 30 days and the new owner key. Both are used once on this device and are not saved. This changes only the owner key.</p>
         <div class="settings-field">
           <label class="settings-label" for="settingsRecoverConfirmUser">Account to recover</label>
@@ -38496,6 +38527,10 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="button" class="btn-ghost" id="settingsRecoverConfirmSkip" hidden>Skip</button>
         </div>
         <p class="settings-status" id="settingsRecoverConfirmStatus" role="status"></p>
+    `;
+    return `
+      <form class="settings-form" id="settingsRecoverConfirmForm" autocomplete="off">
+        ${settingsFoldHtml("Confirm recovery", body)}
       </form>
     `;
   }

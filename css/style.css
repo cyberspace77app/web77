@@ -10631,6 +10631,75 @@ min-height: 0;
   margin-top: 2.35rem;
 }
 
+.settings-fold {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.settings-fold > summary {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.settings-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-fold > summary::marker {
+  content: "";
+}
+
+.settings-fold > summary:focus {
+  outline: none;
+}
+
+.settings-fold > summary:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 4px;
+}
+
+#settingsKeysForm .settings-fold > summary h2.settings-section-line,
+#settingsPasswordForm .settings-fold > summary h2.settings-section-line,
+#settingsRecoveryForm .settings-fold > summary h2.settings-section-line,
+#settingsRecoverRequestForm .settings-fold > summary h2.settings-section-line,
+#settingsRecoverConfirmForm .settings-fold > summary h2.settings-section-line {
+  margin-bottom: 0;
+}
+
+.settings-fold[open] > summary {
+  margin-bottom: 0.45rem;
+}
+
+.settings-fold-mark {
+  display: inline-block;
+  width: 0.85rem;
+  margin-right: 0.15rem;
+  font-family: system-ui, sans-serif;
+  font-weight: 400;
+  color: var(--gray);
+}
+
+.settings-fold-mark::before {
+  content: "\25b8";
+}
+
+.settings-fold[open] .settings-fold-mark::before {
+  content: "\25be";
+}
+
+.settings-fold > summary:hover .settings-fold-mark,
+.settings-fold[open] .settings-fold-mark {
+  color: var(--yellow);
+}
+
+.settings-fold > .settings-note:first-of-type {
+  margin: 0 0 1.25rem;
+}
+
 #settingsRecoveryCurrent {
   margin: 0.15rem 0 1rem;
   font-family: var(--font-mono);
