@@ -29422,7 +29422,7 @@ let CS77_FILTER_LOW_REP = 20;
     const max = claimState.max;
     const noun = max === 1 ? "token" : "tokens";
     const disabled = claimState.pending || !(max >= 1);
-    let html = "Max: " + availableAmountButton(String(max), disabled) + " " + noun + ".";
+    let html = "Max: " + availableAmountButton(String(max) + " " + noun, disabled) + ".";
     if (max >= 1) html += " That spends the current resource credits.";
     else html += " The current resource credits cannot pay for a token.";
     el.innerHTML = html;
