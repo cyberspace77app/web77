@@ -656,6 +656,23 @@ const operationSerializers = {
     ["json_metadata", StringSerializer],
     ["extensions", ArraySerializer(VoidSerializer)],
   ]),
+  request_account_recovery: operation(24, [
+    ["recovery_account", StringSerializer],
+    ["account_to_recover", StringSerializer],
+    ["new_owner_authority", AuthoritySerializer],
+    ["extensions", ArraySerializer(VoidSerializer)],
+  ]),
+  recover_account: operation(25, [
+    ["account_to_recover", StringSerializer],
+    ["new_owner_authority", AuthoritySerializer],
+    ["recent_owner_authority", AuthoritySerializer],
+    ["extensions", ArraySerializer(VoidSerializer)],
+  ]),
+  change_recovery_account: operation(26, [
+    ["account_to_recover", StringSerializer],
+    ["new_recovery_account", StringSerializer],
+    ["extensions", ArraySerializer(VoidSerializer)],
+  ]),
   transfer_to_savings: operation(32, [
     ["from", StringSerializer],
     ["to", StringSerializer],

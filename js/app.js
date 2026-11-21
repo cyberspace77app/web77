@@ -33914,6 +33914,9 @@ let CS77_FILTER_LOW_REP = 20;
 
   function ownerSignDefaultLead(authority) {
     const role = ownerSignRoleName(authority);
+    if (authority === "Owner") {
+      return "Enter the owner key. Hive Keychain does not store the owner key.";
+    }
     if (authority === "Posting") {
       return "Use hive keychain (recommended) or enter the posting key of this subspace account.";
     }
@@ -33936,8 +33939,9 @@ let CS77_FILTER_LOW_REP = 20;
     if (key) key.placeholder = role + " key";
     if (connect) connect.textContent = (opts && opts.action) || "Sign";
     const method = $("#ownerSignMethod");
-    if (method) method.hidden = false;
-    setAuthMethod(method, opts ? ownerSignStartMethod() : defaultAuthMethod());
+    const ownerOnly = authority === "Owner";
+    if (method) method.hidden = ownerOnly;
+    setAuthMethod(method, ownerOnly ? "password" : opts ? ownerSignStartMethod() : defaultAuthMethod());
   }
 
   // A password login already chose that method. When the dialog asks that
@@ -33996,11 +34000,14 @@ let CS77_FILTER_LOW_REP = 20;
   // "roster-posting" when that other account logged in with a posting key
   // and this operation is Posting. The key stays stored for that account
   // and is not the one unlocked in this tab. Anything else stays "" so the
-  // dialog opens, including an active, owner, or memo operation for a
-  // posting-key account, and a signer who is not on the list.
+  // dialog opens, including an active or memo operation for a posting-key
+  // account, every owner operation, and a signer who is not on the list.
+  // Owner never returns "keychain". Hive Keychain stores posting, active,
+  // and memo, not the owner key.
   function signSessionKind(account, authority) {
     const name = normalizeLoginUser(account);
     if (!name) return "";
+    if (authority === "Owner") return "";
     if (keychainLoginActive() === name) return "keychain";
     if (authority === "Posting" && window.cs77Auth && cs77Auth.hasKey(name)) return "posting";
     if (normalizeLoginUser(observer()) === name) return "";
@@ -34063,19 +34070,21 @@ let CS77_FILTER_LOW_REP = 20;
 
   // One signer for subspace owner settings, role changes, creating a subspace,
   // wallet stake, unstake, send, convert, claim, or account creation,
-  // delegations, creating a proposal, and encrypting or decrypting a transfer
-  // memo. Pass the account, operations, authority, and the dialog copy. A stored posting
-  // key signs Posting with no dialog. A Keychain login signs Posting,
-  // Active, Owner, and Memo through Keychain with no dialog, when the
-  // account is the one that is logged in. Another account on the multi-account
-  // list signs the same way: Keychain when that login is Keychain, or its
-  // stored posting key when the operation is Posting. A private-key login asked for
-  // an active, owner, or memo key opens the dialog. So does signing for
-  // an account that is not on the list, such as a subspace owner who was
-  // never logged in here. A stored posting key starts that dialog on Password
-  // when the account is the signed-in user. The password field accepts that
-  // role key or the master password. Decrypt mode resolves with the plaintext.
-  // Encode mode resolves with the # base58 ciphertext.
+  // delegations, creating a proposal, the recovery account, and encrypting or
+  // decrypting a transfer memo. Pass the account, operations, authority, and
+  // the dialog copy. A stored posting key signs Posting with no dialog. A
+  // Keychain login signs Posting, Active, and Memo through Keychain with no
+  // dialog, when the account is the one that is logged in. Owner always opens
+  // this dialog on Password. Hive Keychain does not store the owner key.
+  // Another account on the multi-account list signs the same way: Keychain
+  // when that login is Keychain, or its stored posting key when the operation
+  // is Posting. A private-key login asked for an active or memo key opens the
+  // dialog. So does signing for an account that is not on the list, such as a
+  // subspace owner who was never logged in here. A stored posting key starts
+  // that dialog on Password when the account is the signed-in user. The
+  // password field accepts that role key or the master password. Decrypt mode
+  // resolves with the plaintext. Encode mode resolves with the # base58
+  // ciphertext.
   function signWithDialog(name, operations, copy) {
     const opts = copy || {};
     const authority = ownerSignAuthority(opts);
@@ -34120,6 +34129,7 @@ let CS77_FILTER_LOW_REP = 20;
         });
       }
       if (kind === "keychain") {
+        if (authority === "Owner") return openOwnerSignDialog(name, operations, opts);
         if (typeof opts.onKeychain === "function") opts.onKeychain();
         return requestKeychainBroadcast(account, operations, authority);
       }
@@ -34175,6 +34185,10 @@ let CS77_FILTER_LOW_REP = 20;
     const roleName = ownerSignRoleName(session.authority);
     const method = authMethod($("#ownerSignMethod"));
     let secret = "";
+    if (session.authority === "Owner" && method !== "password") {
+      setOwnerSignStatus("Hive Keychain does not store the owner key. Enter the owner key.", true);
+      return;
+    }
     if (method === "password") {
       secret = (key && key.value) || "";
       if (!secret.replace(/\s+/g, "")) {
@@ -34227,6 +34241,9 @@ let CS77_FILTER_LOW_REP = 20;
         secret = "";
         await signJob;
       } else {
+        if (session.authority === "Owner") {
+          throw new Error("Hive Keychain does not store the owner key. Enter the owner key.");
+        }
         setOwnerSignStatus("Waiting for Keychain…", false);
         await requestKeychainBroadcast(session.name, session.operations, session.authority);
       }
@@ -38190,6 +38207,7 @@ let CS77_FILTER_LOW_REP = 20;
         <p class="settings-status" id="settingsKeysStatus" role="status"></p>
       </form>
       ${settingsPasswordHtml(username)}
+      ${settingsRecoveryHtml(username)}
     `;
   }
 
@@ -38240,6 +38258,40 @@ let CS77_FILTER_LOW_REP = 20;
           <button type="button" class="btn-ghost" id="settingsPasswordReset">Reset</button>
         </div>
         <p class="settings-status" id="settingsPasswordStatus" role="status"></p>
+      </form>
+    `;
+  }
+
+  function settingsRecoveryHtml(username) {
+    const note =
+      "For security reasons, a change to the recovery account takes 30 days to take effect. Until then, the current recovery account stays in charge. A second change before those 30 days restarts the wait.";
+    const name = normalizeLoginUser(username || "");
+    if (!validLoginUser(name)) {
+      return `
+      <form class="settings-form" id="settingsRecoveryForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Recovery account</span></h2>
+        <p class="settings-note">${note}</p>
+        <p class="settings-note">Log in to see and change the recovery account.</p>
+        <div class="settings-actions">
+          <button type="button" class="btn-primary" id="settingsRecoveryLogin">Login</button>
+        </div>
+      </form>
+    `;
+    }
+    return `
+      <form class="settings-form" id="settingsRecoveryForm" autocomplete="off">
+        <h2 class="settings-section-title settings-section-line"><span>Recovery account</span></h2>
+        <p class="settings-note">${note}</p>
+        <p id="settingsRecoveryCurrent">Loading the recovery account…</p>
+        <p class="settings-note" id="settingsRecoveryPending" hidden></p>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsRecoveryUser">New recovery account</label>
+          <input id="settingsRecoveryUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username" disabled>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn-primary" id="settingsRecoverySubmit" disabled>Change recovery account</button>
+        </div>
+        <p class="settings-status" id="settingsRecoveryStatus" role="status"></p>
       </form>
     `;
   }
@@ -38673,6 +38725,7 @@ let CS77_FILTER_LOW_REP = 20;
       });
     }
     bindSettingsPassword();
+    bindSettingsRecovery();
   }
 
   // The offered master password and the owner secret stay here until Reset,
@@ -39164,10 +39217,350 @@ let CS77_FILTER_LOW_REP = 20;
     paintSettingsPasswordLock();
   }
 
+  // The request object uses recovery_account for the account that is waiting.
+  // The account object uses the same field for the account in effect now.
+  const settingsRecovery = {
+    token: 0,
+    pending: false,
+    loaded: false,
+    user: "",
+    current: "",
+    requested: "",
+    effectiveOn: "",
+  };
+
+  function setSettingsRecoveryStatus(message, isError) {
+    const status = $("#settingsRecoveryStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function settingsRecoveryLink(name) {
+    const user = normalizeLoginUser(name);
+    if (!validLoginUser(user)) return "";
+    const href = HiveMd.escapeHtml(appHref("/@" + user));
+    return `<a href="${href}">@${HiveMd.escapeHtml(user)}</a>`;
+  }
+
+  function settingsRecoveryWhen(stamp) {
+    const text = formatCreated(stamp);
+    if (text) return text;
+    return String(stamp || "").trim();
+  }
+
+  function settingsRecoveryRequestRow(result, user) {
+    const list = Array.isArray(result)
+      ? result
+      : result && Array.isArray(result.requests)
+        ? result.requests
+        : [];
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || typeof row !== "object") continue;
+      const owner = normalizeLoginUser(row.account_to_recover || "");
+      if (owner && owner !== user) continue;
+      const next = normalizeLoginUser(row.recovery_account || "");
+      if (!validLoginUser(next)) continue;
+      return { requested: next, effectiveOn: String(row.effective_on || "") };
+    }
+    return { requested: "", effectiveOn: "" };
+  }
+
+  function settingsRecoveryLead(user, next, cancel) {
+    const key = " Enter the owner key. Hive Keychain does not store the owner key.";
+    if (cancel) {
+      return (
+        "This cancels the pending change. @" +
+        settingsRecovery.current +
+        " stays the recovery account." +
+        key
+      );
+    }
+    let lead = "@" + next + " becomes the recovery account 30 days after this is signed.";
+    if (settingsRecovery.requested) {
+      lead =
+        "A change to @" +
+        settingsRecovery.requested +
+        " is already waiting. Signing this starts the 30 days again. @" +
+        next +
+        " becomes the recovery account when that wait ends.";
+    }
+    if (next === user) {
+      lead += " This account would recover itself, so a stolen owner key can change the recovery account too.";
+    }
+    return lead + key;
+  }
+
+  function paintSettingsRecovery() {
+    const current = $("#settingsRecoveryCurrent");
+    const pending = $("#settingsRecoveryPending");
+    const input = $("#settingsRecoveryUser");
+    const submit = $("#settingsRecoverySubmit");
+    const loaded = settingsRecovery.loaded;
+    const busy = settingsRecovery.pending;
+    if (input) input.disabled = !loaded || busy;
+    if (submit) {
+      submit.disabled = !loaded || busy;
+      const typed = normalizeLoginUser(input && input.value);
+      const cancel =
+        loaded &&
+        Boolean(settingsRecovery.requested) &&
+        Boolean(settingsRecovery.current) &&
+        typed === settingsRecovery.current;
+      submit.textContent = cancel ? "Cancel change" : "Change recovery account";
+    }
+    if (!current) return;
+    if (!loaded) {
+      if (current.dataset.failed !== "1") current.textContent = "Loading the recovery account…";
+      if (pending) {
+        pending.hidden = true;
+        pending.textContent = "";
+      }
+      return;
+    }
+    delete current.dataset.failed;
+    if (validLoginUser(settingsRecovery.current)) {
+      current.innerHTML = "Current recovery account " + settingsRecoveryLink(settingsRecovery.current) + ".";
+    } else {
+      current.textContent = "No recovery account is listed. The top witness can recover this account.";
+    }
+    if (!pending) return;
+    if (!validLoginUser(settingsRecovery.requested)) {
+      pending.hidden = true;
+      pending.textContent = "";
+      return;
+    }
+    const when = settingsRecoveryWhen(settingsRecovery.effectiveOn);
+    let html = "A change to " + settingsRecoveryLink(settingsRecovery.requested) + " is waiting";
+    if (when) html += " until " + HiveMd.escapeHtml(when);
+    html += ".";
+    if (validLoginUser(settingsRecovery.current)) {
+      html += " Enter " + settingsRecoveryLink(settingsRecovery.current) + " to cancel it.";
+    }
+    pending.innerHTML = html;
+    pending.hidden = false;
+  }
+
+  function wipeSettingsRecovery() {
+    settingsRecovery.token += 1;
+    settingsRecovery.pending = false;
+    settingsRecovery.loaded = false;
+    settingsRecovery.user = "";
+    settingsRecovery.current = "";
+    settingsRecovery.requested = "";
+    settingsRecovery.effectiveOn = "";
+    const input = $("#settingsRecoveryUser");
+    if (input) input.value = "";
+    const current = $("#settingsRecoveryCurrent");
+    if (current) delete current.dataset.failed;
+    setSettingsRecoveryStatus("");
+    paintSettingsRecovery();
+  }
+
+  async function fetchSettingsRecovery(user) {
+    const rows = await HiveApi.getAccounts([user]);
+    const requests = await HiveApi.hiveRpc("database_api.find_change_recovery_account_requests", {
+      accounts: [user],
+    });
+    const account = rows && rows[0];
+    if (!account || normalizeLoginUser(account.name) !== user) {
+      throw new Error("Could not load this account.");
+    }
+    const pending = settingsRecoveryRequestRow(requests, user);
+    return {
+      current: normalizeLoginUser(account.recovery_account || ""),
+      requested: pending.requested,
+      effectiveOn: pending.effectiveOn,
+    };
+  }
+
+  async function loadSettingsRecovery() {
+    const user = normalizeLoginUser(observer());
+    const token = (settingsRecovery.token += 1);
+    settingsRecovery.pending = false;
+    settingsRecovery.loaded = false;
+    settingsRecovery.user = user;
+    settingsRecovery.current = "";
+    settingsRecovery.requested = "";
+    settingsRecovery.effectiveOn = "";
+    const current = $("#settingsRecoveryCurrent");
+    if (current) delete current.dataset.failed;
+    setSettingsRecoveryStatus("");
+    paintSettingsRecovery();
+    if (!validLoginUser(user)) return;
+    try {
+      const seen = await fetchSettingsRecovery(user);
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      settingsRecovery.current = seen.current;
+      settingsRecovery.requested = seen.requested;
+      settingsRecovery.effectiveOn = seen.effectiveOn;
+      settingsRecovery.loaded = true;
+      paintSettingsRecovery();
+    } catch (err) {
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      const el = $("#settingsRecoveryCurrent");
+      if (el) {
+        el.dataset.failed = "1";
+        el.textContent = "";
+      }
+      setSettingsRecoveryStatus((err && err.message) || "Could not load the recovery account.", true);
+      paintSettingsRecovery();
+    }
+  }
+
+  async function submitSettingsRecovery(e) {
+    if (e) e.preventDefault();
+    if (settingsRecovery.pending || !settingsRecovery.loaded) return;
+    const token = settingsRecovery.token;
+    const user = settingsRecovery.user;
+    if (!validLoginUser(user) || normalizeLoginUser(observer()) !== user) {
+      setSettingsRecoveryStatus("Log in to change the recovery account.", true);
+      return;
+    }
+    const input = $("#settingsRecoveryUser");
+    const next = normalizeLoginUser((input && input.value) || "");
+    if (input && input.value !== next) input.value = next;
+    if (!validLoginUser(next)) {
+      setSettingsRecoveryStatus("Enter a valid Hive username.", true);
+      return;
+    }
+    const current = settingsRecovery.current;
+    const requested = settingsRecovery.requested;
+    const cancel = Boolean(current && next === current && requested);
+    if (next === current && !requested) {
+      setSettingsRecoveryStatus("@" + current + " is already the recovery account.", true);
+      return;
+    }
+    if (requested && next === requested) {
+      const when = settingsRecoveryWhen(settingsRecovery.effectiveOn);
+      setSettingsRecoveryStatus(
+        "@" +
+          requested +
+          " is already waiting to become the recovery account" +
+          (when ? " on " + when : "") +
+          ". Enter @" +
+          (current || "the current recovery account") +
+          " to cancel, or choose a different account.",
+        true
+      );
+      return;
+    }
+    settingsRecovery.pending = true;
+    paintSettingsRecovery();
+    setSettingsRecoveryStatus("Checking @" + next + "…");
+    try {
+      const rows = await HiveApi.getAccounts([next]);
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      const account = rows && rows[0];
+      if (!account || normalizeLoginUser(account.name) !== next) {
+        throw new Error("Unknown Hive account @" + next + ".");
+      }
+      setSettingsRecoveryStatus("Waiting for the owner key…");
+      await signWithDialog(
+        user,
+        [
+          [
+            "change_recovery_account",
+            {
+              account_to_recover: user,
+              new_recovery_account: next,
+              extensions: [],
+            },
+          ],
+        ],
+        {
+          authority: "Owner",
+          title: cancel ? "Cancel recovery change" : "Change recovery account",
+          lead: settingsRecoveryLead(user, next, cancel),
+          action: cancel ? "Cancel change" : "Change",
+          source: "settings",
+          failMessage: cancel
+            ? "The recovery change was not cancelled."
+            : "The recovery account was not changed.",
+          cancelMessage: cancel
+            ? "The recovery change was not cancelled."
+            : "The recovery account was not changed.",
+        }
+      );
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      setSettingsRecoveryStatus("Waiting for the recovery request…");
+      let seen = null;
+      for (let i = 0; i < 4; i++) {
+        if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+        try {
+          seen = await fetchSettingsRecovery(user);
+        } catch {
+          seen = null;
+        }
+        if (token !== settingsRecovery.token) return;
+        const ready = seen && (cancel ? !seen.requested : seen.requested === next);
+        if (ready || i === 3) break;
+        await subspaceWait(1000);
+      }
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      if (seen) {
+        settingsRecovery.current = seen.current;
+        settingsRecovery.requested = seen.requested;
+        settingsRecovery.effectiveOn = seen.effectiveOn;
+        settingsRecovery.loaded = true;
+      }
+      if (input) input.value = "";
+      const when = seen && settingsRecoveryWhen(seen.effectiveOn);
+      let message;
+      if (cancel) {
+        message = "The pending recovery change was cancelled.";
+        if (validLoginUser(settingsRecovery.current)) {
+          message += " @" + settingsRecovery.current + " stays the recovery account.";
+        }
+      } else if (seen && seen.requested === next && when) {
+        message = "Recovery change requested. @" + next + " takes effect on " + when + ".";
+        if (validLoginUser(settingsRecovery.current) && settingsRecovery.current !== next) {
+          message += " @" + settingsRecovery.current + " stays the recovery account until then.";
+        }
+      } else {
+        message = "Recovery change requested. @" + next + " takes effect in 30 days.";
+        if (validLoginUser(settingsRecovery.current)) {
+          message += " @" + settingsRecovery.current + " stays the recovery account until then.";
+        }
+      }
+      setSettingsRecoveryStatus(message, false);
+    } catch (err) {
+      if (token !== settingsRecovery.token || normalizeLoginUser(observer()) !== user) return;
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsRecoveryStatus(
+        cancelled
+          ? (err && err.message) || "The recovery account was not changed."
+          : (err && err.message) || "Could not change the recovery account.",
+        !cancelled
+      );
+    } finally {
+      if (token === settingsRecovery.token) {
+        settingsRecovery.pending = false;
+        paintSettingsRecovery();
+      }
+    }
+  }
+
+  function bindSettingsRecovery() {
+    const form = $("#settingsRecoveryForm");
+    if (!form) return;
+    const login = $("#settingsRecoveryLogin");
+    if (login) {
+      login.addEventListener("click", openLogin);
+      return;
+    }
+    form.addEventListener("submit", submitSettingsRecovery);
+    const input = $("#settingsRecoveryUser");
+    if (input) input.addEventListener("input", paintSettingsRecovery);
+    loadSettingsRecovery();
+  }
+
   async function renderSettings(page) {
     settingsNodeToken += 1;
     clearSettingsKeys();
     wipeSettingsPassword();
+    wipeSettingsRecovery();
     const tab = page === "profile" || page === "keys" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
@@ -41206,6 +41599,7 @@ let CS77_FILTER_LOW_REP = 20;
       clearSettingsProfileScratch();
       clearSettingsKeys();
       wipeSettingsPassword();
+      wipeSettingsRecovery();
     }
     if (r.name !== "publish") {
       document.body.classList.toggle(
