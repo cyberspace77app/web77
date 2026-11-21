@@ -624,12 +624,15 @@ let CS77_FILTER_LOW_REP = 20;
   };
   let peopleSearchTimer = 0;
   let peopleChainGen = 0;
-  // Same-URL history entries. Back closes the panel and stays on this page.
+  // Same-URL history entries. Back closes the dialog and stays on this page.
+  // dialogHistoryEntries() is the stack. Top of that list closes first.
   const peopleHist = { on: false, pop: false, pending: null };
   const votersHist = { on: false, pop: false, pending: null };
   const zapHist = { on: false, pop: false, pending: null };
   const lightningHist = { on: false, pop: false, pending: null };
   const profileQrHist = { on: false, pop: false, pending: null };
+  const keyQrHist = { on: false, pop: false, pending: null };
+  let dialogHistoryList = null;
   const walletOpState = {
     kind: "",
     max: 0,
@@ -5910,7 +5913,7 @@ let CS77_FILTER_LOW_REP = 20;
     return history.state && typeof history.state === "object" ? Object.assign({}, history.state) : {};
   }
 
-  // One same-URL entry. A Back or Forward restore only marks the panel open.
+  // One same-URL entry. A Back or Forward restore only marks the dialog open.
   function writePanelHistory(session, extra, fromHistory) {
     if (fromHistory) {
       session.on = true;
@@ -5943,7 +5946,7 @@ let CS77_FILTER_LOW_REP = 20;
     return had;
   }
 
-  // Pop the panel entry before leaving the page, so Back does not reopen it.
+  // Pop the dialog entry before leaving the page, so Back does not reopen it.
   function leavePanelForNav(session, alsoOpen, close, href, replace) {
     if (!session.on && !alsoOpen) return false;
     const had = session.on;
@@ -5966,44 +5969,220 @@ let CS77_FILTER_LOW_REP = 20;
     return true;
   }
 
-  // Pop the next same-page panel before logout finishes, so Back does not reopen it.
-  function popOpenPanelHistory(job) {
-    if (profileQrHist.on) {
-      closeProfileQrDialog({ skipHistory: true });
-      profileQrHist.on = false;
-      profileQrHist.pending = job;
-      history.back();
-      return true;
-    }
-    if (lightningHist.on) {
-      closeLightningDialog({ skipHistory: true });
-      lightningHist.on = false;
-      lightningHist.pending = job;
-      history.back();
-      return true;
-    }
-    if (zapHist.on && !zapSignBlocksClose()) {
-      closeZapOverlay({ skipHistory: true });
-      zapHist.on = false;
-      zapHist.pending = job;
-      history.back();
-      return true;
-    }
-    if (peopleHist.on) {
-      closePeoplePanel({ skipHistory: true });
-      peopleHist.on = false;
-      peopleHist.pending = job;
-      history.back();
-      return true;
-    }
-    if (votersHist.on) {
-      hideVoteVoters({ skipHistory: true });
-      votersHist.on = false;
-      votersHist.pending = job;
-      history.back();
-      return true;
+  // Top of the list is the dialog Back closes first. A new entry copies the
+  // flags under it, so the previous entry still names the dialog below.
+  function dialogHistoryEntries() {
+    if (dialogHistoryList) return dialogHistoryList;
+    dialogHistoryList = [
+      {
+        id: "keyQr",
+        flag: "keyQrPanel",
+        keys: ["keyQrPanel", "keyQrTarget"],
+        session: keyQrHist,
+        beforeEdit: true,
+        isOpen: keyQrDialogOpen,
+        close: closeKeyQrScanner,
+        reopen: reopenKeyQrFromHistory,
+        navAlsoOpen: keyQrDialogOpen,
+        shouldDismiss: keyQrDialogOpen,
+        reloadForce: keyQrDialogOpen,
+        routeIf: function () {
+          return keyQrDialogOpen() || keyQrHist.on;
+        },
+        routeStrip: true,
+        sectionIdle: true,
+        logoIf: function () {
+          return keyQrHist.on;
+        },
+      },
+      {
+        id: "profileQr",
+        flag: "profileQrPanel",
+        keys: PROFILE_QR_HISTORY_KEYS,
+        session: profileQrHist,
+        isOpen: profileQrDialogOpen,
+        close: closeProfileQrDialog,
+        reopen: reopenProfileQrFromHistory,
+        navAlsoOpen: profileQrDialogOpen,
+        shouldDismiss: profileQrDialogOpen,
+        reloadForce: profileQrDialogOpen,
+        sectionIdle: true,
+        logoIf: function () {
+          return profileQrHist.on;
+        },
+      },
+      {
+        id: "lightning",
+        flag: "lightningPanel",
+        keys: LIGHTNING_HISTORY_KEYS,
+        session: lightningHist,
+        isOpen: lightningDialogOpen,
+        close: closeLightningDialog,
+        reopen: reopenLightningFromHistory,
+        navAlsoOpen: lightningDialogOpen,
+        shouldDismiss: lightningDialogOpen,
+        reloadForce: lightningDialogOpen,
+        sectionIdle: true,
+        logoIf: function () {
+          return lightningHist.on;
+        },
+      },
+      {
+        id: "zap",
+        flag: "zapPanel",
+        keys: ZAP_HISTORY_KEYS,
+        session: zapHist,
+        isOpen: zapDialogOpen,
+        close: closeZapOverlay,
+        reopen: reopenZapFromHistory,
+        navAlsoOpen: zapDialogOpen,
+        shouldDismiss: zapDialogOpen,
+        reloadForce: zapDialogOpen,
+        sectionIdle: true,
+        holdNav: zapSignBlocksClose,
+        resistPop: function () {
+          if (!zapSignBlocksClose()) return false;
+          if (!ownerSignBusy) cancelOwnerSign();
+          if (zapDialogOpen() && !(history.state && history.state.zapPanel)) {
+            history.pushState(Object.assign(historyRecord(), zapHistoryFields()), "", location.href);
+            zapHist.on = true;
+          }
+          return true;
+        },
+        logoIf: function () {
+          return zapHist.on;
+        },
+      },
+      {
+        id: "people",
+        flag: "peoplePanel",
+        keys: PEOPLE_HISTORY_KEYS,
+        session: peopleHist,
+        isOpen: function () {
+          return peopleList.open;
+        },
+        close: closePeoplePanel,
+        reopen: function (state) {
+          openPeoplePanel(state.peopleKind, state.peopleId, { fromHistory: true });
+        },
+        navAlsoOpen: function () {
+          return peopleList.open;
+        },
+        shouldDismiss: function () {
+          return peopleList.open;
+        },
+        reloadForce: function () {
+          return peopleList.open;
+        },
+        routeIf: function () {
+          return peopleList.open || peopleHist.on;
+        },
+        routeStrip: true,
+        logoIf: function () {
+          return peopleList.open;
+        },
+      },
+      {
+        id: "voters",
+        flag: "votersPanel",
+        keys: VOTERS_HISTORY_KEYS,
+        session: votersHist,
+        isOpen: function () {
+          return !!openVoters;
+        },
+        close: hideVoteVoters,
+        reopen: reopenVotersFromHistory,
+        navAlsoOpen: function () {
+          return false;
+        },
+        shouldDismiss: function () {
+          return votersHist.on;
+        },
+        routeIf: function () {
+          return votersHist.on;
+        },
+        routeStrip: true,
+        logoIf: function () {
+          return votersHist.on;
+        },
+      },
+    ];
+    return dialogHistoryList;
+  }
+
+  function eachDialogHistory(phase, fn) {
+    const list = dialogHistoryEntries();
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      if (phase === "before-edit" && !spec.beforeEdit) continue;
+      if (phase === "after-edit" && spec.beforeEdit) continue;
+      if (fn(spec)) return true;
     }
     return false;
+  }
+
+  function leaveDialogsForNav(href, replace, phase) {
+    return eachDialogHistory(phase, function (spec) {
+      if (spec.holdNav && spec.holdNav()) return false;
+      return leavePanelForNav(spec.session, spec.navAlsoOpen(), spec.close, href, replace);
+    });
+  }
+
+  function leaveDialogsForReload(phase) {
+    return eachDialogHistory(phase, function (spec) {
+      if (spec.holdNav && spec.holdNav()) return false;
+      if (leavePanelForReload(spec.session, spec.close)) return true;
+      if (spec.reloadForce && spec.reloadForce()) spec.close({ skipHistory: true });
+      return false;
+    });
+  }
+
+  function consumeDialogHistoryPop(phase) {
+    return eachDialogHistory(phase, function (spec) {
+      if (resumePanelNavigation(spec.session, spec.close)) return true;
+      if (spec.resistPop && spec.resistPop()) return true;
+      return keepPanelOnPop(
+        spec.flag,
+        spec.isOpen,
+        spec.reopen,
+        spec.shouldDismiss,
+        spec.close,
+        spec.session
+      );
+    });
+  }
+
+  function closeDialogHistoryForRoute() {
+    const list = dialogHistoryEntries();
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      if (!spec.routeIf || !spec.routeIf()) continue;
+      spec.close({ skipHistory: true });
+      if (spec.routeStrip) stripPanelHistory(spec.session, spec.keys);
+    }
+  }
+
+  function closeDialogHistoryForSection() {
+    const list = dialogHistoryEntries();
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      if (!spec.sectionIdle) continue;
+      spec.close({ skipHistory: true });
+      stripPanelHistory(spec.session, spec.keys);
+    }
+  }
+
+  // Pop the next same-page dialog before logout finishes, so Back does not reopen it.
+  function popOpenPanelHistory(job) {
+    return eachDialogHistory("all", function (spec) {
+      if (!spec.session.on) return false;
+      if (spec.holdNav && spec.holdNav()) return false;
+      spec.close({ skipHistory: true });
+      spec.session.on = false;
+      spec.session.pending = job;
+      history.back();
+      return true;
+    });
   }
 
   function resumePanelNavigation(session, close) {
@@ -6066,6 +6245,7 @@ let CS77_FILTER_LOW_REP = 20;
   function navigate(href, replace) {
     if (zapPayConfirmOpen() || Date.now() < zapSwallowUntil) return;
     if (pollVotes.open) closePollVotes();
+    if (leaveDialogsForNav(href, replace, "before-edit")) return;
     if (editHistoryOn) {
       hidePublishOverlay();
       editHistoryOn = false;
@@ -6077,11 +6257,7 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryPost = null;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
-    if (leavePanelForNav(profileQrHist, profileQrDialogOpen(), closeProfileQrDialog, href, replace)) return;
-    if (leavePanelForNav(lightningHist, lightningDialogOpen(), closeLightningDialog, href, replace)) return;
-    if (!zapSignBlocksClose() && leavePanelForNav(zapHist, zapDialogOpen(), closeZapOverlay, href, replace)) return;
-    if (leavePanelForNav(peopleHist, peopleList.open, closePeoplePanel, href, replace)) return;
-    if (leavePanelForNav(votersHist, false, hideVoteVoters, href, replace)) return;
+    if (leaveDialogsForNav(href, replace, "after-edit")) return;
     const path = hrefToPath(href);
     hidePayoutPanel();
     hideZapTips();
@@ -6255,12 +6431,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
       closeRcOverlay();
-      closeLightningDialog({ skipHistory: true });
-      stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
-      closeProfileQrDialog({ skipHistory: true });
-      stripPanelHistory(profileQrHist, PROFILE_QR_HISTORY_KEYS);
-      closeZapOverlay({ skipHistory: true });
-      stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
+      closeDialogHistoryForSection();
       closeProposalOverlay();
       closeProxyOverlay();
     }
@@ -6284,6 +6455,7 @@ let CS77_FILTER_LOW_REP = 20;
   // Clicking the open Feed, Latest, Posts, About, Members, or Wallet tab
   // loads that section again. The address and the history entry stay.
   function reloadCurrentSection() {
+    if (leaveDialogsForReload("before-edit")) return;
     if (editHistoryOn) {
       hidePublishOverlay();
       editHistoryOn = false;
@@ -6293,15 +6465,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (ownerSignSession && ownerSignSession.source === "zap" && !ownerSignBusy) cancelOwnerSign();
-    if (leavePanelForReload(profileQrHist, closeProfileQrDialog)) return;
-    if (profileQrDialogOpen()) closeProfileQrDialog({ skipHistory: true });
-    if (leavePanelForReload(lightningHist, closeLightningDialog)) return;
-    if (lightningDialogOpen()) closeLightningDialog({ skipHistory: true });
-    if (!zapSignBlocksClose() && leavePanelForReload(zapHist, closeZapOverlay)) return;
-    if (zapDialogOpen() && !zapSignBlocksClose()) closeZapOverlay({ skipHistory: true });
-    if (leavePanelForReload(peopleHist, closePeoplePanel)) return;
-    if (peopleList.open) closePeoplePanel({ skipHistory: true });
-    if (leavePanelForReload(votersHist, hideVoteVoters)) return;
+    if (leaveDialogsForReload("after-edit")) return;
     beginSectionReload();
   }
 
@@ -6521,6 +6685,9 @@ let CS77_FILTER_LOW_REP = 20;
       editHistoryPop = false;
       return;
     }
+    // The scanner sits on login or sign, which can sit on the editor.
+    // Close it before the editor entry, or Back would close the editor instead.
+    if (consumeDialogHistoryPop("before-edit")) return;
     if (editHistoryOn) {
       editHistoryOn = false;
       const stay = pageUrl() === editHistoryUrl;
@@ -6550,79 +6717,7 @@ let CS77_FILTER_LOW_REP = 20;
       }
       return;
     }
-    if (resumePanelNavigation(profileQrHist, closeProfileQrDialog)) return;
-    if (
-      keepPanelOnPop(
-        "profileQrPanel",
-        profileQrDialogOpen,
-        reopenProfileQrFromHistory,
-        profileQrDialogOpen,
-        closeProfileQrDialog,
-        profileQrHist
-      )
-    ) {
-      return;
-    }
-    if (resumePanelNavigation(lightningHist, closeLightningDialog)) return;
-    if (
-      keepPanelOnPop(
-        "lightningPanel",
-        lightningDialogOpen,
-        reopenLightningFromHistory,
-        lightningDialogOpen,
-        closeLightningDialog,
-        lightningHist
-      )
-    ) {
-      return;
-    }
-    if (resumePanelNavigation(zapHist, closeZapOverlay)) return;
-    if (zapSignBlocksClose()) {
-      if (!ownerSignBusy) cancelOwnerSign();
-      if (zapDialogOpen() && !(history.state && history.state.zapPanel)) {
-        history.pushState(Object.assign(historyRecord(), zapHistoryFields()), "", location.href);
-        zapHist.on = true;
-      }
-      return true;
-    }
-    if (
-      keepPanelOnPop(
-        "zapPanel",
-        zapDialogOpen,
-        reopenZapFromHistory,
-        zapDialogOpen,
-        closeZapOverlay,
-        zapHist
-      )
-    ) {
-      return;
-    }
-    if (resumePanelNavigation(peopleHist, closePeoplePanel)) return;
-    if (
-      keepPanelOnPop(
-        "peoplePanel",
-        () => peopleList.open,
-        (state) => openPeoplePanel(state.peopleKind, state.peopleId, { fromHistory: true }),
-        () => peopleList.open,
-        closePeoplePanel,
-        peopleHist
-      )
-    ) {
-      return;
-    }
-    if (resumePanelNavigation(votersHist, hideVoteVoters)) return;
-    if (
-      keepPanelOnPop(
-        "votersPanel",
-        () => !!openVoters,
-        reopenVotersFromHistory,
-        () => votersHist.on,
-        hideVoteVoters,
-        votersHist
-      )
-    ) {
-      return;
-    }
+    if (consumeDialogHistoryPop("after-edit")) return;
     if (!HASH_ROUTING) {
       routeFromPop = true;
       routePushed = false;
@@ -8463,13 +8558,28 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
-  function closeKeyQrScanner() {
+  function closeKeyQrScanner(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
+    const wasOpen = keyQrDialogOpen();
     keyQrGen += 1;
     keyQrTarget = "";
     keyQrSeen = "";
     stopKeyQrCamera();
     setKeyQrStatus("", false);
     hideDialog($("#keyQrOverlay"));
+    if (wasOpen || keyQrHist.on) releasePanelHistory(keyQrHist, skipHistory);
+  }
+
+  function keyQrHistoryFields() {
+    return {
+      keyQrPanel: true,
+      keyQrTarget: keyQrTarget === "sign" ? "sign" : "login",
+    };
+  }
+
+  function reopenKeyQrFromHistory(state) {
+    const target = state && state.keyQrTarget === "sign" ? "sign" : "login";
+    openKeyQrScanner(target, { fromHistory: true });
   }
 
   function keyQrFingerprint(text) {
@@ -8565,10 +8675,11 @@ let CS77_FILTER_LOW_REP = 20;
     setKeyQrStatus(result.message, true);
   }
 
-  async function openKeyQrScanner(target) {
+  async function openKeyQrScanner(target, opts) {
     const el = $("#keyQrOverlay");
     const video = $("#keyQrVideo");
     if (!el || !video) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
     if (target === "login") {
       if (loginBusy || !overlay || overlay.hidden || authMethod($("#loginMethod")) !== "password") return;
     } else if (target === "sign") {
@@ -8582,6 +8693,7 @@ let CS77_FILTER_LOW_REP = 20;
     const focusFrom = document.activeElement;
     el.hidden = false;
     focusDialog(el, focusFrom);
+    writePanelHistory(keyQrHist, keyQrHistoryFields(), fromHistory);
     let Qr;
     try {
       Qr = await loadQrScript();
@@ -39204,40 +39316,45 @@ let CS77_FILTER_LOW_REP = 20;
     history.pushState(Object.assign({}, prev, { layers: layers, depth: depth }), "", url);
   }
 
-  function logoPeopleOn() {
-    return !!(history.state && history.state.peoplePanel);
+  function dialogHistoryFlagOn(flag) {
+    return !!(history.state && history.state[flag]);
   }
 
-  function logoVotersOn() {
-    return !!(history.state && history.state.votersPanel);
-  }
-
-  function logoEditOn() {
-    return !!(history.state && history.state.editDialog);
-  }
-
-  function logoZapOn() {
-    return !!(history.state && history.state.zapPanel);
-  }
-
-  function logoLightningOn() {
-    return !!(history.state && history.state.lightningPanel);
-  }
-
-  function logoProfileQrOn() {
-    return !!(history.state && history.state.profileQrPanel);
-  }
-
-  // People, voters, the zap dialog, the lightning dialog, the profile QR dialog, and the edit dialog each add one same-page history entry.
+  // Each open dialog history entry, plus the edit dialog, adds one same-page step.
   function logoSamePageExtra() {
-    return (
-      (logoPeopleOn() ? 1 : 0) +
-      (logoVotersOn() ? 1 : 0) +
-      (logoZapOn() ? 1 : 0) +
-      (logoLightningOn() ? 1 : 0) +
-      (logoProfileQrOn() ? 1 : 0) +
-      (logoEditOn() ? 1 : 0)
-    );
+    const list = dialogHistoryEntries();
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (dialogHistoryFlagOn(list[i].flag)) n += 1;
+    }
+    if (dialogHistoryFlagOn("editDialog")) n += 1;
+    return n;
+  }
+
+  function logoHistoryClose(steps) {
+    const close = {};
+    const list = dialogHistoryEntries();
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      close[spec.id] = dialogHistoryFlagOn(spec.flag) && steps > 1;
+    }
+    return close;
+  }
+
+  function logoHistoryCloseNone() {
+    return logoHistoryClose(0);
+  }
+
+  // close is omitted when every flagged dialog should close, as in a layer jump.
+  function dismissLogoHistoryDialogs(close) {
+    const list = dialogHistoryEntries();
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      if (close && !close[spec.id]) continue;
+      if (!dialogHistoryFlagOn(spec.flag) || !spec.logoIf()) continue;
+      spec.close({ skipHistory: true });
+      spec.session.on = false;
+    }
   }
 
   function logoCap(steps) {
@@ -39273,30 +39390,12 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function logoBrandJump() {
-    const people = logoPeopleOn();
-    const voters = logoVotersOn();
     const layers = cloneLayers(history.state && history.state.layers);
     if (!layers.length) {
       if (isOnTopLevelFeed(parseRoute())) {
-        return {
-          top: true,
-          steps: logoSamePageExtra(),
-          closePeople: false,
-          closeVoters: false,
-          closeZap: false,
-          closeLightning: false,
-          closeProfileQr: false,
-        };
+        return { top: true, steps: logoSamePageExtra(), close: logoHistoryCloseNone() };
       }
-      return {
-        top: false,
-        steps: logoLayerJump(),
-        closePeople: false,
-        closeVoters: false,
-        closeZap: false,
-        closeLightning: false,
-        closeProfileQr: false,
-      };
+      return { top: false, steps: logoLayerJump(), close: logoHistoryCloseNone() };
     }
     const originIndex = logoOriginIndex(layers);
     const origin = layers[originIndex];
@@ -39310,45 +39409,14 @@ let CS77_FILTER_LOW_REP = 20;
         }
       }
     }
-    if (stop < 0) {
-      return { top: false, steps: 0, closePeople: false, closeVoters: false, closeZap: false, closeLightning: false, closeProfileQr: false };
-    }
+    if (stop < 0) return { top: false, steps: 0, close: logoHistoryCloseNone() };
     const steps = logoStepsAfter(layers, stop);
-    const zap = logoZapOn();
-    const lightning = logoLightningOn();
-    const profileQr = logoProfileQrOn();
-    return {
-      top: onGlobal,
-      steps: steps,
-      closePeople: people && steps > 1,
-      closeVoters: voters && steps > 1,
-      closeZap: zap && steps > 1,
-      closeLightning: lightning && steps > 1,
-      closeProfileQr: profileQr && steps > 1,
-    };
+    return { top: onGlobal, steps: steps, close: logoHistoryClose(steps) };
   }
 
   function followLogoBrand() {
     const jump = logoBrandJump();
-    if (jump.closePeople && peopleList.open) {
-      closePeoplePanel({ skipHistory: true });
-      peopleHist.on = false;
-    }
-    if (jump.closeVoters && votersHist.on) {
-      hideVoteVoters({ skipHistory: true });
-    }
-    if (jump.closeZap && zapHist.on) {
-      closeZapOverlay({ skipHistory: true });
-      zapHist.on = false;
-    }
-    if (jump.closeLightning && lightningHist.on) {
-      closeLightningDialog({ skipHistory: true });
-      lightningHist.on = false;
-    }
-    if (jump.closeProfileQr && profileQrHist.on) {
-      closeProfileQrDialog({ skipHistory: true });
-      profileQrHist.on = false;
-    }
+    dismissLogoHistoryDialogs(jump.close);
     if (jump.steps > 1) history.go(-jump.steps);
     else if (jump.steps === 1) history.back();
     if (jump.top) scrollActiveToTop();
@@ -39358,23 +39426,7 @@ let CS77_FILTER_LOW_REP = 20;
   // Used when this entry has no layer trail yet. Pops the open tab group.
   function logoLayerJump() {
     const bonus = logoSamePageExtra();
-    if (logoPeopleOn() && peopleList.open) {
-      closePeoplePanel({ skipHistory: true });
-      peopleHist.on = false;
-    }
-    if (logoVotersOn() && votersHist.on) hideVoteVoters({ skipHistory: true });
-    if (logoZapOn() && zapHist.on) {
-      closeZapOverlay({ skipHistory: true });
-      zapHist.on = false;
-    }
-    if (logoLightningOn() && lightningHist.on) {
-      closeLightningDialog({ skipHistory: true });
-      lightningHist.on = false;
-    }
-    if (logoProfileQrOn() && profileQrHist.on) {
-      closeProfileQrDialog({ skipHistory: true });
-      profileQrHist.on = false;
-    }
+    dismissLogoHistoryDialogs();
     const steps = (Number(history.state && history.state.shellSteps) || 1) + bonus;
     const depth = historyDepth() || 1;
     const canPop = Math.max(0, depth - 1) + bonus;
@@ -40818,14 +40870,7 @@ let CS77_FILTER_LOW_REP = 20;
       delete prev.editDialog;
       history.replaceState(prev, "", location.href);
     }
-    if (peopleList.open || peopleHist.on) {
-      closePeoplePanel({ skipHistory: true });
-      stripPanelHistory(peopleHist, PEOPLE_HISTORY_KEYS);
-    }
-    if (votersHist.on) {
-      hideVoteVoters({ skipHistory: true });
-      stripPanelHistory(votersHist, VOTERS_HISTORY_KEYS);
-    }
+    closeDialogHistoryForRoute();
     persistCommentDraftNow();
     const fromPop = routeFromPop;
     const pushed = routePushed;
@@ -40875,12 +40920,7 @@ let CS77_FILTER_LOW_REP = 20;
       closeCreateAccountOverlay();
       closeClaimTokensOverlay();
       closeRcOverlay();
-      closeLightningDialog({ skipHistory: true });
-      stripPanelHistory(lightningHist, LIGHTNING_HISTORY_KEYS);
-      closeProfileQrDialog({ skipHistory: true });
-      stripPanelHistory(profileQrHist, PROFILE_QR_HISTORY_KEYS);
-      closeZapOverlay({ skipHistory: true });
-      stripPanelHistory(zapHist, ZAP_HISTORY_KEYS);
+      closeDialogHistoryForSection();
       closeProposalOverlay();
       closeProxyOverlay();
     }
