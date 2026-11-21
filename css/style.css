@@ -10361,6 +10361,7 @@ min-height: 0;
 
 #settingsKeysForm h2.settings-section-line,
 #settingsStoredKeys h2.settings-section-line,
+#settingsApps h2.settings-section-line,
 #settingsPasswordForm h2.settings-section-line,
 #settingsRecoveryForm h2.settings-section-line,
 #settingsRecoverRequestForm h2.settings-section-line,
@@ -10380,6 +10381,7 @@ min-height: 0;
 
 #settingsKeysForm h2.settings-section-line span,
 #settingsStoredKeys h2.settings-section-line span,
+#settingsApps h2.settings-section-line span,
 #settingsPasswordForm h2.settings-section-line span,
 #settingsRecoveryForm h2.settings-section-line span,
 #settingsRecoverRequestForm h2.settings-section-line span,
@@ -10389,6 +10391,7 @@ min-height: 0;
 
 #settingsKeysForm h2.settings-section-line::after,
 #settingsStoredKeys h2.settings-section-line::after,
+#settingsApps h2.settings-section-line::after,
 #settingsPasswordForm h2.settings-section-line::after,
 #settingsRecoveryForm h2.settings-section-line::after,
 #settingsRecoverRequestForm h2.settings-section-line::after,
@@ -10488,8 +10491,17 @@ min-height: 0;
   border-color: var(--border);
 }
 
-#settingsStoredKeysList > .settings-note {
+#settingsStoredKeysList > .settings-note,
+#settingsAppsList > .settings-note {
   margin-top: 0.85rem;
+}
+
+.settings-apps-weight {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--gray-dim);
+  white-space: nowrap;
 }
 
 .settings-keys-hint {

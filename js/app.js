@@ -5041,6 +5041,7 @@ let CS77_FILTER_LOW_REP = 20;
     if (!page || page === "general") return "general";
     if (page === "profile") return "profile";
     if (page === "keys") return "keys";
+    if (page === "apps") return "apps";
     if (page === "nodes") return "nodes";
     return "";
   }
@@ -5049,6 +5050,7 @@ let CS77_FILTER_LOW_REP = 20;
     const p = normalizeSettingsPage(page) || "general";
     if (p === "profile") return "/settings/profile";
     if (p === "keys") return "/settings/keys";
+    if (p === "apps") return "/settings/apps";
     if (p === "nodes") return "/settings/nodes";
     return "/settings";
   }
@@ -34071,8 +34073,8 @@ let CS77_FILTER_LOW_REP = 20;
   // One signer for subspace owner settings, role changes, creating a subspace,
   // wallet stake, unstake, send, convert, claim, or account creation,
   // delegations, creating a proposal, the recovery account, requesting
-  // recovery for another account, and encrypting or decrypting a transfer
-  // memo. Pass the account, operations, authority, and
+  // recovery for another account, revoking a granted authority, and
+  // encrypting or decrypting a transfer memo. Pass the account, operations, authority, and
   // the dialog copy. A stored posting key signs Posting with no dialog. A
   // Keychain login signs Posting, Active, and Memo through Keychain with no
   // dialog, when the account is the one that is logged in. Owner always opens
@@ -35905,10 +35907,11 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function settingsShellHtml(tab) {
-    const page = tab === "profile" || tab === "keys" || tab === "nodes" ? tab : "general";
+    const page = tab === "profile" || tab === "keys" || tab === "apps" || tab === "nodes" ? tab : "general";
     const generalHref = HiveMd.escapeHtml(appHref(pathForSettings("general")));
     const profileHref = HiveMd.escapeHtml(appHref(pathForSettings("profile")));
     const keysHref = HiveMd.escapeHtml(appHref(pathForSettings("keys")));
+    const appsHref = HiveMd.escapeHtml(appHref(pathForSettings("apps")));
     const nodesHref = HiveMd.escapeHtml(appHref(pathForSettings("nodes")));
     return `
       <section class="cs77-page settings-page">
@@ -35917,6 +35920,7 @@ let CS77_FILTER_LOW_REP = 20;
           <a href="${generalHref}"${navCurrent(page === "general")}>General</a>
           <a href="${profileHref}"${navCurrent(page === "profile")}>Profile</a>
           <a href="${keysHref}"${navCurrent(page === "keys")}>Keys</a>
+          <a href="${appsHref}"${navCurrent(page === "apps")}>Connected apps</a>
           <a href="${nodesHref}"${navCurrent(page === "nodes")}>Nodes</a>
         </nav>
         <div id="settingsPanel"></div>
@@ -40756,6 +40760,370 @@ let CS77_FILTER_LOW_REP = 20;
     if (user && validLoginUser(normalizeLoginUser(user.value))) loadSettingsRecoverConfirm();
   }
 
+  const SETTINGS_APP_ROLES = ["posting", "active", "owner"];
+
+  const settingsApps = {
+    token: 0,
+    pending: false,
+  };
+
+  function wipeSettingsApps() {
+    settingsApps.token += 1;
+    settingsApps.pending = false;
+  }
+
+  function settingsAppsRoleLabel(role) {
+    if (role === "posting") return "Posting";
+    if (role === "active") return "Active";
+    if (role === "owner") return "Owner";
+    return "";
+  }
+
+  function settingsAppsWeightText(threshold, weight) {
+    if (threshold === 1 && weight === 1) return "";
+    if (threshold <= 1) return "weight " + weight;
+    return "weight " + weight + " of " + threshold;
+  }
+
+  function settingsAppsHtml(username) {
+    const signedIn = validLoginUser(normalizeLoginUser(username || ""));
+    const body = signedIn
+      ? `<div id="settingsAppsList"></div>
+        <p class="settings-status" id="settingsAppsStatus" role="status"></p>`
+      : `<p class="settings-note">Log in to review granted authorities.</p>
+        <div class="settings-actions">
+          <button type="button" class="btn-primary" id="settingsAppsLogin">Login</button>
+        </div>`;
+    return `
+      <section class="settings-stored-keys settings-apps" id="settingsApps">
+        <h2 class="settings-section-title settings-section-line"><span>Connected apps</span></h2>
+        <p class="settings-note">A granted authority lets another account act for you. Posting can vote, post, comment, and follow. Active can also move funds. Owner can change your keys. Review them regularly and revoke any app you no longer use.</p>
+        <p class="settings-note">Revoking a posting or active authority requires your active key. Revoking an owner authority requires your owner key.</p>
+        ${body}
+      </section>
+    `;
+  }
+
+  function setSettingsAppsStatus(message, isError) {
+    const status = $("#settingsAppsStatus");
+    if (!status) return;
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function paintSettingsAppsMessage(text) {
+    const box = $("#settingsAppsList");
+    if (!box) return;
+    if (!text) {
+      box.replaceChildren();
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "settings-note";
+    note.textContent = text;
+    box.replaceChildren(note);
+  }
+
+  function settingsAppsHasAccount(account, role, name) {
+    const auth = account && account[role];
+    const rows = auth && Array.isArray(auth.account_auths) ? auth.account_auths : [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!Array.isArray(row)) continue;
+      if (normalizeLoginUser(row[0]) === name) return true;
+    }
+    return false;
+  }
+
+  function settingsAppsAuthorityWeight(auth) {
+    let sum = 0;
+    const accounts = auth.account_auths;
+    const keys = auth.key_auths;
+    for (let i = 0; i < accounts.length; i++) sum += accounts[i][1];
+    for (let i = 0; i < keys.length; i++) sum += keys[i][1];
+    return sum;
+  }
+
+  function settingsAppsFromAccount(account) {
+    const rows = [];
+    const unread = [];
+    for (let i = 0; i < SETTINGS_APP_ROLES.length; i++) {
+      const role = SETTINGS_APP_ROLES[i];
+      const auth = account && account[role];
+      const raw = auth && Array.isArray(auth.account_auths) ? auth.account_auths : [];
+      let named = false;
+      for (let j = 0; j < raw.length; j++) {
+        const row = raw[j];
+        if (Array.isArray(row) && row[0]) {
+          named = true;
+          break;
+        }
+      }
+      const copy = settingsRecoverCopyAuthority(auth);
+      if (!copy) {
+        if (named) unread.push(role);
+        continue;
+      }
+      for (let j = 0; j < copy.account_auths.length; j++) {
+        const row = copy.account_auths[j];
+        rows.push({
+          role: role,
+          name: row[0],
+          weight: row[1],
+          threshold: copy.weight_threshold,
+        });
+      }
+    }
+    return { rows: rows, unread: unread };
+  }
+
+  function settingsAppsUnreadText(roles) {
+    const parts = [];
+    for (let i = 0; i < roles.length; i++) parts.push("The " + roles[i] + " authority could not be read.");
+    return parts.join(" ");
+  }
+
+  function paintSettingsAppsList(rows) {
+    const box = $("#settingsAppsList");
+    if (!box) return;
+    if (!rows.length) {
+      paintSettingsAppsMessage("None");
+      return;
+    }
+    const list = document.createElement("ul");
+    list.className = "settings-stored-list";
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const label = settingsAppsRoleLabel(row.role);
+      const item = document.createElement("li");
+      item.className = "settings-stored-key";
+      const role = document.createElement("span");
+      role.className = "settings-stored-key-role";
+      role.textContent = label;
+      const who = document.createElement("a");
+      who.className = "settings-stored-key-user";
+      who.href = appHref("/@" + row.name);
+      who.textContent = "@" + row.name;
+      item.append(role, who);
+      const weightText = settingsAppsWeightText(row.threshold, row.weight);
+      if (weightText) {
+        const weight = document.createElement("span");
+        weight.className = "settings-apps-weight";
+        weight.textContent = weightText;
+        item.append(weight);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "settings-stored-key-remove";
+      remove.setAttribute("data-settings-apps-role", row.role);
+      remove.setAttribute("data-settings-apps-name", row.name);
+      remove.setAttribute("aria-label", "Revoke " + label.toLowerCase() + " authority of @" + row.name);
+      remove.textContent = "×";
+      remove.disabled = settingsApps.pending;
+      item.append(remove);
+      list.appendChild(item);
+    }
+    box.replaceChildren(list);
+  }
+
+  function setSettingsAppsBusy(busy) {
+    const buttons = document.querySelectorAll("#settingsApps [data-settings-apps-name]");
+    for (let i = 0; i < buttons.length; i++) buttons[i].disabled = busy;
+  }
+
+  // account_update2 changes only the role being revoked. An omitted owner,
+  // active, posting, or memo_key stays as it is. Empty metadata strings do
+  // not clear the profile. Posting and active, with owner omitted, are signed
+  // by the active key. Owner is signed by the owner key. Hive accepts two
+  // owner changes an hour. The remaining weight must still meet the threshold.
+  function settingsAppsRevokeOperation(user, account, role, name) {
+    const copy = settingsRecoverCopyAuthority(account && account[role]);
+    if (!copy) throw new Error("The " + role + " authority could not be read.");
+    if (copy.weight_threshold < 1) throw new Error("This " + role + " authority cannot be changed.");
+    const next = [];
+    let found = false;
+    for (let i = 0; i < copy.account_auths.length; i++) {
+      const row = copy.account_auths[i];
+      if (row[0] === name) {
+        found = true;
+        continue;
+      }
+      next.push(row);
+    }
+    if (!found) throw new Error("@" + name + " does not have that " + role + " authority.");
+    const nextAuth = {
+      weight_threshold: copy.weight_threshold,
+      account_auths: next,
+      key_auths: copy.key_auths,
+    };
+    if (settingsAppsAuthorityWeight(nextAuth) < copy.weight_threshold) {
+      throw new Error("Revoking @" + name + " would leave the " + role + " authority below its threshold.");
+    }
+    const body = {
+      account: user,
+      json_metadata: "",
+      posting_json_metadata: "",
+      extensions: [],
+    };
+    body[role] = nextAuth;
+    return ["account_update2", body];
+  }
+
+  function settingsAppsErrorText(err, role) {
+    const message = (err && err.message) || "Could not revoke this authority.";
+    if (
+      role === "owner" &&
+      (/owner authority can only be updated (?:once|twice) an hour/i.test(message) ||
+        /owner_update_limit/i.test(message))
+    ) {
+      return "The owner key can be changed twice an hour. Try again later.";
+    }
+    return message;
+  }
+
+  function settingsAppsLead(user, role, name) {
+    if (role === "owner") {
+      return (
+        "This revokes the owner authority of @" +
+        name +
+        ". Enter the owner key of @" +
+        user +
+        ". Hive Keychain does not store the owner key."
+      );
+    }
+    return (
+      "Use hive keychain (recommended) or enter the active key of @" +
+      user +
+      ". This revokes the " +
+      role +
+      " authority of @" +
+      name +
+      "."
+    );
+  }
+
+  async function loadSettingsApps() {
+    const user = normalizeLoginUser(observer());
+    const token = (settingsApps.token += 1);
+    settingsApps.pending = false;
+    if (!validLoginUser(user) || !$("#settingsAppsList")) return;
+    paintSettingsAppsMessage("Loading granted authorities…");
+    setSettingsAppsStatus("");
+    let account = null;
+    try {
+      account = await hiveAccountRecord(user);
+    } catch (err) {
+      if (token !== settingsApps.token) return;
+      paintSettingsAppsMessage("");
+      setSettingsAppsStatus((err && err.message) || "Could not load granted authorities.", true);
+      return;
+    }
+    if (token !== settingsApps.token) return;
+    if (!account) {
+      paintSettingsAppsMessage("");
+      setSettingsAppsStatus("Could not load granted authorities.", true);
+      return;
+    }
+    const parsed = settingsAppsFromAccount(account);
+    paintSettingsAppsList(parsed.rows);
+    if (parsed.unread.length) setSettingsAppsStatus(settingsAppsUnreadText(parsed.unread), true);
+  }
+
+  async function revokeSettingsApp(role, name) {
+    if (settingsApps.pending) return;
+    const token = settingsApps.token;
+    const user = normalizeLoginUser(observer());
+    const app = normalizeLoginUser(name);
+    if (!validLoginUser(user) || !validLoginUser(app)) return;
+    if (role !== "posting" && role !== "active" && role !== "owner") return;
+    settingsApps.pending = true;
+    setSettingsAppsBusy(true);
+    setSettingsAppsStatus("Checking the authority…");
+    try {
+      const account = await hiveAccountRecord(user);
+      if (token !== settingsApps.token) return;
+      if (!account) throw new Error("Could not load this account.");
+      if (role === "owner") {
+        const wait = settingsOwnerWaitMs(account);
+        if (wait > 0) throw new Error(settingsOwnerWaitText(wait));
+      }
+      const operation = settingsAppsRevokeOperation(user, account, role, app);
+      if (token !== settingsApps.token) return;
+      setSettingsAppsStatus("");
+      await signWithDialog(user, [operation], {
+        authority: role === "owner" ? "Owner" : "Active",
+        title: "Revoke authority",
+        lead: settingsAppsLead(user, role, app),
+        action: "Revoke",
+        source: "settings",
+        cancelMessage: "The authority was not revoked.",
+        failMessage: "Could not revoke this authority.",
+        onKeychain: function () {
+          if (token !== settingsApps.token) return;
+          setSettingsAppsStatus("Waiting for Keychain…");
+        },
+      });
+      if (token !== settingsApps.token) return;
+      setSettingsAppsStatus("Waiting for the chain…");
+      let seen = null;
+      let gone = false;
+      for (let i = 0; i < 8; i++) {
+        if (token !== settingsApps.token) return;
+        try {
+          seen = await hiveAccountRecord(user);
+        } catch {
+          seen = null;
+        }
+        if (token !== settingsApps.token) return;
+        if (seen && !settingsAppsHasAccount(seen, role, app)) {
+          gone = true;
+          break;
+        }
+        await subspaceWait(1500);
+      }
+      if (token !== settingsApps.token) return;
+      if (!gone || !seen) {
+        setSettingsAppsStatus("The revoke was broadcast, but the network has not shown it yet.");
+        return;
+      }
+      paintSettingsAppsList(settingsAppsFromAccount(seen).rows);
+      setSettingsAppsStatus("The " + role + " authority of @" + app + " was revoked.");
+    } catch (err) {
+      if (token !== settingsApps.token) return;
+      const cancelled = Boolean(err && err.ownerCancel);
+      setSettingsAppsStatus(
+        cancelled ? (err && err.message) || "The authority was not revoked." : settingsAppsErrorText(err, role),
+        !cancelled
+      );
+    } finally {
+      if (token === settingsApps.token) {
+        settingsApps.pending = false;
+        setSettingsAppsBusy(false);
+      }
+    }
+  }
+
+  function bindSettingsApps() {
+    const login = $("#settingsAppsLogin");
+    if (login) {
+      login.addEventListener("click", openLogin);
+      return;
+    }
+    const list = $("#settingsAppsList");
+    if (list) {
+      list.addEventListener("click", (event) => {
+        const hit = event.target && event.target.closest ? event.target : event.target && event.target.parentElement;
+        const button = hit && hit.closest ? hit.closest("[data-settings-apps-name]") : null;
+        if (!button || button.disabled) return;
+        revokeSettingsApp(
+          button.getAttribute("data-settings-apps-role"),
+          button.getAttribute("data-settings-apps-name")
+        );
+      });
+    }
+    loadSettingsApps();
+  }
+
   async function renderSettings(page) {
     settingsNodeToken += 1;
     clearSettingsKeys();
@@ -40763,7 +41131,8 @@ let CS77_FILTER_LOW_REP = 20;
     wipeSettingsRecovery();
     wipeSettingsRecoverRequest();
     wipeSettingsRecoverConfirm();
-    const tab = page === "profile" || page === "keys" || page === "nodes" ? page : "general";
+    wipeSettingsApps();
+    const tab = page === "profile" || page === "keys" || page === "apps" || page === "nodes" ? page : "general";
     setPageMeta("Settings — CyberSpace77");
     view.innerHTML = settingsShellHtml(tab);
     if (tab === "general") {
@@ -40782,6 +41151,12 @@ let CS77_FILTER_LOW_REP = 20;
       const panel = $("#settingsPanel");
       if (panel) panel.innerHTML = settingsKeysHtml(observer() || "");
       bindSettingsKeys();
+      return;
+    }
+    if (tab === "apps") {
+      const panel = $("#settingsPanel");
+      if (panel) panel.innerHTML = settingsAppsHtml(observer() || "");
+      bindSettingsApps();
       return;
     }
     await fillSettingsProfile();
@@ -42804,6 +43179,7 @@ let CS77_FILTER_LOW_REP = 20;
       wipeSettingsRecovery();
       wipeSettingsRecoverRequest();
       wipeSettingsRecoverConfirm();
+      wipeSettingsApps();
     }
     if (r.name !== "publish") {
       document.body.classList.toggle(
