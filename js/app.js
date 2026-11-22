@@ -25786,7 +25786,7 @@ let CS77_FILTER_LOW_REP = 20;
       <nav class="feed-nav profile-nav" aria-label="Profile">
         <span class="profile-posts-slot${postsOn ? " is-active" : ""}" data-profile-tab="posts"${slotCurrent}>
           <a class="profile-posts-link" href="${profileHref(author, "posts")}"${postsCurrent}>Posts</a>
-          <button type="button" class="profile-posts-arrow" aria-haspopup="menu" aria-expanded="false" aria-controls="profilePostsMenu" aria-label="Posts or reblogs" title="Posts or reblogs">${PROFILE_POSTS_ARROW}</button>
+          <button type="button" class="profile-posts-arrow" aria-haspopup="menu" aria-expanded="false" aria-controls="profilePostsMenu" aria-label="Posts or reblogs">${PROFILE_POSTS_ARROW}</button>
           <div class="profile-posts-menu comment-sort-menu" id="profilePostsMenu" role="menu" hidden>${profilePostsMenuHtml(mode)}</div>
         </span>
         ${items
