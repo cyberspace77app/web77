@@ -38589,7 +38589,7 @@ let CS77_FILTER_LOW_REP = 20;
           <input id="settingsRecoveryUser" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="username" disabled>
         </div>
         <div class="settings-actions">
-          <button type="submit" class="btn-primary" id="settingsRecoverySubmit" disabled>Change recovery account</button>
+          <button type="submit" class="btn-primary" id="settingsRecoverySubmit" disabled>Change</button>
         </div>
         <p class="settings-status" id="settingsRecoveryStatus" role="status"></p>
         `
@@ -39834,7 +39834,7 @@ let CS77_FILTER_LOW_REP = 20;
         Boolean(settingsRecovery.requested) &&
         Boolean(settingsRecovery.current) &&
         typed === settingsRecovery.current;
-      submit.textContent = cancel ? "Cancel change" : "Change recovery account";
+      submit.textContent = cancel ? "Cancel change" : "Change";
     }
     if (!current) return;
     if (!loaded) {
