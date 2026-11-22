@@ -10817,6 +10817,55 @@ min-height: 0;
   margin-top: 1.15rem;
 }
 
+.settings-password-health {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.15rem 0 0.7rem;
+}
+
+.settings-password-health[hidden] {
+  display: none;
+}
+
+.settings-password-health-track {
+  flex: 1 1 auto;
+  height: 0.35rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-result);
+}
+
+.settings-password-health-level {
+  display: block;
+  height: 100%;
+  width: var(--password-health, 0%);
+  max-width: 100%;
+  border-radius: inherit;
+  background: var(--yellow);
+}
+
+.settings-password-health.is-low .settings-password-health-level {
+  background: var(--red-bright);
+}
+
+.settings-password-health.is-mid .settings-password-health-level {
+  background: var(--yellow-dim);
+}
+
+.settings-password-health.is-some .settings-password-health-level {
+  min-width: 2px;
+}
+
+.settings-password-health-bits {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--gray-dim);
+  white-space: nowrap;
+}
+
 #settingsPasswordForm .cyber-toggle {
   margin: 0.15rem 0 1.15rem;
 }
