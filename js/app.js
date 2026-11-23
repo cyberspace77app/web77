@@ -20379,6 +20379,7 @@ let CS77_FILTER_LOW_REP = 20;
   let instantScrollGen = 0;
 
   function armInstantScroll() {
+    stopFeedKeyScroll();
     const root = document.documentElement;
     const gen = ++instantScrollGen;
     // html { scroll-behavior: smooth } would ease the jump to the top of a
@@ -44909,7 +44910,9 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // j and k move through the feed. Enter opens that card when it is focused.
+  // j and k move through the feed. One press slides to that card.
+  // A held key, or another press while that slide is still going, jumps.
+  // Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
   // An open post has no feed list, so l uses the article stats-bar upvote and z uses its bolt.
@@ -44922,6 +44925,36 @@ let CS77_FILTER_LOW_REP = 20;
   let feedKeyItem = null;
   let feedKeyNavigating = false;
   let feedKeyNavTimer = 0;
+  let feedKeyScrollGen = 0;
+  let feedKeyScrollRunning = false;
+
+  // Browser smooth scroll lasts about sqrt(px)/60 seconds and eases in, so a
+  // second j barely moves. A shorter ease-out still reads as a slide.
+  function feedKeyScrollMs(dist) {
+    const px = Math.abs(dist);
+    if (px < 2) return 0;
+    return Math.max(90, Math.min(240, (Math.sqrt(px) / 80) * 1000));
+  }
+
+  function stopFeedKeyScroll() {
+    feedKeyScrollGen += 1;
+    if (!feedKeyScrollRunning) return;
+    feedKeyScrollRunning = false;
+    instantScrollGen += 1;
+    const root = document.documentElement;
+    root.style.scrollBehavior = "";
+    root.style.overflowAnchor = "";
+  }
+
+  function writeFeedScroll(y) {
+    const top = Math.max(0, y);
+    try {
+      window.scrollTo({ top: top, left: 0, behavior: "instant" });
+    } catch (err) {
+      window.scrollTo(0, top);
+    }
+    document.documentElement.scrollTop = top;
+  }
 
   function feedKeyTyping(e) {
     const nodes = [eventElement(e.target), eventElement(document.activeElement)];
@@ -45029,6 +45062,10 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function onFeedKeyPageScroll() {
+    if (feedKeyScrollRunning) {
+      beginOwnedFeedScroll();
+      return;
+    }
     if (!feedKeyNavigating) {
       clearFeedKeyCurrent();
       return;
@@ -45042,19 +45079,40 @@ let CS77_FILTER_LOW_REP = 20;
 
   function scrollFeedItemToAnchor(el, behavior) {
     if (!el) return;
+    const jump = behavior === "instant" || prefersReducedMotion();
     beginOwnedFeedScroll();
     quietSmartHeader();
-    const chosen = behavior || (prefersReducedMotion() ? "instant" : "smooth");
     const top = Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
-    try {
-      window.scrollTo({
-        top: top,
-        left: 0,
-        behavior: chosen === "instant" ? "instant" : "smooth",
-      });
-    } catch (err) {
-      window.scrollTo(0, top);
+    const from = scrollYNow();
+    const ms = jump ? 0 : feedKeyScrollMs(top - from);
+    stopFeedKeyScroll();
+    if (!ms) {
+      armInstantScroll();
+      writeFeedScroll(top);
+      return;
     }
+    const root = document.documentElement;
+    const dist = top - from;
+    const gen = ++feedKeyScrollGen;
+    instantScrollGen += 1;
+    feedKeyScrollRunning = true;
+    root.style.scrollBehavior = "auto";
+    root.style.overflowAnchor = "none";
+    const started = performance.now();
+    function frame(now) {
+      if (gen !== feedKeyScrollGen) return;
+      beginOwnedFeedScroll();
+      const t = Math.min(1, (now - started) / ms);
+      const eased = 1 - (1 - t) * (1 - t);
+      writeFeedScroll(t === 1 ? top : from + dist * eased);
+      if (t < 1) {
+        requestAnimationFrame(frame);
+        return;
+      }
+      feedKeyScrollRunning = false;
+      armInstantScroll();
+    }
+    requestAnimationFrame(frame);
   }
 
   function feedKeyLocked(items) {
@@ -45103,7 +45161,7 @@ let CS77_FILTER_LOW_REP = 20;
     return null;
   }
 
-  function feedKeyMove(dir) {
+  function feedKeyMove(dir, jump) {
     const items = feedKeyItems();
     if (!items.length) return false;
     const locked = feedKeyLocked(items);
@@ -45124,7 +45182,7 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (!target || target === locked) return false;
     markFeedKeyCurrent(target);
-    scrollFeedItemToAnchor(target);
+    scrollFeedItemToAnchor(target, jump ? "instant" : "");
     return true;
   }
 
@@ -45327,7 +45385,8 @@ let CS77_FILTER_LOW_REP = 20;
       if (!feedKeyOpenCurrent()) return;
     } else if (key === "j" || key === "k") {
       if (openSlider) hideVoteSlider();
-      feedKeyMove(key === "j" ? 1 : -1);
+      // Repeats land before a slide can finish. Restarting it leaves the page stuck.
+      feedKeyMove(key === "j" ? 1 : -1, e.repeat || feedKeyScrollRunning);
     } else if (key === "z") feedKeyZap();
     else feedKeyUpvote();
     e.preventDefault();
@@ -45344,6 +45403,7 @@ let CS77_FILTER_LOW_REP = 20;
     ) {
       return;
     }
+    stopFeedKeyScroll();
     feedKeyNavigating = false;
     if (feedKeyNavTimer) {
       clearTimeout(feedKeyNavTimer);
