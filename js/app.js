@@ -43539,10 +43539,11 @@ let CS77_FILTER_LOW_REP = 20;
         last &&
         last.body === (live.body || "") &&
         sameEditHistoryTags(last.tags, live.tags || []);
-      // A reply is often broadcast with an empty title. Bridge then shows "RE: …".
-      const sameTitle = last && (last.title === liveTitle || !last.title || !liveTitle);
+      // A comment has no title in this panel. Hive's "RE:" label is not a saved edit.
+      const reply = editHistoryIsReply(entry);
+      const sameTitle = last && (reply || last.title === liveTitle || !last.title || !liveTitle);
       if (last && sameBody && sameTitle) {
-        if (!last.title && liveTitle) last.title = liveTitle;
+        if (!reply && !last.title && liveTitle) last.title = liveTitle;
       } else {
         versions.push({
           seq: null,
@@ -43585,25 +43586,45 @@ let CS77_FILTER_LOW_REP = 20;
     return null;
   }
 
-  function editHistorySource(version) {
-    return "Title: " + version.title + "\n\nTags: " + version.tags.join(", ") + "\n\n" + version.body;
+  function editHistoryNoteReply(entry, post) {
+    if (!entry || !post || !post.author || !post.permlink) return;
+    entry.reply = !isRootPost(post);
   }
 
-  function editHistoryDiffHtml(version, previous) {
+  // A comment leaves the title out. A root post keeps it. Unknown stays a post
+  // until the post record or a comment operation says otherwise.
+  function editHistoryIsReply(entry) {
+    if (!entry) return false;
+    if (entry.reply === true) return true;
+    if (entry.reply === false) return false;
+    const ops = entry.ops || [];
+    for (let i = 0; i < ops.length; i++) {
+      if (ops[i].parentAuthor) return true;
+    }
+    return false;
+  }
+
+  function editHistorySource(version, reply) {
+    const tags = "Tags: " + version.tags.join(", ") + "\n\n" + version.body;
+    if (reply) return tags;
+    return "Title: " + version.title + "\n\n" + tags;
+  }
+
+  function editHistoryDiffHtml(version, previous, reply) {
     if (!previous) return HiveMd.escapeHtml("No previous version.");
     const nextTags = version.tags.join(", ");
     const prevTags = previous.tags.join(", ");
-    if (version.title === previous.title && nextTags === prevTags && version.body === previous.body) {
+    const sameTitle = reply || version.title === previous.title;
+    if (sameTitle && nextTags === prevTags && version.body === previous.body) {
       return HiveMd.escapeHtml("No difference from the previous version.");
     }
-    return (
-      "Title: " +
-      editHistoryMarkHtml(previous.title, version.title) +
-      "\n\nTags: " +
+    const tagsAndBody =
+      "Tags: " +
       editHistoryMarkHtml(prevTags, nextTags) +
       "\n\n" +
-      editHistoryMarkHtml(previous.body, version.body)
-    );
+      editHistoryMarkHtml(previous.body, version.body);
+    if (reply) return tagsAndBody;
+    return "Title: " + editHistoryMarkHtml(previous.title, version.title) + "\n\n" + tagsAndBody;
   }
 
   function editHistoryVersionButton(version, selectedId, isCurrent) {
@@ -43663,16 +43684,18 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const diffOn = Boolean($("#editHistoryDiff") && $("#editHistoryDiff").checked);
+    const reply = editHistoryIsReply(entry);
     const sig =
       (editHistoryOpenKey || "") +
       ":" +
       (diffOn ? "d:" : "t:") +
+      (reply ? "c:" : "p:") +
       editHistoryPickId(selected) +
       ":" +
       (entry ? entry.versionGen : 0);
     if (area.getAttribute("data-edit-sig") === sig) return;
     const previous = diffOn ? editHistoryPrevious(versions, selected) : null;
-    const payload = diffOn ? editHistoryDiffHtml(selected, previous) : editHistorySource(selected);
+    const payload = diffOn ? editHistoryDiffHtml(selected, previous, reply) : editHistorySource(selected, reply);
     const scroll = area.scrollTop;
     if (diffOn) area.innerHTML = payload;
     else area.textContent = payload;
@@ -43712,7 +43735,10 @@ let CS77_FILTER_LOW_REP = 20;
     const fromHistory = Boolean(opts && opts.fromHistory);
     const entry = editHistoryEntry(name, link);
     const known = displayedContent(name, link) || contentOf(name, link);
-    if (known) editHistoryNoteCreated(entry, known);
+    if (known) {
+      editHistoryNoteCreated(entry, known);
+      editHistoryNoteReply(entry, known);
+    }
     const fresh = editHistoryLive(name, link);
     if (fresh) editHistorySetLive(entry, fresh);
     editHistoryOpenKey = editHistoryMapKey(name, link);
@@ -43740,6 +43766,7 @@ let CS77_FILTER_LOW_REP = 20;
           body: post.body || "",
           timestamp: post.updated || post.created || "",
         });
+        editHistoryNoteReply(entry, post);
         editHistoryNoteCreated(entry, post);
         if (!editHistoryOpen() || editHistoryOpenKey !== editHistoryMapKey(name, link)) return;
         paintEditHistory();
@@ -43759,6 +43786,7 @@ let CS77_FILTER_LOW_REP = 20;
     return {
       timestamp: ts,
       title: String(body.title || ""),
+      parentAuthor: String(body.parent_author || ""),
       tags: editHistoryTags(body.json_metadata),
       rawBody: String(body.body || ""),
       operationId: String(row.operation_id || ""),
@@ -43796,6 +43824,7 @@ let CS77_FILTER_LOW_REP = 20;
         seq: i,
         timestamp: op.timestamp,
         title: op.title,
+        parentAuthor: op.parentAuthor || "",
         tags: op.tags,
         rawBody: op.rawBody,
       });
