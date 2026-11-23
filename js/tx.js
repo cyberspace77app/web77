@@ -6,6 +6,7 @@ const config = {
   chain_id: "beeab0de00000000000000000000000000000000000000000000000000000000",
   address_prefix: "STM",
 };
+const CHAIN_ID = hexToBytes(config.chain_id);
 
 const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE = 58;
@@ -239,15 +240,6 @@ class ByteBuffer {
     this.offset += bytes.length;
   }
 
-  copy(begin, end) {
-    const bytes = new Uint8Array(this.buffer).subarray(begin, end);
-    const copy = new ByteBuffer(bytes.length);
-    if (bytes.length > 0) new Uint8Array(copy.buffer).set(bytes);
-    copy.offset = 0;
-    copy.limit = bytes.length;
-    return copy;
-  }
-
   flip() {
     this.limit = this.offset;
     this.offset = 0;
@@ -361,14 +353,19 @@ function sameBytes(a, b) {
   return true;
 }
 
+function derivePublic(secret) {
+  try {
+    return secp256k1.getPublicKey(secret);
+  } catch {
+    throw new Error("invalid private key");
+  }
+}
+
 class PrivateKey {
+  #publicKey = null;
+
   constructor(key) {
     this.key = key;
-    try {
-      secp256k1.getPublicKey(key);
-    } catch {
-      throw new Error("invalid private key");
-    }
   }
 
   static from(value) {
@@ -384,7 +381,10 @@ class PrivateKey {
     const expect = sha256(sha256(payload)).subarray(0, 4);
     if (!sameBytes(checksum, expect)) throw new Error("Private key checksum mismatch");
     // 32-byte secret shares the decoded buffer. Do not copy.
-    return new PrivateKey(payload.subarray(1));
+    const secret = payload.subarray(1);
+    const key = new PrivateKey(secret);
+    key.#publicKey = derivePublic(secret);
+    return key;
   }
 
   static fromSeed(seed) {
@@ -398,14 +398,12 @@ class PrivateKey {
       format: "recovered",
       prehash: false,
     });
-    const hive = new Uint8Array(65);
-    hive[0] = (signed[0] + 31) & 0xff;
-    hive.set(signed.subarray(1), 1);
-    return Signature.from(bytesToHex(hive));
+    return new Signature(new Uint8Array(signed.subarray(1)), signed[0]);
   }
 
   createPublic() {
-    return new PublicKey(secp256k1.getPublicKey(this.key));
+    if (this.#publicKey === null) this.#publicKey = derivePublic(this.key);
+    return new PublicKey(this.#publicKey);
   }
 
   toString() {
@@ -855,7 +853,7 @@ function encode(privateKey, publicKey, memo, testNonce) {
   publicKey = toPublicKey(publicKey);
   const plain = new ByteBuffer(ByteBuffer.DEFAULT_CAPACITY);
   plain.writeVString(memo);
-  const plaintext = new Uint8Array(plain.copy(0, plain.offset).toBuffer());
+  const plaintext = new Uint8Array(plain.buffer, 0, plain.offset);
   const { nonce, message, checksum } = encrypt(privateKey, publicKey, plaintext, testNonce);
   const out = new ByteBuffer(ByteBuffer.DEFAULT_CAPACITY);
   Serializer.Memo(out, {
@@ -894,8 +892,8 @@ function decode(privateKey, memo) {
   const check = view.getUint32(74, true);
   const length = readVarint32(bytes, 78);
   const encrypted = bytes.subarray(length.offset, length.offset + length.value);
-  const mine = privateKey.createPublic().toString();
-  const other = mine === fromKey.toString() ? toKey : fromKey;
+  const mine = privateKey.createPublic().key;
+  const other = sameBytes(mine, fromKey.key) ? toKey : fromKey;
   const plaintext = decrypt(privateKey, other, nonce, encrypted, check);
   const text = new ByteBuffer(ByteBuffer.DEFAULT_CAPACITY);
   text.append(plaintext);
@@ -927,6 +925,27 @@ function callRpc(method, params) {
     throw new Error("Hive API is not loaded.");
   }
   return api.hiveRpc(method, params);
+}
+
+// Long enough to share a head block between back-to-back transactions.
+const PROPS_CACHE_MS = 2000;
+let propsCache = null;
+
+function dynamicGlobalProperties() {
+  const now = Date.now();
+  if (propsCache && now - propsCache.time <= PROPS_CACHE_MS) return propsCache.result;
+  let result;
+  try {
+    result = Promise.resolve(callRpc("condenser_api.get_dynamic_global_properties", []));
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  const entry = { time: now, result };
+  propsCache = entry;
+  result.catch(() => {
+    if (propsCache === entry) propsCache = null;
+  });
+  return result;
 }
 
 // A signed transaction expires 60 seconds after it is built. The chain rounds
@@ -992,15 +1011,14 @@ class Transaction {
     buffer.flip();
     const bytes = new Uint8Array(buffer.toBuffer());
     const txId = bytesToHex(sha256(bytes)).slice(0, 40);
-    const chainId = hexToBytes(config.chain_id);
-    const payload = new Uint8Array(chainId.length + bytes.length);
-    payload.set(chainId, 0);
-    payload.set(bytes, chainId.length);
+    const payload = new Uint8Array(CHAIN_ID.length + bytes.length);
+    payload.set(CHAIN_ID, 0);
+    payload.set(bytes, CHAIN_ID.length);
     return { digest: sha256(payload), txId };
   }
 
   async #createTransaction() {
-    const props = await callRpc("condenser_api.get_dynamic_global_properties", []);
+    const props = await dynamicGlobalProperties();
     const idBytes = hexToBytes(props.head_block_id);
     // head_block_id bytes 4..7 are a little-endian uint32 ref block prefix.
     const refBlockPrefix = new DataView(
