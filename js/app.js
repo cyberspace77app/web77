@@ -28217,7 +28217,7 @@ let CS77_FILTER_LOW_REP = 20;
         <div class="wallet-tools-line">
           <button type="button" class="btn-primary btn-compact wallet-claim-tokens-btn">Claim</button>
           <button type="button" class="btn-primary btn-compact wallet-create-account-btn">Create account</button>
-          <a class="btn-ghost btn-compact wallet-tools-keys" href="${appHref("/settings/keys")}">Generate Keys</a>
+          <a class="btn-ghost btn-compact wallet-tools-keys" href="${appHref("/settings/keys")}">Key tools</a>
         </div>
         <p class="wallet-note wallet-tools-rc">
           <button type="button" class="wallet-rc-link">${rcLinkCaption()}</button>
@@ -43710,7 +43710,7 @@ let CS77_FILTER_LOW_REP = 20;
     const failed = Boolean(entry && entry.loadFailed && !scanned);
     if (note) {
       const text = scanned
-        ? "All edit history is loaded."
+        ? "Edit history loaded."
         : failed
           ? "Couldn't load edit history."
           : "Loading history\u2026";
