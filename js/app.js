@@ -8541,7 +8541,6 @@ let CS77_FILTER_LOW_REP = 20;
       }
     }
     if (root.id === "ownerSignMethod" && next === "password") applyOwnerSignStoredKey();
-    if (root.id === "loginMethod") resetLoginMasterPrompt();
   }
 
   function bindAuthMethod(root) {
@@ -8703,7 +8702,6 @@ let CS77_FILTER_LOW_REP = 20;
       return { ok: true };
     }
     if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
-    resetLoginMasterPrompt();
     const key = $("#loginKey");
     const status = $("#loginStatus");
     if (key) key.value = wif;
@@ -8746,7 +8744,6 @@ let CS77_FILTER_LOW_REP = 20;
       if (!overlay || overlay.hidden) return { ok: false, message: "The login dialog is closed." };
       const user = $("#loginUser");
       if (user) user.value = name;
-      resetLoginMasterPrompt();
       const key = $("#loginKey");
       const status = $("#loginStatus");
       if (!parsed.ok || !parsed.wif) {
@@ -8845,26 +8842,9 @@ let CS77_FILTER_LOW_REP = 20;
     setKeyQrStatus("", false);
   }
 
-  let loginMasterArmed = false;
-
-  function resetLoginMasterPrompt() {
-    loginMasterArmed = false;
-    const warn = $("#loginMasterWarn");
-    if (warn) warn.hidden = true;
-  }
-
-  function armLoginMasterPrompt() {
-    loginMasterArmed = true;
-    const warn = $("#loginMasterWarn");
-    if (warn) warn.hidden = false;
-    const status = $("#loginStatus");
-    if (status) status.textContent = "";
-  }
-
   function openLogin() {
     const status = $("#loginStatus");
     if (status) status.textContent = "";
-    resetLoginMasterPrompt();
     setAuthMethod($("#loginMethod"), defaultAuthMethod());
     const focusFrom = document.activeElement;
     overlay.hidden = false;
@@ -8883,7 +8863,6 @@ let CS77_FILTER_LOW_REP = 20;
     loginBusy = false;
     const keyInput = $("#loginKey");
     if (keyInput) keyInput.value = "";
-    resetLoginMasterPrompt();
     const status = $("#loginStatus");
     if (status) status.textContent = "";
     const connectBtn = $("#loginConnect");
@@ -9006,12 +8985,13 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     if (method === "password") {
+      // Take the secret out of the field before any await. A master password
+      // becomes the posting key and is then dropped. A posting key is stored as itself.
       let secret = (keyInput && keyInput.value) || "";
       let password = "";
+      if (keyInput) keyInput.value = "";
       if (!secret.replace(/\s+/g, "")) {
-        if (keyInput) keyInput.value = "";
         secret = "";
-        resetLoginMasterPrompt();
         status.textContent = "Enter a posting key.";
         return;
       }
@@ -9026,13 +9006,19 @@ let CS77_FILTER_LOW_REP = 20;
       }
       loginBusy = true;
       if (connectBtn) connectBtn.disabled = true;
-      status.textContent = loginMasterArmed ? "Deriving the posting key…" : "Checking key…";
+      status.textContent = "Checking key…";
       try {
-        if (loginMasterArmed) {
+        const kind = await cs77Auth.secretKind(secret);
+        if (overlay.hidden) return;
+        if (kind === "invalid") {
+          secret = "";
+          status.textContent = "That key is not valid.";
+          return;
+        }
+        if (kind === "master") {
           password = secret.trim();
           secret = "";
-          if (keyInput) keyInput.value = "";
-          resetLoginMasterPrompt();
+          status.textContent = "Deriving the posting key…";
           if (typeof cs77Auth.loginMaster !== "function") {
             throw new Error("Could not derive the posting key.");
           }
@@ -9043,28 +9029,14 @@ let CS77_FILTER_LOW_REP = 20;
           finishLogin(username, "posting");
           return;
         }
-        const kind = await cs77Auth.secretKind(secret);
-        if (overlay.hidden) return;
-        if (kind === "invalid") {
-          if (keyInput) keyInput.value = "";
-          secret = "";
-          status.textContent = "That key is not valid.";
-          return;
-        }
-        if (kind === "wif") {
-          let wif = secret.replace(/\s+/g, "");
-          secret = "";
-          if (keyInput) keyInput.value = "";
-          status.textContent = "Checking posting key…";
-          const loginJob = cs77Auth.login(username, wif);
-          wif = "";
-          await loginJob;
-          if (observer() && observer() !== username) prepareAccountLeave();
-          finishLogin(username, "posting");
-          return;
-        }
+        let wif = secret.replace(/\s+/g, "");
         secret = "";
-        armLoginMasterPrompt();
+        status.textContent = "Checking posting key…";
+        const loginJob = cs77Auth.login(username, wif);
+        wif = "";
+        await loginJob;
+        if (observer() && observer() !== username) prepareAccountLeave();
+        finishLogin(username, "posting");
       } catch (err) {
         if (!overlay.hidden) status.textContent = (err && err.message) || String(err);
       } finally {
@@ -9072,7 +9044,6 @@ let CS77_FILTER_LOW_REP = 20;
         password = "";
         loginBusy = false;
         if (connectBtn && !overlay.hidden) connectBtn.disabled = false;
-        if (loginMasterArmed && connectBtn && !overlay.hidden) connectBtn.focus();
       }
       return;
     }
@@ -46248,18 +46219,6 @@ let CS77_FILTER_LOW_REP = 20;
 
     $("#loginCancel").addEventListener("click", closeLogin);
     $("#loginConnect").addEventListener("click", connectLogin);
-    const loginUserInput = $("#loginUser");
-    const loginKeyInput = $("#loginKey");
-    if (loginUserInput) {
-      loginUserInput.addEventListener("input", () => {
-        if (loginMasterArmed) resetLoginMasterPrompt();
-      });
-    }
-    if (loginKeyInput) {
-      loginKeyInput.addEventListener("input", () => {
-        if (loginMasterArmed) resetLoginMasterPrompt();
-      });
-    }
     bindAuthMethod($("#loginMethod"));
     bindAuthMethod($("#ownerSignMethod"));
     const loginScanQr = $("#loginScanQr");
