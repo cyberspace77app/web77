@@ -44910,7 +44910,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // j and k move through the feed. One press slides to that card.
+  // j and k move through the feed. One press eases out over 220ms.
   // A held key, or another press while that slide is still going, jumps.
   // Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
@@ -44922,19 +44922,13 @@ let CS77_FILTER_LOW_REP = 20;
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
+  // Same length and cubic ease-out as X's j and k.
+  const FEED_KEY_SCROLL_MS = 220;
   let feedKeyItem = null;
   let feedKeyNavigating = false;
   let feedKeyNavTimer = 0;
   let feedKeyScrollGen = 0;
   let feedKeyScrollRunning = false;
-
-  // Browser smooth scroll lasts about sqrt(px)/60 seconds and eases in, so a
-  // second j barely moves. A shorter ease-out still reads as a slide.
-  function feedKeyScrollMs(dist) {
-    const px = Math.abs(dist);
-    if (px < 2) return 0;
-    return Math.max(90, Math.min(240, (Math.sqrt(px) / 80) * 1000));
-  }
 
   function stopFeedKeyScroll() {
     feedKeyScrollGen += 1;
@@ -45084,7 +45078,7 @@ let CS77_FILTER_LOW_REP = 20;
     quietSmartHeader();
     const top = Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
     const from = scrollYNow();
-    const ms = jump ? 0 : feedKeyScrollMs(top - from);
+    const ms = jump || Math.abs(top - from) < 2 ? 0 : FEED_KEY_SCROLL_MS;
     stopFeedKeyScroll();
     if (!ms) {
       armInstantScroll();
@@ -45103,7 +45097,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (gen !== feedKeyScrollGen) return;
       beginOwnedFeedScroll();
       const t = Math.min(1, (now - started) / ms);
-      const eased = 1 - (1 - t) * (1 - t);
+      const eased = 1 - (1 - t) * (1 - t) * (1 - t);
       writeFeedScroll(t === 1 ? top : from + dist * eased);
       if (t < 1) {
         requestAnimationFrame(frame);
