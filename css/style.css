@@ -7361,7 +7361,9 @@ body:has(#zapOverlay:not([hidden])),
 html:has(#zapPayOverlay:not([hidden])),
 body:has(#zapPayOverlay:not([hidden])),
 html:has(#lightningOverlay:not([hidden])),
-body:has(#lightningOverlay:not([hidden])) {
+body:has(#lightningOverlay:not([hidden])),
+html:has(#editHistoryOverlay:not([hidden])),
+body:has(#editHistoryOverlay:not([hidden])) {
   overflow: hidden;
 }
 
@@ -9518,6 +9520,7 @@ body:has(#lightningOverlay:not([hidden])) {
   #lightningOverlay .overlay-card.viewport-sheet,
   #keyQrOverlay .overlay-card.viewport-sheet,
   #settingsKeyQrOverlay .overlay-card.viewport-sheet,
+  #editHistoryOverlay .overlay-card.viewport-sheet,
   .vote-voters-panel.viewport-sheet {
     border: none;
     border-radius: 0;
@@ -11187,6 +11190,217 @@ min-height: 0;
 #embedCode:focus {
   border-color: var(--red-bright);
   box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+#editHistoryOverlay {
+  align-items: safe center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#editHistoryOverlay .edit-history-card {
+  width: min(56rem, 100%);
+  margin-bottom: 0;
+}
+
+.edit-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.edit-history-head h2 {
+  margin: 0;
+}
+
+#editHistoryOverlay .cyber-toggle-compact {
+  align-self: center;
+  flex: 0 0 auto;
+  /* The proposals toolbar stretches this control to the search field (2.65rem on a phone). */
+  min-height: 2.65rem;
+}
+
+.edit-history-body {
+  display: flex;
+  align-items: stretch;
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.edit-history-versions {
+  flex: 0 0 14.5rem;
+  width: 14.5rem;
+  max-height: min(28rem, 58vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.edit-history-version {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--gray);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.edit-history-version:hover,
+.edit-history-version:focus-visible {
+  border-color: var(--red-dim);
+  color: var(--yellow);
+}
+
+/* The list scrolls, so an outer ring is cut off at the edges. */
+.edit-history-version:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: -3px;
+}
+
+.edit-history-version.is-selected {
+  border-color: var(--red-bright);
+  background: rgba(227, 19, 55, 0.12);
+  color: var(--yellow);
+  box-shadow: 0 0 12px rgba(227, 19, 55, 0.2);
+}
+
+.edit-history-version-name,
+.edit-history-version-time {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.edit-history-version-name {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.edit-history-version-time {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+}
+
+.edit-history-version-name + .edit-history-version-time {
+  margin-top: 0.2rem;
+}
+
+.edit-history-version.is-selected .edit-history-version-time {
+  color: var(--gray);
+}
+
+#editHistoryText {
+  display: block;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: min(28rem, 58vh);
+  min-height: min(28rem, 58vh);
+  margin: 0;
+  padding: 0.8rem 0.95rem;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+#editHistoryText:focus {
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 1px rgba(227, 19, 55, 0.35), var(--glow-red);
+}
+
+.edit-history-del,
+.edit-history-add {
+  padding: 0 0.12em;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.edit-history-del {
+  color: #fff;
+  background: var(--red);
+  text-decoration-line: line-through;
+  text-decoration-color: #fff;
+}
+
+.edit-history-add {
+  color: #1a1204;
+  background: var(--yellow);
+}
+
+@media (max-width: 720px) {
+  #editHistoryOverlay {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  #editHistoryOverlay .edit-history-card.viewport-sheet {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    overflow: hidden;
+    padding-top: max(1.75rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .edit-history-head {
+    flex-wrap: wrap;
+  }
+
+  #editHistoryOverlay .edit-history-body {
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #editHistoryOverlay .edit-history-versions {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 0;
+    max-height: min(18rem, 40vh);
+  }
+
+  #editHistoryText {
+    flex: 1 1 0;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+  }
 }
 
 html.is-embed,

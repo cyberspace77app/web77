@@ -634,6 +634,7 @@ let CS77_FILTER_LOW_REP = 20;
   const lightningHist = { on: false, pop: false, pending: null };
   const profileQrHist = { on: false, pop: false, pending: null };
   const keyQrHist = { on: false, pop: false, pending: null };
+  const editPanelHist = { on: false, pop: false, pending: null };
   let dialogHistoryList = null;
   const walletOpState = {
     kind: "",
@@ -2049,6 +2050,7 @@ let CS77_FILTER_LOW_REP = 20;
     items.push(
       `<button type="button" class="content-more-item content-more-copy" role="menuitem">Copy link</button>`,
       `<button type="button" class="content-more-item content-more-embed" role="menuitem">Embed</button>`,
+      `<button type="button" class="content-more-item content-more-history" role="menuitem">Edit history</button>`,
       `<a class="content-more-item content-more-explorer" role="menuitem" href="${HiveMd.escapeHtml(blockExplorerContentUrl(name, link))}" target="_blank" rel="noopener noreferrer">Block Explorer</a>`
     );
     return `
@@ -6002,6 +6004,27 @@ let CS77_FILTER_LOW_REP = 20;
         },
       },
       {
+        id: "revisions",
+        flag: "revisionsPanel",
+        keys: EDIT_PANEL_HISTORY_KEYS,
+        session: editPanelHist,
+        beforeEdit: true,
+        isOpen: editHistoryOpen,
+        close: hideEditHistory,
+        reopen: reopenEditHistoryFromHistory,
+        navAlsoOpen: editHistoryOpen,
+        shouldDismiss: editHistoryOpen,
+        reloadForce: editHistoryOpen,
+        routeIf: function () {
+          return editHistoryOpen() || editPanelHist.on;
+        },
+        routeStrip: true,
+        sectionIdle: true,
+        logoIf: function () {
+          return editPanelHist.on;
+        },
+      },
+      {
         id: "profileQr",
         flag: "profileQrPanel",
         keys: PROFILE_QR_HISTORY_KEYS,
@@ -6247,6 +6270,7 @@ let CS77_FILTER_LOW_REP = 20;
     "votersPermlink",
     "votersDir",
   ];
+  const EDIT_PANEL_HISTORY_KEYS = ["revisionsPanel", "revisionsAuthor", "revisionsPermlink"];
 
   function navigate(href, replace) {
     if (zapPayConfirmOpen() || Date.now() < zapSwallowUntil) return;
@@ -6413,6 +6437,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
+    hideEditHistory({ skipHistory: true });
     closeProfileQrDialog({ skipHistory: true });
     stopEmbedSizeWatch();
     clearError();
@@ -8342,6 +8367,10 @@ let CS77_FILTER_LOW_REP = 20;
         return;
       }
       if (!crossPostBusy) hideCrossPost();
+      return;
+    }
+    if (editHistoryOpen()) {
+      hideEditHistory();
       return;
     }
     if (embedDialogOpen()) {
@@ -43060,6 +43089,787 @@ let CS77_FILTER_LOW_REP = 20;
       });
   }
 
+  // One condenser page is at most 1000 comment operations. Opening the panel
+  // and the first Load more each walk about 30 days. From the second Load more
+  // on, a click walks about 90 days and three times as many pages as that first
+  // Load more. A page often already passes the date, so the page count is what
+  // makes the later chunk bigger. The walk stops once a page is older than the
+  // post's created time. A body that starts with @@ is a diff-match-patch
+  // patch of the previous body.
+  const EDIT_HISTORY_SPAN_MS = 30 * 24 * 60 * 60 * 1000;
+  const EDIT_HISTORY_PAGE = 1000;
+  const EDIT_HISTORY_MAX_PAGES = 8;
+  const EDIT_HISTORY_WIDE = 3;
+  const editHistoryByKey = new Map();
+  let editHistoryOpenKey = "";
+  let editHistoryPick = "newest";
+
+  function editHistoryMapKey(author, permlink) {
+    return author + "/" + permlink;
+  }
+
+  function editHistoryEntry(author, permlink) {
+    const key = editHistoryMapKey(author, permlink);
+    let entry = editHistoryByKey.get(key);
+    if (!entry) {
+      entry = {
+        author: author,
+        permlink: permlink,
+        live: null,
+        ops: new Map(),
+        scanned: false,
+        nextStart: -1,
+        goalMs: null,
+        goalPending: false,
+        coveredMs: null,
+        createdMs: null,
+        exhausted: false,
+        loading: false,
+        moreClicks: 0,
+        basePages: 0,
+        wide: false,
+      };
+      editHistoryByKey.set(key, entry);
+    }
+    return entry;
+  }
+
+  function editHistoryOpen() {
+    const el = $("#editHistoryOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function hideEditHistory(opts) {
+    const skipHistory = !!(opts && opts.skipHistory);
+    const el = $("#editHistoryOverlay");
+    const wasOpen = Boolean(el && !el.hidden);
+    hideDialog(el);
+    if (wasOpen || editPanelHist.on) releasePanelHistory(editPanelHist, skipHistory);
+  }
+
+  function reopenEditHistoryFromHistory(state) {
+    const author = state && state.revisionsAuthor;
+    const permlink = state && state.revisionsPermlink;
+    if (!author || !permlink) return;
+    openEditHistory(author, permlink, { fromHistory: true });
+  }
+
+  function editHistoryTags(jsonMetadata) {
+    const meta = HiveMd.parseJsonMetadata(jsonMetadata);
+    let tags = meta.tags;
+    if (typeof tags === "string") tags = tags.split(/[\s,]+/);
+    if (!Array.isArray(tags)) return [];
+    const out = [];
+    for (let i = 0; i < tags.length; i++) {
+      const tag = String(tags[i] == null ? "" : tags[i]).trim();
+      if (tag) out.push(tag);
+    }
+    return out;
+  }
+
+  function sameEditHistoryTags(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function editHistoryCreatedMs(post) {
+    const ms = parseCreatedTs(post && post.created);
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  // Comment ops cannot belong to this post before it was created. Drop those
+  // rows, and once a scanned page reaches that time the account walk is done.
+  function editHistoryApplyCreatedLimit(entry) {
+    const born = entry.createdMs;
+    if (!Number.isFinite(born)) return;
+    entry.ops.forEach((op, seq) => {
+      if (op.timestamp < born) entry.ops.delete(seq);
+    });
+    if (entry.scanned && entry.coveredMs != null && entry.coveredMs <= born) {
+      entry.exhausted = true;
+      entry.goalPending = false;
+    }
+  }
+
+  function editHistoryNoteCreated(entry, post) {
+    const ms = editHistoryCreatedMs(post);
+    if (ms == null) return;
+    entry.createdMs = ms;
+    editHistoryApplyCreatedLimit(entry);
+  }
+
+  function editHistoryLive(author, permlink) {
+    const post = displayedContent(author, permlink) || contentOf(author, permlink);
+    if (!post) return null;
+    return {
+      title: post.title || "",
+      tags: editHistoryTags(post.json_metadata),
+      body: post.body || "",
+      timestamp: post.updated || post.created || "",
+    };
+  }
+
+  function formatEditHistoryTime(value) {
+    const ms = typeof value === "number" ? value : HiveApi.hiveTimeMs(value);
+    if (!Number.isFinite(ms)) return "";
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date(ms));
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function formatEditHistoryDate(ms) {
+    if (!Number.isFinite(ms)) return "";
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }).format(new Date(ms));
+    } catch (err) {
+      return "";
+    }
+  }
+
+  // Hive's patch text is the diff-match-patch format: @@ headers and
+  // URI-encoded lines. Applying in order onto a full body is an exact match.
+  function parseHivePatch(text) {
+    const lines = String(text).split("\n");
+    const header = /^@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@$/;
+    const hunks = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const match = line.match(header);
+      if (!match) {
+        if (!line) {
+          i++;
+          continue;
+        }
+        throw new Error("Invalid edit patch");
+      }
+      let start1 = parseInt(match[1], 10);
+      if (match[2] !== "0") start1 -= 1;
+      const diffs = [];
+      i++;
+      while (i < lines.length) {
+        const row = lines[i];
+        const sign = row.charAt(0);
+        if (sign === "@") break;
+        if (!row) {
+          i++;
+          continue;
+        }
+        let data = row.slice(1);
+        try {
+          data = decodeURI(data);
+        } catch (err) {
+          /* keep the raw line when the escape is malformed */
+        }
+        if (sign !== "-" && sign !== "+" && sign !== " ") throw new Error("Invalid edit patch");
+        diffs.push([sign, data]);
+        i++;
+      }
+      hunks.push({ start1: start1, diffs: diffs });
+    }
+    return hunks;
+  }
+
+  function findHivePatchIndex(text, oldText, hint) {
+    const at = Number.isFinite(hint) ? hint : 0;
+    if (!oldText) return Math.max(0, Math.min(at, text.length));
+    if (at >= 0 && text.slice(at, at + oldText.length) === oldText) return at;
+    let from = 0;
+    let best = -1;
+    let bestDist = Infinity;
+    while (from <= text.length) {
+      const found = text.indexOf(oldText, from);
+      if (found < 0) break;
+      const dist = Math.abs(found - at);
+      if (dist < bestDist) {
+        best = found;
+        bestDist = dist;
+      }
+      if (found >= at) break;
+      from = found + 1;
+    }
+    return best;
+  }
+
+  function applyHivePatch(source, patchText) {
+    let hunks = [];
+    try {
+      hunks = parseHivePatch(patchText);
+    } catch (err) {
+      return { ok: false, text: source };
+    }
+    if (!hunks.length) return { ok: false, text: source };
+    let text = String(source);
+    for (let h = 0; h < hunks.length; h++) {
+      const hunk = hunks[h];
+      let oldText = "";
+      let newText = "";
+      for (let i = 0; i < hunk.diffs.length; i++) {
+        const sign = hunk.diffs[i][0];
+        const data = hunk.diffs[i][1];
+        if (sign !== "+") oldText += data;
+        if (sign !== "-") newText += data;
+      }
+      const idx = findHivePatchIndex(text, oldText, hunk.start1);
+      if (idx < 0) return { ok: false, text: source };
+      text = text.slice(0, idx) + newText + text.slice(idx + oldText.length);
+    }
+    return { ok: true, text: text };
+  }
+
+  function myersChangedLines(a, b) {
+    const n = a.length;
+    const m = b.length;
+    if (!n && !m) return [];
+    if (!n) return b.map((line) => ["+", line]);
+    if (!m) return a.map((line) => ["-", line]);
+    if (n > 2500 || m > 2500) {
+      return a.map((line) => ["-", line]).concat(b.map((line) => ["+", line]));
+    }
+    const max = n + m;
+    const v = { 1: 0 };
+    const trace = [];
+    for (let d = 0; d <= max; d++) {
+      trace.push(Object.assign({}, v));
+      for (let k = -d; k <= d; k += 2) {
+        let x;
+        if (k === -d || (k !== d && v[k - 1] < v[k + 1])) x = v[k + 1];
+        else x = v[k - 1] + 1;
+        let y = x - k;
+        while (x < n && y < m && a[x] === b[y]) {
+          x++;
+          y++;
+        }
+        v[k] = x;
+        if (x >= n && y >= m) return backtrackChangedLines(trace, a, b, d);
+      }
+    }
+    return a.map((line) => ["-", line]).concat(b.map((line) => ["+", line]));
+  }
+
+  function backtrackChangedLines(trace, a, b, d) {
+    const edits = [];
+    let x = a.length;
+    let y = b.length;
+    for (let depth = d; depth > 0; depth--) {
+      const v = trace[depth];
+      const k = x - y;
+      const prevK = k === -depth || (k !== depth && v[k - 1] < v[k + 1]) ? k + 1 : k - 1;
+      const prevX = v[prevK];
+      const prevY = prevX - prevK;
+      while (x > prevX && y > prevY) {
+        edits.push([" ", a[x - 1]]);
+        x--;
+        y--;
+      }
+      if (x !== prevX) {
+        edits.push(["-", a[x - 1]]);
+        x--;
+      } else {
+        edits.push(["+", b[y - 1]]);
+        y--;
+      }
+    }
+    while (x > 0 && y > 0) {
+      edits.push([" ", a[x - 1]]);
+      x--;
+      y--;
+    }
+    while (x > 0) {
+      edits.push(["-", a[x - 1]]);
+      x--;
+    }
+    while (y > 0) {
+      edits.push(["+", b[y - 1]]);
+      y--;
+    }
+    edits.reverse();
+    return edits;
+  }
+
+  function editHistoryTokens(text) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return [];
+    const parts = raw.split(/(\s+)/);
+    const out = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i]) out.push(parts[i]);
+    }
+    return out;
+  }
+
+  function editHistoryLines(text) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return [];
+    const parts = raw.split("\n");
+    if (parts[parts.length - 1] === "") parts.pop();
+    const trail = raw.charAt(raw.length - 1) === "\n";
+    const out = [];
+    for (let i = 0; i < parts.length; i++) {
+      out.push(i < parts.length - 1 || trail ? parts[i] + "\n" : parts[i]);
+    }
+    return out;
+  }
+
+  function editHistoryTrimmedEdits(a0, b0) {
+    let start = 0;
+    while (start < a0.length && start < b0.length && a0[start] === b0[start]) start++;
+    let endA = a0.length - 1;
+    let endB = b0.length - 1;
+    while (endA >= start && endB >= start && a0[endA] === b0[endB]) {
+      endA--;
+      endB--;
+    }
+    const mid = myersChangedLines(a0.slice(start, endA + 1), b0.slice(start, endB + 1));
+    const edits = [];
+    for (let i = 0; i < start; i++) edits.push([" ", a0[i]]);
+    for (let i = 0; i < mid.length; i++) edits.push(mid[i]);
+    for (let i = endA + 1; i < a0.length; i++) edits.push([" ", a0[i]]);
+    return edits;
+  }
+
+  function editHistoryTokenEdits(before, after) {
+    const a0 = editHistoryTokens(before);
+    const b0 = editHistoryTokens(after);
+    let start = 0;
+    while (start < a0.length && start < b0.length && a0[start] === b0[start]) start++;
+    let endA = a0.length - 1;
+    let endB = b0.length - 1;
+    while (endA >= start && endB >= start && a0[endA] === b0[endB]) {
+      endA--;
+      endB--;
+    }
+    const midA = a0.slice(start, endA + 1);
+    const midB = b0.slice(start, endB + 1);
+    let mid;
+    if (midA.length > 2500 || midB.length > 2500) mid = editHistoryTrimmedEdits(editHistoryLines(midA.join("")), editHistoryLines(midB.join("")));
+    else mid = myersChangedLines(midA, midB);
+    const edits = [];
+    for (let i = 0; i < start; i++) edits.push([" ", a0[i]]);
+    for (let i = 0; i < mid.length; i++) edits.push(mid[i]);
+    for (let i = endA + 1; i < a0.length; i++) edits.push([" ", a0[i]]);
+    return edits;
+  }
+
+  function editHistoryRefineEdits(edits) {
+    const out = [];
+    let i = 0;
+    while (i < edits.length) {
+      const sign = edits[i][0];
+      if (sign !== "-" && sign !== "+") {
+        out.push(edits[i]);
+        i++;
+        continue;
+      }
+      let removed = "";
+      let added = "";
+      while (i < edits.length && (edits[i][0] === "-" || edits[i][0] === "+")) {
+        if (edits[i][0] === "-") removed += edits[i][1];
+        else added += edits[i][1];
+        i++;
+      }
+      if (!removed || !added || removed.length > 500 || added.length > 500) {
+        if (removed) out.push(["-", removed]);
+        if (added) out.push(["+", added]);
+        continue;
+      }
+      const chars = myersChangedLines(Array.from(removed), Array.from(added));
+      for (let c = 0; c < chars.length; c++) out.push(chars[c]);
+    }
+    return out;
+  }
+
+  function editHistoryEditsHtml(edits) {
+    let html = "";
+    let sign = "";
+    let buf = "";
+    function flush() {
+      if (!buf) return;
+      const escaped = HiveMd.escapeHtml(buf);
+      if (sign === "-") html += '<span class="edit-history-del">' + escaped + "</span>";
+      else if (sign === "+") html += '<span class="edit-history-add">' + escaped + "</span>";
+      else html += escaped;
+      buf = "";
+    }
+    for (let i = 0; i < edits.length; i++) {
+      if (edits[i][0] !== sign) {
+        flush();
+        sign = edits[i][0];
+      }
+      buf += edits[i][1];
+    }
+    flush();
+    return html;
+  }
+
+  function editHistoryMarkHtml(before, after) {
+    const prev = String(before == null ? "" : before);
+    const next = String(after == null ? "" : after);
+    if (prev === next) return HiveMd.escapeHtml(next);
+    return editHistoryEditsHtml(editHistoryRefineEdits(editHistoryTokenEdits(prev, next)));
+  }
+
+  function editHistoryStamp(text) {
+    let hash = 2166136261;
+    const raw = String(text);
+    for (let i = 0; i < raw.length; i++) {
+      hash ^= raw.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16) + ":" + raw.length;
+  }
+
+  function editHistoryVersions(entry) {
+    const ops = Array.from(entry.ops.values()).sort((a, b) => a.seq - b.seq);
+    const versions = [];
+    let prevBody = null;
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i];
+      const raw = op.rawBody || "";
+      const isPatch = raw.charAt(0) === "@" && raw.charAt(1) === "@";
+      let body = raw;
+      if (isPatch && prevBody != null) {
+        const applied = applyHivePatch(prevBody, raw);
+        if (applied.ok) body = applied.text;
+      }
+      if (!isPatch || body !== raw) prevBody = body;
+      versions.push({
+        seq: op.seq,
+        timestamp: op.timestamp,
+        title: op.title,
+        tags: op.tags,
+        body: body,
+      });
+    }
+    const live = entry.live;
+    if (live) {
+      const last = versions[versions.length - 1];
+      const liveTitle = live.title || "";
+      const sameBody =
+        last &&
+        last.body === (live.body || "") &&
+        sameEditHistoryTags(last.tags, live.tags || []);
+      // A reply is often broadcast with an empty title. Bridge then shows "RE: …".
+      const sameTitle = last && (last.title === liveTitle || !last.title || !liveTitle);
+      if (last && sameBody && sameTitle) {
+        if (!last.title && liveTitle) last.title = liveTitle;
+      } else {
+        versions.push({
+          seq: null,
+          timestamp: live.timestamp,
+          title: liveTitle,
+          tags: live.tags || [],
+          body: live.body || "",
+        });
+      }
+    }
+    if (!versions.length) {
+      versions.push({ seq: null, timestamp: "", title: "", tags: [], body: "" });
+    }
+    return versions;
+  }
+
+  function editHistoryPickId(version) {
+    if (!version || version.seq == null) return "live";
+    return String(version.seq);
+  }
+
+  function editHistorySelected(versions) {
+    if (!versions.length) return null;
+    if (editHistoryPick !== "newest") {
+      for (let i = 0; i < versions.length; i++) {
+        if (editHistoryPickId(versions[i]) === editHistoryPick) return versions[i];
+      }
+    }
+    return versions[versions.length - 1];
+  }
+
+  function editHistoryPrevious(versions, selected) {
+    const id = editHistoryPickId(selected);
+    for (let i = 0; i < versions.length; i++) {
+      if (editHistoryPickId(versions[i]) !== id) continue;
+      return i > 0 ? versions[i - 1] : null;
+    }
+    return null;
+  }
+
+  function editHistorySource(version) {
+    return "Title: " + version.title + "\n\nTags: " + version.tags.join(", ") + "\n\n" + version.body;
+  }
+
+  function editHistoryDiffHtml(version, previous) {
+    if (!previous) return HiveMd.escapeHtml("No previous version.");
+    const nextTags = version.tags.join(", ");
+    const prevTags = previous.tags.join(", ");
+    if (version.title === previous.title && nextTags === prevTags && version.body === previous.body) {
+      return HiveMd.escapeHtml("No difference from the previous version.");
+    }
+    return (
+      "Title: " +
+      editHistoryMarkHtml(previous.title, version.title) +
+      "\n\nTags: " +
+      editHistoryMarkHtml(prevTags, nextTags) +
+      "\n\n" +
+      editHistoryMarkHtml(previous.body, version.body)
+    );
+  }
+
+  function editHistoryVersionButton(version, selectedId, isCurrent) {
+    const id = editHistoryPickId(version);
+    const time = formatEditHistoryTime(version.timestamp);
+    const on = id === selectedId;
+    const body = isCurrent
+      ? '<span class="edit-history-version-name">Current</span>' +
+        (time ? '<span class="edit-history-version-time">' + HiveMd.escapeHtml(time) + "</span>" : "")
+      : '<span class="edit-history-version-time">' + HiveMd.escapeHtml(time || "Earlier") + "</span>";
+    return (
+      '<button type="button" class="edit-history-version' +
+      (on ? " is-selected" : "") +
+      '" role="option" aria-selected="' +
+      (on ? "true" : "false") +
+      '" data-edit-version="' +
+      HiveMd.escapeHtml(id) +
+      '">' +
+      body +
+      "</button>"
+    );
+  }
+
+  function paintEditHistoryVersions(versions) {
+    const box = $("#editHistoryVersions");
+    if (!box) return;
+    const selected = editHistorySelected(versions);
+    const selectedId = editHistoryPickId(selected);
+    const picks = [];
+    for (let i = versions.length - 1; i >= 0; i--) picks.push(editHistoryPickId(versions[i]));
+    const signature = picks.join("\n");
+    if (box.getAttribute("data-picks") !== signature) {
+      const scroll = box.scrollTop;
+      const html = [];
+      for (let i = versions.length - 1; i >= 0; i--) {
+        html.push(editHistoryVersionButton(versions[i], selectedId, i === versions.length - 1));
+      }
+      box.innerHTML = html.join("");
+      box.setAttribute("data-picks", signature);
+      box.scrollTop = scroll;
+    }
+    const buttons = box.querySelectorAll("[data-edit-version]");
+    for (let i = 0; i < buttons.length; i++) {
+      const on = buttons[i].getAttribute("data-edit-version") === selectedId;
+      buttons[i].classList.toggle("is-selected", on);
+      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+  }
+
+  function paintEditHistoryText(versions) {
+    const area = $("#editHistoryText");
+    if (!area) return;
+    const selected = editHistorySelected(versions);
+    if (!selected) {
+      area.textContent = "";
+      area.removeAttribute("data-edit-sig");
+      return;
+    }
+    const diffOn = Boolean($("#editHistoryDiff") && $("#editHistoryDiff").checked);
+    const previous = diffOn ? editHistoryPrevious(versions, selected) : null;
+    const payload = diffOn ? editHistoryDiffHtml(selected, previous) : editHistorySource(selected);
+    const sig = (diffOn ? "d:" : "t:") + editHistoryStamp(payload);
+    if (area.getAttribute("data-edit-sig") === sig) return;
+    const scroll = area.scrollTop;
+    if (diffOn) area.innerHTML = payload;
+    else area.textContent = payload;
+    area.setAttribute("data-edit-sig", sig);
+    area.scrollTop = scroll;
+  }
+
+  function paintEditHistoryChrome(entry) {
+    const btn = $("#editHistoryLoad");
+    const note = $("#editHistoryNote");
+    if (note) {
+      const through = entry && !entry.exhausted ? formatEditHistoryDate(entry.coveredMs) : "";
+      note.textContent = entry && entry.exhausted
+        ? "All edit history is loaded."
+        : entry && entry.loading && !through
+          ? "Loading recent edit history\u2026"
+          : through
+            ? "Only recent edit history is loaded, through " + through + "."
+            : "Only recent edit history is loaded.";
+    }
+    if (!btn) return;
+    const loading = Boolean(entry && entry.loading);
+    const exhausted = Boolean(entry && entry.exhausted);
+    btn.hidden = exhausted;
+    btn.disabled = loading || exhausted;
+    btn.setAttribute("aria-busy", loading ? "true" : "false");
+    btn.textContent = loading ? "Loading\u2026" : entry && entry.scanned ? "Load more" : "Load history";
+  }
+
+  function paintEditHistory() {
+    const entry = editHistoryOpenKey ? editHistoryByKey.get(editHistoryOpenKey) : null;
+    const versions = entry ? editHistoryVersions(entry) : [];
+    paintEditHistoryVersions(versions);
+    paintEditHistoryText(versions);
+    paintEditHistoryChrome(entry);
+  }
+
+  function openEditHistory(author, permlink, opts) {
+    const name = HiveApi.accountName(author);
+    const link = String(permlink || "");
+    const ov = $("#editHistoryOverlay");
+    if (!name || !link || !ov) return;
+    const fromHistory = Boolean(opts && opts.fromHistory);
+    const entry = editHistoryEntry(name, link);
+    const known = displayedContent(name, link) || contentOf(name, link);
+    if (known) editHistoryNoteCreated(entry, known);
+    const fresh = editHistoryLive(name, link);
+    if (fresh) entry.live = fresh;
+    editHistoryOpenKey = editHistoryMapKey(name, link);
+    editHistoryPick = "newest";
+    const diff = $("#editHistoryDiff");
+    if (diff) diff.checked = false;
+    paintEditHistory();
+    const focusFrom = document.activeElement;
+    ov.hidden = false;
+    // The text stays unfocused so a phone does not open the keyboard.
+    focusDialog(ov, focusFrom);
+    writePanelHistory(
+      editPanelHist,
+      { revisionsPanel: true, revisionsAuthor: name, revisionsPermlink: link },
+      fromHistory
+    );
+    if (!entry.scanned && !entry.loading) void loadEditHistory();
+    if (fresh) return;
+    HiveApi.getPost(name, link)
+      .then((post) => {
+        if (!post) return;
+        entry.live = {
+          title: post.title || "",
+          tags: editHistoryTags(post.json_metadata),
+          body: post.body || "",
+          timestamp: post.updated || post.created || "",
+        };
+        editHistoryNoteCreated(entry, post);
+        if (!editHistoryOpen() || editHistoryOpenKey !== editHistoryMapKey(name, link)) return;
+        paintEditHistory();
+      })
+      .catch(() => {});
+  }
+
+  async function scanEditHistory(entry, moreClick) {
+    const wide = moreClick >= 2;
+    const scale = wide ? EDIT_HISTORY_WIDE : 1;
+    const maxPages = EDIT_HISTORY_MAX_PAGES * scale;
+    const carry = entry.goalPending && entry.goalMs != null && entry.wide === wide;
+    const minPages = wide && !carry
+      ? Math.min(maxPages, Math.max(scale, (entry.basePages || 1) * scale))
+      : 1;
+    const span = EDIT_HISTORY_SPAN_MS * scale;
+    const target = carry
+      ? entry.goalMs
+      : entry.scanned && entry.goalMs != null
+        ? entry.goalMs - span
+        : Date.now() - span;
+    let start = entry.scanned ? entry.nextStart : -1;
+    let pages = 0;
+    let reached = false;
+    while (pages < maxPages && !entry.exhausted && !reached) {
+      let limit = EDIT_HISTORY_PAGE;
+      if (start > 0 && start < limit) limit = start;
+      if (start === 0 || limit < 1) {
+        entry.exhausted = true;
+        break;
+      }
+      const batch = await HiveApi.getCommentHistory(entry.author, start < 0 ? -1 : start, limit);
+      pages += 1;
+      if (!Array.isArray(batch) || !batch.length) {
+        entry.exhausted = true;
+        entry.scanned = true;
+        entry.goalMs = target;
+        entry.goalPending = false;
+        break;
+      }
+      let minSeq = Infinity;
+      let minTs = Infinity;
+      for (let i = 0; i < batch.length; i++) {
+        const row = batch[i];
+        if (!Array.isArray(row) || row.length < 2) continue;
+        const seq = Number(row[0]);
+        const obj = row[1] || {};
+        if (!Number.isFinite(seq)) continue;
+        if (seq < minSeq) minSeq = seq;
+        const ts = HiveApi.hiveTimeMs(obj.timestamp);
+        if (Number.isFinite(ts) && ts < minTs) minTs = ts;
+        const op = obj.op;
+        if (!Array.isArray(op) || op[0] !== "comment" || !op[1]) continue;
+        const body = op[1];
+        if (String(body.author || "").toLowerCase() !== entry.author) continue;
+        if (body.permlink !== entry.permlink) continue;
+        if (!Number.isFinite(ts)) continue;
+        if (Number.isFinite(entry.createdMs) && ts < entry.createdMs) continue;
+        entry.ops.set(seq, {
+          seq: seq,
+          timestamp: ts,
+          title: String(body.title || ""),
+          tags: editHistoryTags(body.json_metadata),
+          rawBody: String(body.body || ""),
+        });
+      }
+      entry.scanned = true;
+      entry.goalMs = target;
+      entry.goalPending = true;
+      entry.wide = wide;
+      if (Number.isFinite(minTs)) {
+        entry.coveredMs = entry.coveredMs == null ? minTs : Math.min(entry.coveredMs, minTs);
+      }
+      if (!Number.isFinite(minSeq) || batch.length < limit || minSeq <= 0) {
+        entry.exhausted = true;
+        entry.nextStart = 0;
+        reached = true;
+        break;
+      }
+      start = minSeq - 1;
+      entry.nextStart = start;
+      if (Number.isFinite(entry.createdMs) && Number.isFinite(minTs) && minTs <= entry.createdMs) {
+        entry.exhausted = true;
+        reached = true;
+      } else if (Number.isFinite(minTs) && minTs <= target && pages >= minPages) reached = true;
+    }
+    if (!wide && moreClick === 1) entry.basePages = pages;
+    if (reached || entry.exhausted) entry.goalPending = false;
+  }
+
+  async function loadEditHistory() {
+    const entry = editHistoryOpenKey ? editHistoryByKey.get(editHistoryOpenKey) : null;
+    if (!entry || entry.loading || entry.exhausted) return;
+    const key = editHistoryOpenKey;
+    const moreClick = entry.scanned ? entry.moreClicks + 1 : 0;
+    entry.loading = true;
+    paintEditHistoryChrome(entry);
+    try {
+      await scanEditHistory(entry, moreClick);
+      if (moreClick) entry.moreClicks = moreClick;
+    } catch (err) {
+      showError((err && err.message) || "Couldn't load edit history.");
+    } finally {
+      entry.loading = false;
+      if (editHistoryOpen() && editHistoryOpenKey === key) paintEditHistory();
+    }
+  }
+
   function embedOpenUrl(post) {
     const threaded = commentOnRootHref(post);
     const raw = threaded || postPath(post);
@@ -43442,6 +44252,7 @@ let CS77_FILTER_LOW_REP = 20;
     hideContentDelete(true);
     hideCrossPost(true);
     hideEmbed();
+    hideEditHistory({ skipHistory: true });
     closeProfileQrDialog({ skipHistory: true });
     stopEmbedSizeWatch();
     clearError();
@@ -44952,11 +45763,12 @@ let CS77_FILTER_LOW_REP = 20;
         const editItem = profileMoreEl.closest(".content-more-edit");
         const copyItem = profileMoreEl.closest(".content-more-copy");
         const embedItem = profileMoreEl.closest(".content-more-embed");
+        const historyItem = profileMoreEl.closest(".content-more-history");
         const deleteItem = profileMoreEl.closest(".content-more-delete");
         const crossItem = profileMoreEl.closest(".content-more-cross");
         const downItem = profileMoreEl.closest(".content-more-downvote");
         const zapsItem = profileMoreEl.closest(".content-more-zaps");
-        if (editItem || copyItem || embedItem || deleteItem || crossItem || downItem || zapsItem) {
+        if (editItem || copyItem || embedItem || historyItem || deleteItem || crossItem || downItem || zapsItem) {
           e.preventDefault();
           const root = document.querySelector(".content-more.is-open");
           const deleteAuthor = root && root.getAttribute("data-author");
@@ -44968,6 +45780,7 @@ let CS77_FILTER_LOW_REP = 20;
           else if (root && editItem) editContentFromMore(root);
           else if (root && crossItem) openCrossPost(deleteAuthor, deletePermlink);
           else if (root && zapsItem) openZapsFromMore(root);
+          else if (root && historyItem) openEditHistory(deleteAuthor, deletePermlink);
           else if (root && embedItem) openEmbedDialog(deleteAuthor, deletePermlink, deleteKind);
           else if (root) copyContentLink(root);
           return;
@@ -46340,6 +47153,37 @@ let CS77_FILTER_LOW_REP = 20;
           e.preventDefault();
           copyEmbedCode();
         }
+      });
+    }
+    const editHistoryOverlay = $("#editHistoryOverlay");
+    if (editHistoryOverlay) {
+      editHistoryOverlay.addEventListener("click", (e) => {
+        if (e.target === editHistoryOverlay) {
+          const active = document.activeElement;
+          if (!active || !editHistoryOverlay.contains(active)) hideEditHistory();
+          return;
+        }
+        if (e.target.closest("#editHistoryClose")) {
+          e.preventDefault();
+          hideEditHistory();
+          return;
+        }
+        if (e.target.closest("#editHistoryLoad")) {
+          e.preventDefault();
+          void loadEditHistory();
+          return;
+        }
+        const versionBtn = e.target.closest("[data-edit-version]");
+        if (!versionBtn) return;
+        e.preventDefault();
+        const pick = versionBtn.getAttribute("data-edit-version") || "newest";
+        editHistoryPick = pick;
+        paintEditHistory();
+      });
+      editHistoryOverlay.addEventListener("change", (e) => {
+        if (e.target && e.target.id === "editHistoryDiff") paintEditHistoryText(
+          editHistoryVersions(editHistoryByKey.get(editHistoryOpenKey) || { ops: new Map(), live: null })
+        );
       });
     }
     const profileQrOverlay = $("#profileQrOverlay");

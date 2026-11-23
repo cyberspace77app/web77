@@ -1164,6 +1164,20 @@
     return Array.isArray(result) ? result : [];
   }
 
+  // Comment operations only. Operation id 1 is filter bit 2. `start` is an
+  // account-history sequence, or -1 for the newest page. Hive rejects a start
+  // below the limit, so the limit shrinks near the beginning of the history.
+  async function getCommentHistory(account, start, limit) {
+    const name = accountName(account);
+    if (!name) return [];
+    const from = start == null ? -1 : Math.floor(Number(start));
+    if (!Number.isFinite(from) || from === 0) return [];
+    let lim = Math.min(Math.max(Math.floor(Number(limit) || 1000), 1), 1000);
+    if (from > 0 && from < lim) lim = from;
+    const result = await hiveRpc("condenser_api.get_account_history", [name, from, lim, 2, 0]);
+    return Array.isArray(result) ? result : [];
+  }
+
   // Bit index is the operation's place in hive/protocol/operations.hpp.
   // Same set as WALLET_TX_TYPES in app.js. author_reward and curation_reward stay out.
   const WALLET_HISTORY_OP_IDS = [
@@ -2265,6 +2279,7 @@
     getWallet,
     getStakeApr,
     getAccountHistory,
+    getCommentHistory,
     getWalletHistory,
     getSavingsWithdrawFrom,
     getConversionRequests,
