@@ -1164,18 +1164,82 @@
     return Array.isArray(result) ? result : [];
   }
 
-  // Comment operations only. Operation id 1 is filter bit 2. `start` is an
-  // account-history sequence, or -1 for the newest page. Hive rejects a start
-  // below the limit, so the limit shrinks near the beginning of the history.
-  async function getCommentHistory(account, start, limit) {
+  const HAF_HISTORY_PAGE = 100;
+  const HAF_HISTORY_MAX_PAGES = 30;
+  const HAF_HISTORY_TIMEOUT_MS = 12000;
+
+  function hafNodeUrl(node) {
+    return String(node || "").replace(/\/+$/, "");
+  }
+
+  async function hafJson(node, path) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HAF_HISTORY_TIMEOUT_MS);
+    try {
+      const res = await fetch(hafNodeUrl(node) + path, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        mode: "cors",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error("HAF HTTP " + res.status);
+      const data = await res.json();
+      if (!data || !Array.isArray(data.operations_result)) throw new Error("HAF response");
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // The active node first, then every built-in public node. A chosen node
+  // such as api.deathwing.me does not serve this API. Another public node does.
+  function hafNodes() {
+    const nodes = [];
+    if (activeNode) nodes.push(activeNode);
+    for (let i = 0; i < HIVE_NODES.length; i++) {
+      if (nodes.indexOf(HIVE_NODES[i]) < 0) nodes.push(HIVE_NODES[i]);
+    }
+    return nodes;
+  }
+
+  // Every comment operation for one author and permlink, oldest first.
+  // Null means no node served the list. An empty array means a node answered
+  // and that permlink has no comment operations.
+  async function getCommentRevisions(account, permlink) {
     const name = accountName(account);
-    if (!name) return [];
-    const from = start == null ? -1 : Math.floor(Number(start));
-    if (!Number.isFinite(from) || from === 0) return [];
-    let lim = Math.min(Math.max(Math.floor(Number(limit) || 1000), 1), 1000);
-    if (from > 0 && from < lim) lim = from;
-    const result = await hiveRpc("condenser_api.get_account_history", [name, from, lim, 2, 0]);
-    return Array.isArray(result) ? result : [];
+    const link = String(permlink || "");
+    if (!name || !link) return null;
+    const path =
+      "/hafbe-api/accounts/" +
+      encodeURIComponent(name) +
+      "/operations/comments/" +
+      encodeURIComponent(link) +
+      "?operation-types=1&direction=asc&page-size=" +
+      HAF_HISTORY_PAGE +
+      "&data-size-limit=2147483647&page=";
+    const nodes = hafNodes();
+    let sawEmpty = false;
+    for (let n = 0; n < nodes.length; n++) {
+      try {
+        const ops = [];
+        let pages = 1;
+        for (let page = 1; page <= pages && page <= HAF_HISTORY_MAX_PAGES; page++) {
+          const data = await hafJson(nodes[n], path + page);
+          const total = Number(data.total_pages);
+          if (page === 1 && Number.isFinite(total) && total >= 0) pages = total;
+          const result = data.operations_result;
+          for (let i = 0; i < result.length; i++) ops.push(result[i]);
+          if (!result.length || result.length < HAF_HISTORY_PAGE) break;
+        }
+        if (pages > HAF_HISTORY_MAX_PAGES) throw new Error("HAF history is too long");
+        if (ops.length) return ops;
+        sawEmpty = true;
+      } catch (err) {
+        /* This node has no block-explorer history. Try the next one. */
+      }
+    }
+    return sawEmpty ? [] : null;
   }
 
   // Bit index is the operation's place in hive/protocol/operations.hpp.
@@ -2279,7 +2343,7 @@
     getWallet,
     getStakeApr,
     getAccountHistory,
-    getCommentHistory,
+    getCommentRevisions,
     getWalletHistory,
     getSavingsWithdrawFrom,
     getConversionRequests,

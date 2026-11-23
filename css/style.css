@@ -11218,8 +11218,23 @@ min-height: 0;
 #editHistoryOverlay .cyber-toggle-compact {
   align-self: center;
   flex: 0 0 auto;
-  /* The proposals toolbar stretches this control to the search field (2.65rem on a phone). */
-  min-height: 2.65rem;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+#editHistoryOverlay .cyber-toggle-compact:hover,
+#editHistoryOverlay .cyber-toggle-compact:has(input:focus-visible),
+#editHistoryOverlay .cyber-toggle-compact:has(input:checked) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+#editHistoryOverlay .cyber-toggle-compact:has(input:focus-visible) .cyber-toggle-track {
+  border-color: var(--red-bright);
 }
 
 .edit-history-body {
