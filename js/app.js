@@ -43107,7 +43107,7 @@ let CS77_FILTER_LOW_REP = 20;
         author: author,
         permlink: permlink,
         live: null,
-        ops: new Map(),
+        ops: [],
         scanned: false,
         createdMs: null,
         loadFailed: false,
@@ -43168,15 +43168,14 @@ let CS77_FILTER_LOW_REP = 20;
   // Comment ops cannot belong to this post before it was created.
   function editHistoryApplyCreatedLimit(entry) {
     const born = entry.createdMs;
-    if (!Number.isFinite(born)) return;
-    let dropped = false;
-    entry.ops.forEach((op, seq) => {
-      if (op.timestamp < born) {
-        entry.ops.delete(seq);
-        dropped = true;
-      }
-    });
-    if (dropped) entry.versionGen += 1;
+    if (!Number.isFinite(born) || !entry.ops.length) return;
+    const next = [];
+    for (let i = 0; i < entry.ops.length; i++) {
+      if (entry.ops[i].timestamp >= born) next.push(entry.ops[i]);
+    }
+    if (next.length === entry.ops.length) return;
+    entry.ops = next;
+    entry.versionGen += 1;
   }
 
   function editHistoryNoteCreated(entry, post) {
@@ -43216,21 +43215,6 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     entry.live = next;
-    entry.versionGen += 1;
-  }
-
-  function editHistoryStoreOp(entry, op) {
-    const prev = entry.ops.get(op.seq);
-    if (
-      prev &&
-      prev.rawBody === op.rawBody &&
-      prev.title === op.title &&
-      prev.timestamp === op.timestamp &&
-      sameEditHistoryTags(prev.tags, op.tags)
-    ) {
-      return;
-    }
-    entry.ops.set(op.seq, op);
     entry.versionGen += 1;
   }
 
@@ -43536,7 +43520,7 @@ let CS77_FILTER_LOW_REP = 20;
 
   function editHistoryVersions(entry) {
     if (entry.builtVersions && entry.builtGen === entry.versionGen) return entry.builtVersions;
-    const ops = Array.from(entry.ops.values()).sort((a, b) => a.seq - b.seq);
+    const ops = entry.ops;
     const versions = [];
     let prevBody = null;
     for (let i = 0; i < ops.length; i++) {
@@ -43719,11 +43703,7 @@ let CS77_FILTER_LOW_REP = 20;
           : "Loading history\u2026";
       if (note.textContent !== text) note.textContent = text;
     }
-    if (!btn) return;
-    btn.hidden = !failed;
-    btn.disabled = false;
-    btn.setAttribute("aria-busy", "false");
-    btn.textContent = "Load history";
+    if (btn) btn.hidden = !failed;
   }
 
   function paintEditHistory() {
@@ -43818,16 +43798,21 @@ let CS77_FILTER_LOW_REP = 20;
     }
     if (rows.length && !parsed.length) return false;
     parsed.sort(compareHafRevisions);
+    const kept = [];
     for (let i = 0; i < parsed.length; i++) {
       const op = parsed[i];
       if (Number.isFinite(entry.createdMs) && op.timestamp < entry.createdMs) continue;
-      editHistoryStoreOp(entry, {
+      kept.push({
         seq: i,
         timestamp: op.timestamp,
         title: op.title,
         tags: op.tags,
         rawBody: op.rawBody,
       });
+    }
+    if (kept.length) {
+      entry.ops = kept;
+      entry.versionGen += 1;
     }
     entry.scanned = true;
     editHistoryApplyCreatedLimit(entry);

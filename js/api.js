@@ -1164,8 +1164,9 @@
     return Array.isArray(result) ? result : [];
   }
 
-  const HAF_HISTORY_PAGE = 100;
-  const HAF_HISTORY_MAX_PAGES = 30;
+  // One page covers a real post. Any later page is followed and kept.
+  const HAF_HISTORY_PAGE = 400;
+  const HAF_HISTORY_MAX_PAGES = 5;
   const HAF_HISTORY_TIMEOUT_MS = 12000;
 
   function hafNodeUrl(node) {
@@ -1227,12 +1228,11 @@
         for (let page = 1; page <= pages && page <= HAF_HISTORY_MAX_PAGES; page++) {
           const data = await hafJson(nodes[n], path + page);
           const total = Number(data.total_pages);
-          if (page === 1 && Number.isFinite(total) && total >= 0) pages = total;
+          if (page === 1 && Number.isFinite(total) && total > 1) pages = total;
           const result = data.operations_result;
           for (let i = 0; i < result.length; i++) ops.push(result[i]);
           if (!result.length || result.length < HAF_HISTORY_PAGE) break;
         }
-        if (pages > HAF_HISTORY_MAX_PAGES) throw new Error("HAF history is too long");
         if (ops.length) return ops;
         sawEmpty = true;
       } catch (err) {
