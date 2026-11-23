@@ -389,8 +389,6 @@ let CS77_FILTER_LOW_REP = 20;
     asset: "ln",
     lnAddress: "",
     lnStatus: "missing",
-    // True only for the synthetic name@v4v.app address, not a stored one.
-    lnDefault: false,
     lnDenied: false,
     pending: false,
     selected: { ln: 21, hive: 1, hbd: 0.1 },
@@ -411,12 +409,10 @@ let CS77_FILTER_LOW_REP = 20;
     commentBusy: false,
     // Set while a v4v.app lightning: invoice is waiting on Hive.
     v4vWatch: false,
-    paymentHash: "",
   };
   const zapWalletCache = new Map();
   const zapTipsCache = new Map();
   const zappedContent = new Set();
-  const zappedProfiles = new Set();
   const ZAP_SINGLE_TAP_KEY = "cs77_zap_single_tap";
   let zapPulseTimer = 0;
   // Waiting blink. It stays slow until the invoice exists, or a hive/hbd zap is
@@ -7958,7 +7954,6 @@ let CS77_FILTER_LOW_REP = 20;
     downvotePinned.clear();
     downvotePreview.clear();
     zappedContent.clear();
-    zappedProfiles.clear();
     revealedMuted.clear();
     commentSortByPost.clear();
     freshCommentsByPost.clear();
@@ -21235,11 +21230,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   function profileZapHtml(author) {
     const name = String(author || "").replace(/^@/, "").trim().toLowerCase();
-    const zapped = name && zappedProfiles.has(name) ? " is-zapped" : "";
     return (
-      '<button type="button" class="profile-zap-btn' +
-      zapped +
-      '" aria-label="' +
+      '<button type="button" class="profile-zap-btn" aria-label="' +
       HiveMd.escapeHtml(accessAction("Zap", name ? "@" + name : "")) +
       '">' +
       zapMarkSvg() +
@@ -22612,7 +22604,7 @@ let CS77_FILTER_LOW_REP = 20;
     setZapStatus("", false);
     setZapTriggerOpen(false);
     // The bolt is covered while the dialog is up, so the strobe starts as it closes.
-    if (sent) flashZapSuccess(sentAuthor, sentPermlink, false);
+    if (sent) flashZapSuccess(sentAuthor, sentPermlink);
     else paintZappedStatButtons();
     releasePanelHistory(zapHist, skipHistory);
     return true;
@@ -22851,18 +22843,15 @@ let CS77_FILTER_LOW_REP = 20;
     zapBlinkTarget = ZAP_BLINK_FAST_MS;
   }
 
-  // keepProfile marks a profile bolt after a single-tap send. A dialog profile
-  // zap only strobes, then returns to its resting color.
-  function flashZapSuccess(author, permlink, keepProfile) {
+  // A post or comment bolt stays yellow after the strobe. A profile bolt
+  // only strobes, then returns to its resting color.
+  function flashZapSuccess(author, permlink) {
     clearZapMotion();
     const buttons = zapTapButtons(author, permlink);
     if (permlink) {
       rememberZappedContent(author, permlink);
       invalidateZapTips(author, permlink);
       paintZappedStatButtons();
-    } else if (keepProfile !== false && author) {
-      zappedProfiles.add(author);
-      buttons.forEach((btn) => btn.classList.add("is-zapped"));
     }
     const endStrobe = () => {
       zapPulseTimer = 0;
@@ -22946,17 +22935,29 @@ let CS77_FILTER_LOW_REP = 20;
     }
   }
 
+  // Hidden zap. Post the receipt when one is offered. If that comment did not
+  // go out, open the dialog so it can be tried again. Otherwise flash the bolt.
+  // gen is the in-page send. Yes and a v4v receipt omit it.
+  async function settleHiddenZap(gen) {
+    if (gen != null && gen !== zapSendGen) return;
+    if (zapState.offerComment) {
+      await submitZapReceipt();
+      if (gen != null && gen !== zapSendGen) return;
+    }
+    if (!zapState.singleTap || (gen != null && gen !== zapSendGen)) return;
+    if (zapState.offerComment) {
+      revealSingleTapDialog();
+      return;
+    }
+    finishSingleTap(true);
+  }
+
   async function completeSingleTap(gen) {
     if (!zapState.singleTap || gen !== zapSendGen) return;
     if (zapState.offerComment) {
-      await submitZapReceipt();
-      if (!zapState.singleTap || gen !== zapSendGen) return;
-      if (zapState.offerComment) {
-        revealSingleTapDialog();
-        return;
-      }
+      await settleHiddenZap(gen);
+      return;
     }
-    if (!zapState.singleTap || gen !== zapSendGen) return;
     // The lightning: link stays in progress until the page comes back, or the give-up.
     // A v4v.app address stays in progress until that Hive receipt arrives.
     if (zapWalletAsk || zapPayConfirmOpen() || zapState.v4vWatch) return;
@@ -23013,7 +23014,6 @@ let CS77_FILTER_LOW_REP = 20;
     zapState.asset = "ln";
     zapState.lnAddress = "";
     zapState.lnStatus = fetchWallet ? "loading" : "missing";
-    zapState.lnDefault = false;
     zapState.lnDenied = false;
     zapState.pending = false;
     zapState.selected = { ln: 21, hive: 1, hbd: 0.1 };
@@ -23106,7 +23106,6 @@ let CS77_FILTER_LOW_REP = 20;
       if (gen !== zapLookGen || !zapUiOpen()) return;
       zapState.lnAddress = "";
       zapState.lnStatus = "error";
-      zapState.lnDefault = false;
     }
     if (gen !== zapLookGen || !zapUiOpen()) return;
     const status = $("#zapStatus");
@@ -23142,7 +23141,6 @@ let CS77_FILTER_LOW_REP = 20;
   function applyZapWallet(wallet) {
     const choice = lightningReceiveChoice(zapState.author, lightningAddressFromWallet(wallet));
     zapState.lnAddress = choice.address;
-    zapState.lnDefault = choice.fallback;
     if (choice.invalid) zapState.lnStatus = "invalid";
     else if (choice.address) zapState.lnStatus = "ready";
     else zapState.lnStatus = "missing";
@@ -24019,6 +24017,17 @@ let CS77_FILTER_LOW_REP = 20;
 
   // SDK 9 stops a pay_invoice reply at 60s unless replyTimeout is set.
   const ZAP_NWC_TIMEOUT_MS = 90000;
+  let zapNwcModulePromise = null;
+
+  function loadNwcClient() {
+    if (zapNwcModulePromise) return zapNwcModulePromise;
+    const pending = import("https://esm.sh/@getalby/sdk@9.0.0/lnclient").catch((err) => {
+      if (zapNwcModulePromise === pending) zapNwcModulePromise = null;
+      throw err;
+    });
+    zapNwcModulePromise = pending;
+    return pending;
+  }
 
   function allowNwcPayWait(client) {
     const nwc = client && client.nwcClient;
@@ -24037,7 +24046,7 @@ let CS77_FILTER_LOW_REP = 20;
   async function payWithNwc(url, pr) {
     let mod;
     try {
-      mod = await import("https://esm.sh/@getalby/sdk@9.0.0/lnclient");
+      mod = await loadNwcClient();
     } catch (err) {
       throw new Error("Could not load the wallet connection. Clear it to open a lightning invoice instead.");
     }
@@ -24088,14 +24097,8 @@ let CS77_FILTER_LOW_REP = 20;
     return Boolean(card && target && typeof target.nodeType === "number" && card.contains(target));
   }
 
-  // The question is the only layer that takes input. syncDialogInert covers the
-  // zap dialog and the page. pointer-events on those layers stays in CSS.
-  function holdZapPayPage() {
-    syncDialogInert();
-  }
-
   function releaseZapPayPage() {
-    holdZapPayPage(false);
+    syncDialogInert();
     zapPayOpenedAt = 0;
     zapPayReturnHref = "";
     zapSwallowNext = false;
@@ -24326,7 +24329,9 @@ let CS77_FILTER_LOW_REP = 20;
     zapPayReturnHref = location.href;
     zapSwallowNext = false;
     zapSwallowUntil = 0;
-    holdZapPayPage(true);
+    // The question is the only layer that takes input. syncDialogInert covers the
+    // zap dialog and the page. pointer-events on those layers stays in CSS.
+    syncDialogInert();
     focusDesktop($("#zapPayYes"));
     focusDialog(ov, focusFrom);
   }
@@ -24479,7 +24484,6 @@ let CS77_FILTER_LOW_REP = 20;
       zapV4vTimer = 0;
     }
     zapState.v4vWatch = false;
-    zapState.paymentHash = "";
   }
 
   // v4v.app credits the local-part. That part has to be a Hive account.
@@ -24502,7 +24506,6 @@ let CS77_FILTER_LOW_REP = 20;
     const gen = zapV4vGen;
     const started = Date.now();
     zapState.v4vWatch = true;
-    zapState.paymentHash = paymentHash;
     const tick = async () => {
       zapV4vTimer = 0;
       if (gen !== zapV4vGen || !zapState.v4vWatch) return;
@@ -24545,15 +24548,7 @@ let CS77_FILTER_LOW_REP = 20;
     const hidden = !zapDialogOpen();
     markZapLightningSent(zapState.sentSats, zapState.invoice);
     if (hidden) {
-      if (zapState.offerComment) await submitZapReceipt();
-      if (!zapState.singleTap) return;
-      // The receipt is already posted. Open the dialog only when that comment
-      // did not go out, so it can be tried again without another payment.
-      if (zapState.offerComment) {
-        revealSingleTapDialog();
-        return;
-      }
-      finishSingleTap(true);
+      await settleHiddenZap();
       return;
     }
     paintZapForm();
@@ -24986,9 +24981,7 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const gen = ++zapSendGen;
-    const singleTap = zapState.singleTap;
     hideZapFallback();
-    if (singleTap) zapState.singleTap = true;
     zapDialogBusy(true);
     setZapStatus(asset === "ln" ? "Requesting an invoice\u2026" : "Checking account\u2026", false);
     try {
@@ -32308,11 +32301,8 @@ let CS77_FILTER_LOW_REP = 20;
   function communityZapHtml(name) {
     const id = normalizeCommunityName(name);
     if (!id || isOwnAuthor(id)) return "";
-    const zapped = zappedProfiles.has(id) ? " is-zapped" : "";
     return (
-      '<button type="button" class="profile-zap-btn community-zap-btn' +
-      zapped +
-      '" data-community="' +
+      '<button type="button" class="profile-zap-btn community-zap-btn" data-community="' +
       HiveMd.escapeHtml(id) +
       '" aria-label="' +
       HiveMd.escapeHtml(accessAction("Zap", communityTitleOf(communityState.info, id) || id)) +

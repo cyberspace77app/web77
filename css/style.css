@@ -4558,21 +4558,8 @@ a.tag:hover {
   filter: drop-shadow(0 0 5px rgba(255, 225, 74, 0.95));
 }
 
-.profile-zap-btn.is-zapped {
-  color: var(--yellow);
-}
-
-.profile-zap-btn.is-zapping {
-  color: var(--gray);
-}
-
 .profile-zap-btn.is-zapping .zap-mark {
   filter: none;
-}
-
-.profile-zap-btn.is-zapping.is-zap-blink,
-.profile-zap-btn.is-zap-flash {
-  color: var(--yellow);
 }
 
 .profile-zap-btn.is-zapping.is-zap-blink .zap-mark,
