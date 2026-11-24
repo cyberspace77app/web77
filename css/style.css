@@ -11384,6 +11384,7 @@ min-height: 0;
     width: 100%;
     min-height: 0;
     max-height: min(18rem, 40vh);
+    padding-right: 0;
   }
 
   #editHistoryText {
