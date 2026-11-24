@@ -1244,6 +1244,8 @@
 
   // Bit index is the operation's place in hive/protocol/operations.hpp.
   // Same set as WALLET_TX_TYPES in app.js. author_reward and curation_reward stay out.
+  // account_update and account_update2 also carry profile edits. The wallet
+  // drops those after the call, and keeps a row only when a key changed.
   const WALLET_HISTORY_OP_IDS = [
     2, // transfer
     3, // transfer_to_vesting
@@ -1251,12 +1253,17 @@
     5, // limit_order_create
     6, // limit_order_cancel
     8, // convert
+    10, // account_update
     21, // limit_order_create2
+    24, // request_account_recovery
+    25, // recover_account
+    26, // change_recovery_account
     32, // transfer_to_savings
     33, // transfer_from_savings
     34, // cancel_transfer_from_savings
     39, // claim_reward_balance
     40, // delegate_vesting_shares
+    43, // account_update2
     48, // collateralized_convert
     50, // fill_convert_request
     55, // interest
@@ -1264,6 +1271,7 @@
     57, // fill_order
     59, // fill_transfer_from_savings
     63, // comment_benefactor_reward
+    76, // changed_recovery_account
     81, // fill_collateralized_convert_request
     85, // limit_order_cancelled
     88, // collateralized_convert_immediate_conversion

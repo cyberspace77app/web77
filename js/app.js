@@ -26232,6 +26232,12 @@ let CS77_FILTER_LOW_REP = 20;
     limit_order_cancel: "limit order cancel",
     fill_order: "fill order",
     limit_order_cancelled: "limit order cancelled",
+    account_update: "changed keys",
+    account_update2: "changed keys",
+    request_account_recovery: "recovery requested",
+    recover_account: "account recovered",
+    change_recovery_account: "change recovery account",
+    changed_recovery_account: "recovery account changed",
   };
 
   const WALLET_ORDER_FIELDS = {
@@ -26280,7 +26286,93 @@ let CS77_FILTER_LOW_REP = 20;
     return best;
   }
 
+  function walletAuthorityPresent(value) {
+    return Boolean(value) && typeof value === "object";
+  }
+
+  function walletMemoPresent(value) {
+    return typeof value === "string" && value.trim().length > 0;
+  }
+
+  // account_update always carries memo_key, so that field alone is not a change.
+  // A password change sets owner, active, and posting together and rotates memo
+  // with them. account_update2 leaves a key out when it stays as it is. A memo
+  // key sent with profile text is the current key, not a rotation.
+  function walletChangedRoles(type, payload) {
+    if (!payload || (type !== "account_update" && type !== "account_update2")) return [];
+    const roles = [];
+    if (walletAuthorityPresent(payload.owner)) roles.push("owner");
+    if (walletAuthorityPresent(payload.active)) roles.push("active");
+    if (walletAuthorityPresent(payload.posting)) roles.push("posting");
+    if (type === "account_update2") {
+      const meta =
+        String(payload.json_metadata || "").trim() || String(payload.posting_json_metadata || "").trim();
+      if (walletMemoPresent(payload.memo_key) && (roles.length || !meta)) roles.push("memo");
+    } else if (roles.length === 3 && walletMemoPresent(payload.memo_key)) {
+      roles.push("memo");
+    }
+    return roles;
+  }
+
+  function walletHistoryVisible(type, payload) {
+    if (type === "account_update" || type === "account_update2") return walletChangedRoles(type, payload).length > 0;
+    return Boolean(WALLET_TX_TYPES[type]);
+  }
+
+  // A threshold of 0 cancels the open recovery request. It does not set a key.
+  function walletRecoveryCancelled(payload) {
+    const auth = payload && payload.new_owner_authority;
+    if (!auth || typeof auth !== "object") return false;
+    return Number(auth.weight_threshold) === 0;
+  }
+
+  function walletRecoveryRequestDetail(payload) {
+    const viewer = walletHiveName(profileState.author);
+    const partner = walletHiveName(payload.recovery_account);
+    const target = walletHiveName(payload.account_to_recover);
+    if (viewer && target && viewer === target) {
+      if (partner && partner !== target) return "by " + walletAccountHtml(payload.recovery_account);
+      return "for this account";
+    }
+    if (target) return "for " + walletAccountHtml(payload.account_to_recover);
+    return "";
+  }
+
+  // The request takes effect after 30 days. The virtual op is the change itself.
+  function walletChangeRecoveryDetail(payload) {
+    const viewer = walletHiveName(profileState.author);
+    const target = walletHiveName(payload.account_to_recover);
+    const next = walletHiveName(payload.new_recovery_account);
+    const nextHtml = walletAccountHtml(payload.new_recovery_account);
+    const targetHtml = walletAccountHtml(payload.account_to_recover);
+    if (viewer && target && viewer === target) return nextHtml ? nextHtml + " in 30 days" : "";
+    if (viewer && next && viewer === next) return targetHtml ? "for " + targetHtml + " in 30 days" : "";
+    if (nextHtml && targetHtml) return nextHtml + " for " + targetHtml + " in 30 days";
+    return nextHtml ? nextHtml + " in 30 days" : "";
+  }
+
+  function walletChangedRecoveryDetail(payload) {
+    const viewer = walletHiveName(profileState.author);
+    const account = walletHiveName(payload.account);
+    const oldName = walletHiveName(payload.old_recovery_account);
+    const newName = walletHiveName(payload.new_recovery_account);
+    let change = "";
+    if (oldName && newName) change = walletAccountPair(payload.old_recovery_account, payload.new_recovery_account);
+    else if (newName) change = "none → " + walletAccountHtml(payload.new_recovery_account);
+    else change = walletAccountPair(payload.old_recovery_account, payload.new_recovery_account);
+    if (viewer && account && viewer !== account) {
+      const who = walletAccountHtml(payload.account);
+      return who && change ? change + " for " + who : who || change;
+    }
+    return change;
+  }
+
   function walletTxTypeLabel(type, payload, source) {
+    const roles = walletChangedRoles(type, payload);
+    if (roles.length) return roles.length === 4 ? "changed password" : "changed keys";
+    if (type === "request_account_recovery") {
+      return walletRecoveryCancelled(payload) ? "recovery cancelled" : "recovery requested";
+    }
     if (type === "withdraw_vesting" && walletZeroVests(payload && payload.vesting_shares)) {
       return "cancel unstake hive";
     }
@@ -26473,6 +26565,12 @@ let CS77_FILTER_LOW_REP = 20;
 
   function walletTxDetail(type, payload, source) {
     if (!payload) return "";
+    const roles = walletChangedRoles(type, payload);
+    if (roles.length) return roles.join(", ");
+    if (type === "request_account_recovery") return walletRecoveryRequestDetail(payload);
+    if (type === "recover_account") return "owner";
+    if (type === "change_recovery_account") return walletChangeRecoveryDetail(payload);
+    if (type === "changed_recovery_account") return walletChangedRecoveryDetail(payload);
     if (type === "transfer") return walletAccountPair(payload.from, payload.to);
     if (type === "transfer_to_vesting") {
       const who = walletOtherAccount(payload);
@@ -26606,6 +26704,9 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   const WALLET_TX_PAGE = 30;
+  // Profile edits share the key-change operations. Skip a page of those and
+  // read the next one, so the list still fills with wallet rows.
+  const WALLET_TX_SCAN_HOPS = 8;
 
   function blankWalletTx() {
     return {
@@ -26645,7 +26746,8 @@ let CS77_FILTER_LOW_REP = 20;
       tx.seen.add(idx);
       const op = rec[1] && rec[1].op;
       const type = Array.isArray(op) ? String(op[0] || "") : "";
-      if (WALLET_TX_TYPES[type]) tx.items.push(rec);
+      const body = Array.isArray(op) ? op[1] : null;
+      if (walletHistoryVisible(type, body)) tx.items.push(rec);
       if (tx.items.length >= tx.pageGoal) {
         stopAt = idx;
         break;
@@ -26670,9 +26772,15 @@ let CS77_FILTER_LOW_REP = 20;
   async function appendWalletHistory(account, tx) {
     if (tx.done || profileState.walletTx !== tx) return;
     tx.pageGoal = tx.items.length + WALLET_TX_PAGE;
-    const batch = await HiveApi.getWalletHistory(account, tx.cursor, WALLET_TX_PAGE);
-    if (profileState.walletTx !== tx) return;
-    consumeWalletHistoryBatch(tx, batch);
+    let hops = 0;
+    while (profileState.walletTx === tx && !tx.done && hops < WALLET_TX_SCAN_HOPS) {
+      const before = tx.items.length;
+      const batch = await HiveApi.getWalletHistory(account, tx.cursor, WALLET_TX_PAGE);
+      if (profileState.walletTx !== tx) return;
+      consumeWalletHistoryBatch(tx, batch);
+      hops += 1;
+      if (tx.done || tx.items.length > before || tx.items.length >= tx.pageGoal) return;
+    }
   }
 
   function walletHistoryHtml(tx, props) {
@@ -26764,8 +26872,8 @@ let CS77_FILTER_LOW_REP = 20;
     const op = rec.op;
     if (!Array.isArray(op) || op.length < 2) return "";
     const type = String(op[0] || "");
-    if (!WALLET_TX_TYPES[type]) return "";
     const payload = op[1] || {};
+    if (!walletHistoryVisible(type, payload)) return "";
     const source =
       type === "cancel_transfer_from_savings"
         ? walletSavingsCancelSource(items, historyRowIndex(entry), payload)
