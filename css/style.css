@@ -6009,6 +6009,7 @@ a.wallet-tools-keys {
 }
 
 .wallet-tx-main {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -6033,7 +6034,8 @@ a.wallet-tools-keys {
 
 .wallet-tx-detail a.mention,
 .wallet-tx-memo a.mention,
-.wallet-tx-field a.mention {
+.wallet-tx-field a.mention,
+.wallet-tx-auth a.mention {
   color: inherit;
   text-shadow: none;
 }
@@ -6043,9 +6045,45 @@ a.wallet-tools-keys {
 .wallet-tx-memo a.mention:hover,
 .wallet-tx-memo a.mention:focus-visible,
 .wallet-tx-field a.mention:hover,
-.wallet-tx-field a.mention:focus-visible {
+.wallet-tx-field a.mention:focus-visible,
+.wallet-tx-auth a.mention:hover,
+.wallet-tx-auth a.mention:focus-visible {
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
+}
+
+.wallet-tx-auths {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.wallet-tx-auth {
+  display: flex;
+  align-items: baseline;
+  column-gap: 0.5rem;
+  font-family: var(--font-body);
+  font-size: 0.98rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.wallet-tx-auth-role {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+.wallet-tx-auth-accounts {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.55rem;
+  min-width: 0;
 }
 
 .wallet-tx-fields {

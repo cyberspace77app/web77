@@ -26314,6 +26314,70 @@ let CS77_FILTER_LOW_REP = 20;
     return roles;
   }
 
+  // account_auths is the whole new list, as [name, weight] pairs. A map is accepted too.
+  function walletAuthorityAccounts(auth) {
+    if (!auth || typeof auth !== "object") return [];
+    const raw = auth.account_auths;
+    const names = [];
+    const seen = {};
+    function add(value) {
+      const name = walletHiveName(value);
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      names.push(name);
+    }
+    if (Array.isArray(raw)) {
+      for (let i = 0; i < raw.length; i++) {
+        const row = raw[i];
+        if (Array.isArray(row)) add(row[0]);
+        else if (row && typeof row === "object") add(row.account || row.name || row[0]);
+        else add(row);
+      }
+    } else if (raw && typeof raw === "object") {
+      const keys = Object.keys(raw);
+      for (let i = 0; i < keys.length; i++) add(keys[i]);
+    }
+    return names;
+  }
+
+  // Replacing owner, active, posting, and memo together is a password change,
+  // even when the new authorities still list accounts. A role that is present
+  // with an empty account list is a key change, not a grant.
+  function walletGrantedRoles(type, payload) {
+    const changed = walletChangedRoles(type, payload);
+    if (changed.length === 4 || !payload) return [];
+    const roles = ["owner", "active", "posting"];
+    const out = [];
+    for (let i = 0; i < roles.length; i++) {
+      const role = roles[i];
+      if (changed.indexOf(role) < 0) continue;
+      const accounts = walletAuthorityAccounts(payload[role]);
+      if (!accounts.length) continue;
+      out.push({ role: role, accounts: accounts });
+    }
+    return out;
+  }
+
+  function walletGrantedHtml(type, payload) {
+    const grants = walletGrantedRoles(type, payload);
+    if (!grants.length) return "";
+    let html = '<div class="wallet-tx-auths">';
+    for (let i = 0; i < grants.length; i++) {
+      const grant = grants[i];
+      let accounts = "";
+      for (let j = 0; j < grant.accounts.length; j++) accounts += walletAccountHtml(grant.accounts[j]);
+      html +=
+        '<div class="wallet-tx-auth">' +
+        '<span class="wallet-tx-auth-role">' +
+        HiveMd.escapeHtml(grant.role) +
+        "</span>" +
+        '<span class="wallet-tx-auth-accounts">' +
+        accounts +
+        "</span></div>";
+    }
+    return html + "</div>";
+  }
+
   function walletHistoryVisible(type, payload) {
     if (type === "account_update" || type === "account_update2") return walletChangedRoles(type, payload).length > 0;
     return Boolean(WALLET_TX_TYPES[type]);
@@ -26369,7 +26433,11 @@ let CS77_FILTER_LOW_REP = 20;
 
   function walletTxTypeLabel(type, payload, source) {
     const roles = walletChangedRoles(type, payload);
-    if (roles.length) return roles.length === 4 ? "changed password" : "changed keys";
+    if (roles.length) {
+      if (roles.length === 4) return "changed password";
+      if (walletGrantedRoles(type, payload).length) return "granted authority";
+      return "changed keys";
+    }
     if (type === "request_account_recovery") {
       return walletRecoveryCancelled(payload) ? "recovery cancelled" : "recovery requested";
     }
@@ -26566,7 +26634,10 @@ let CS77_FILTER_LOW_REP = 20;
   function walletTxDetail(type, payload, source) {
     if (!payload) return "";
     const roles = walletChangedRoles(type, payload);
-    if (roles.length) return roles.join(", ");
+    if (roles.length) {
+      if (walletGrantedRoles(type, payload).length) return "";
+      return roles.join(", ");
+    }
     if (type === "request_account_recovery") return walletRecoveryRequestDetail(payload);
     if (type === "recover_account") return "owner";
     if (type === "change_recovery_account") return walletChangeRecoveryDetail(payload);
@@ -26881,6 +26952,7 @@ let CS77_FILTER_LOW_REP = 20;
     const label = walletTxTypeLabel(type, payload, source);
     const amount = walletTxAmounts(type, payload, props, source);
     const detail = walletTxDetail(type, payload, source);
+    const grants = walletGrantedHtml(type, payload);
     const fields = walletTxFieldsHtml(type, payload, props);
     const memo = walletTxMemoHtml(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
@@ -26898,6 +26970,7 @@ let CS77_FILTER_LOW_REP = 20;
       <div class="wallet-tx-main">
         <span class="wallet-tx-type">${HiveMd.escapeHtml(label)}</span>
         ${detail ? `<span class="wallet-tx-detail">${detail}</span>` : ""}
+        ${grants || ""}
         ${fields || ""}
         ${memo || ""}
       </div>
