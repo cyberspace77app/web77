@@ -289,6 +289,8 @@ let CS77_FILTER_LOW_REP = 20;
   const NOTIF_POLL_MS = 60000;
   const ACCOUNT_STATE_FRESH_MS = 60000;
   const BLOCK_EXPLORER = "https://hivescan.info/";
+  // This browser, for every account. An empty value keeps BLOCK_EXPLORER.
+  const BLOCK_EXPLORER_KEY = "cs77_block_explorer";
 
   const $ = (sel) => document.querySelector(sel);
   const view = $("#view");
@@ -21141,12 +21143,77 @@ let CS77_FILTER_LOW_REP = 20;
     return profileState.muted ? "Unmute" : "Mute";
   }
 
+  function parseBlockExplorer(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return { url: "", error: "" };
+    if (raw.length > 300) return { url: "", error: "Enter a shorter address." };
+    let withScheme = raw;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(withScheme)) withScheme = "https://" + withScheme;
+    let parsed;
+    try {
+      parsed = new URL(withScheme);
+    } catch {
+      return { url: "", error: "Enter a block explorer address, like https://hivescan.info/." };
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return { url: "", error: "Use an http or https address." };
+    }
+    if (parsed.username || parsed.password) {
+      return { url: "", error: "Leave the username and password off the address." };
+    }
+    if (!parsed.hostname) {
+      return { url: "", error: "Enter a block explorer address, like https://hivescan.info/." };
+    }
+    parsed.hash = "";
+    parsed.search = "";
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (/^\/@[^/]+(?:\/[^/]+)?$/.test(path) || /^\/tx\/[0-9a-f]{40}$/i.test(path)) {
+      parsed.pathname = "/";
+    } else {
+      parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
+      if (!parsed.pathname.endsWith("/")) parsed.pathname += "/";
+    }
+    const url = parsed.toString();
+    if (url.length > 300) return { url: "", error: "Enter a shorter address." };
+    return { url: url, error: "" };
+  }
+
+  function readBlockExplorer() {
+    let raw = "";
+    try {
+      raw = localStorage.getItem(BLOCK_EXPLORER_KEY) || "";
+    } catch {
+      return "";
+    }
+    if (!raw) return "";
+    const parsed = parseBlockExplorer(raw);
+    if (parsed.error || !parsed.url || parsed.url === BLOCK_EXPLORER) return "";
+    return parsed.url;
+  }
+
+  function writeBlockExplorer(input) {
+    const parsed = parseBlockExplorer(input);
+    if (parsed.error) return parsed;
+    const stored = parsed.url && parsed.url !== BLOCK_EXPLORER ? parsed.url : "";
+    try {
+      if (stored) localStorage.setItem(BLOCK_EXPLORER_KEY, stored);
+      else localStorage.removeItem(BLOCK_EXPLORER_KEY);
+    } catch {
+      return { url: "", error: "Could not save that address." };
+    }
+    return { url: stored, error: "" };
+  }
+
+  function blockExplorerBase() {
+    return readBlockExplorer() || BLOCK_EXPLORER;
+  }
+
   function blockExplorerAccountUrl(name) {
     const account = String(name || "")
       .replace(/^@/, "")
       .trim()
       .toLowerCase();
-    return BLOCK_EXPLORER + "@" + account;
+    return blockExplorerBase() + "@" + account;
   }
 
   function blockExplorerContentUrl(author, permlink) {
@@ -21155,7 +21222,7 @@ let CS77_FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     const link = String(permlink || "").trim();
-    return BLOCK_EXPLORER + "@" + name + "/" + link;
+    return blockExplorerBase() + "@" + name + "/" + link;
   }
 
   function profileQrMenuItemHtml() {
@@ -26771,7 +26838,7 @@ let CS77_FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     if (!/^[0-9a-f]{40}$/.test(id) || /^0+$/.test(id)) return "";
-    return BLOCK_EXPLORER + "tx/" + id;
+    return blockExplorerBase() + "tx/" + id;
   }
 
   const WALLET_TX_PAGE = 30;
@@ -38480,9 +38547,14 @@ let CS77_FILTER_LOW_REP = 20;
             <input id="settingsNodeInput" type="text" inputmode="url" autocomplete="off" placeholder="api.hive.blog" spellcheck="false" autocapitalize="off" aria-label="Hive API server" aria-describedby="settingsNodesNote">
           </div>
           <button type="submit" class="settings-node-add" id="settingsNodeAdd">Add</button>
+          <p class="settings-status" id="settingsNodeStatus" role="status"></p>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="settingsExplorer">Block explorer</label>
+          <input id="settingsExplorer" type="text" inputmode="url" autocomplete="off" placeholder="${HiveMd.escapeHtml(BLOCK_EXPLORER)}" spellcheck="false" autocapitalize="off" aria-describedby="settingsNodesNote">
+          <p class="settings-status" id="settingsExplorerStatus" role="status"></p>
         </div>
         <p class="settings-note" id="settingsNodesNote">Saved in this browser.</p>
-        <p class="settings-status" id="settingsNodeStatus" role="status"></p>
       </form>
     `;
   }
@@ -38586,6 +38658,30 @@ let CS77_FILTER_LOW_REP = 20;
     if (input) input.focus();
   }
 
+  function setSettingsExplorerStatus(message, isError) {
+    const el = $("#settingsExplorerStatus");
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError) && Boolean(message));
+  }
+
+  function fillSettingsExplorer() {
+    const input = $("#settingsExplorer");
+    if (!input) return;
+    input.value = readBlockExplorer();
+  }
+
+  function commitSettingsExplorer(input) {
+    if (!input) return;
+    const parsed = writeBlockExplorer(input.value);
+    if (parsed.error) {
+      setSettingsExplorerStatus(parsed.error, true);
+      return;
+    }
+    if (input.value !== parsed.url) input.value = parsed.url;
+    setSettingsExplorerStatus("");
+  }
+
   function bindSettingsNodes() {
     settingsNodeBusy = false;
     const form = $("#settingsNodesForm");
@@ -38598,8 +38694,22 @@ let CS77_FILTER_LOW_REP = 20;
       });
     }
     paintSettingsNodeRows();
+    const explorer = $("#settingsExplorer");
+    if (explorer) {
+      fillSettingsExplorer();
+      explorer.addEventListener("change", () => commitSettingsExplorer(explorer));
+      explorer.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        commitSettingsExplorer(explorer);
+      });
+    }
     form.addEventListener("submit", (e) => {
       e.preventDefault();
+      if (explorer && document.activeElement === explorer) {
+        commitSettingsExplorer(explorer);
+        return;
+      }
       addSettingsNode();
     });
     form.addEventListener("click", (e) => {
