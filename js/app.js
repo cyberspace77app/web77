@@ -26222,6 +26222,11 @@ let CS77_FILTER_LOW_REP = 20;
     //curation_reward: "curation reward",
     //comment_benefactor_reward: "benefactor reward",
     interest: "hbd interest",
+    convert: "convert hbd",
+    fill_convert_request: "convert completed",
+    collateralized_convert: "convert hive",
+    collateralized_convert_immediate_conversion: "convert paid",
+    fill_collateralized_convert_request: "convert settled",
     limit_order_create: "limit order create",
     limit_order_create2: "limit order create2",
     limit_order_cancel: "limit order cancel",
@@ -26325,6 +26330,15 @@ let CS77_FILTER_LOW_REP = 20;
       push(payload.amount_to_sell);
     } else if (type === "limit_order_cancelled") {
       push(payload.amount_back);
+    } else if (type === "convert" || type === "collateralized_convert") {
+      push(payload.amount);
+    } else if (type === "fill_convert_request") {
+      push(payload.amount_in);
+      push(payload.amount_out);
+    } else if (type === "collateralized_convert_immediate_conversion") {
+      push(payload.hbd_out);
+    } else if (type === "fill_collateralized_convert_request") {
+      push(payload.excess_collateral);
     }
     return parts.filter(Boolean).join(" · ");
   }
@@ -26496,6 +26510,11 @@ let CS77_FILTER_LOW_REP = 20;
       return payload.comment_author ? walletAccountHtml(payload.comment_author) : "";
     }
     if (type === "claim_reward_balance") return "pending rewards claimed";
+    if (type === "convert" || type === "fill_convert_request") return "hbd→hive";
+    if (type === "collateralized_convert" || type === "collateralized_convert_immediate_conversion") {
+      return "hive→hbd";
+    }
+    if (type === "fill_collateralized_convert_request") return "collateral returned";
     return "";
   }
 

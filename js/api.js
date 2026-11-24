@@ -1250,18 +1250,23 @@
     4, // withdraw_vesting
     5, // limit_order_create
     6, // limit_order_cancel
+    8, // convert
     21, // limit_order_create2
     32, // transfer_to_savings
     33, // transfer_from_savings
     34, // cancel_transfer_from_savings
     39, // claim_reward_balance
     40, // delegate_vesting_shares
+    48, // collateralized_convert
+    50, // fill_convert_request
     55, // interest
     56, // fill_vesting_withdraw
     57, // fill_order
     59, // fill_transfer_from_savings
     63, // comment_benefactor_reward
+    81, // fill_collateralized_convert_request
     85, // limit_order_cancelled
+    88, // collateralized_convert_immediate_conversion
   ];
 
   const ASSET_NAI = {
