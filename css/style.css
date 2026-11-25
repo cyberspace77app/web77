@@ -11421,7 +11421,8 @@ min-height: 0;
     flex: 0 0 auto;
     width: 100%;
     min-height: 0;
-    max-height: min(18rem, 40vh);
+    /* 25vh: sheet chrome is about 11rem, so the revision text keeps about half the screen. */
+    max-height: min(18rem, 25vh);
     padding-right: 0;
   }
 
