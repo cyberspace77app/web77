@@ -45228,8 +45228,8 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // j and k move through the feed. One press eases out over 250ms.
-  // A held key, or another press while that slide is still going, jumps.
+  // j and k move through the feed. One press uses the browser's smooth scroll.
+  // Another press while that scroll is still going points it at the next card.
   // Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
@@ -45240,13 +45240,13 @@ let CS77_FILTER_LOW_REP = 20;
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
-  // 250ms ease-out quadratic. The cubic died early and the last frames crept.
-  const FEED_KEY_SCROLL_MS = 250;
   let feedKeyItem = null;
   let feedKeyNavigating = false;
   let feedKeyNavTimer = 0;
   let feedKeyScrollGen = 0;
   let feedKeyScrollRunning = false;
+  let feedKeyScrollEndTimer = 0;
+  let feedKeyScrollTarget = null;
 
   function releaseFeedKeyScrollListeners() {
     queueFeedVideoSync();
@@ -45258,19 +45258,66 @@ let CS77_FILTER_LOW_REP = 20;
     repositionOpenSlider();
   }
 
+  function unbindFeedKeyScrollEnd() {
+    window.removeEventListener("scrollend", onFeedKeyScrollEnd);
+    document.removeEventListener("scrollend", onFeedKeyScrollEnd);
+    if (feedKeyScrollEndTimer) {
+      clearTimeout(feedKeyScrollEndTimer);
+      feedKeyScrollEndTimer = 0;
+    }
+  }
+
+  function finishOwnedFeedKeyScroll(gen) {
+    if (gen !== feedKeyScrollGen || !feedKeyScrollRunning) return;
+    feedKeyScrollRunning = false;
+    feedKeyScrollTarget = null;
+    unbindFeedKeyScrollEnd();
+    beginOwnedFeedScroll();
+    releaseFeedKeyScrollListeners();
+  }
+
+  // A scrollend from an earlier gesture can arrive after this scroll starts.
+  // Accept it only once the page is on the captured target.
+  function onFeedKeyScrollEnd() {
+    if (feedKeyScrollTarget == null) return;
+    const y = scrollYNow();
+    const root = document.documentElement;
+    const max = Math.max(0, (root.scrollHeight || 0) - (window.innerHeight || 0));
+    const atTarget = Math.abs(y - feedKeyScrollTarget) <= 2;
+    const atEnd = feedKeyScrollTarget >= max - 2 && Math.abs(y - max) <= 2;
+    if (!atTarget && !atEnd) return;
+    finishOwnedFeedKeyScroll(feedKeyScrollGen);
+  }
+
   function stopFeedKeyScroll() {
     feedKeyScrollGen += 1;
+    feedKeyScrollTarget = null;
+    unbindFeedKeyScrollEnd();
     if (!feedKeyScrollRunning) return;
     feedKeyScrollRunning = false;
-    instantScrollGen += 1;
-    const root = document.documentElement;
-    root.style.scrollBehavior = "";
-    root.style.overflowAnchor = "";
     releaseFeedKeyScrollListeners();
   }
 
   function writeFeedScroll(y) {
-    document.documentElement.scrollTop = y > 0 ? y : 0;
+    const top = y > 0 ? y : 0;
+    // scrollTop alone leaves a native smooth scroll running. The next frame
+    // then adds that animation's step on top of this position.
+    try {
+      window.scrollTo({ top: top, left: 0, behavior: "instant" });
+    } catch (err) {
+      document.documentElement.scrollTop = top;
+    }
+  }
+
+  // An in-flight smooth scroll keeps applying after scrollTop changes.
+  // Instant scrollTo drops it before the next card is measured.
+  function cancelFeedKeySmoothScroll() {
+    if (!feedKeyScrollRunning) return;
+    const root = document.documentElement;
+    root.style.scrollBehavior = "auto";
+    root.style.overflowAnchor = "none";
+    writeFeedScroll(scrollYNow());
+    void root.offsetHeight;
   }
 
   function feedKeyTyping(e) {
@@ -45396,66 +45443,60 @@ let CS77_FILTER_LOW_REP = 20;
     return Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
   }
 
-  // Anchoring and smooth scroll come back after the slide. Either one can
-  // nudge the page once the slide has already stopped. Put the same target
-  // back while those are still instant, then give smooth back on a later frame.
-  function releaseFeedKeyScroll(top) {
-    const root = document.documentElement;
-    const gen = ++instantScrollGen;
-    requestAnimationFrame(() => {
-      if (gen !== instantScrollGen) return;
-      root.style.overflowAnchor = "";
-      void root.offsetHeight;
-      if (Math.abs(top - scrollYNow()) >= 1) writeFeedScroll(top);
-      requestAnimationFrame(() => {
-        if (gen !== instantScrollGen) return;
-        root.style.scrollBehavior = "";
-      });
-    });
-  }
-
-  function finishFeedKeySlide(top) {
-    feedKeyScrollRunning = false;
-    beginOwnedFeedScroll();
-    releaseFeedKeyScroll(top);
-    releaseFeedKeyScrollListeners();
+  // One native smooth scroll. A later j or k updates that same scroll's target.
+  function armFeedKeySmoothScroll(top) {
+    const starting = !feedKeyScrollRunning;
+    const gen = feedKeyScrollGen;
+    feedKeyScrollTarget = top;
+    feedKeyScrollRunning = true;
+    if (starting) {
+      window.addEventListener("scrollend", onFeedKeyScrollEnd);
+      document.addEventListener("scrollend", onFeedKeyScrollEnd);
+    }
+    if (feedKeyScrollEndTimer) clearTimeout(feedKeyScrollEndTimer);
+    // scrollend is the end. The timer only covers a browser that never fires it.
+    feedKeyScrollEndTimer = setTimeout(() => {
+      feedKeyScrollEndTimer = 0;
+      finishOwnedFeedKeyScroll(gen);
+    }, 4000);
+    try {
+      window.scrollTo({ top: top, left: 0, behavior: "smooth" });
+    } catch (err) {
+      finishOwnedFeedKeyScroll(gen);
+      armInstantScroll();
+      writeFeedScroll(top);
+    }
   }
 
   function scrollFeedItemToAnchor(el, behavior) {
     if (!el) return;
     const jump = behavior === "instant" || prefersReducedMotion();
+    if (jump) cancelFeedKeySmoothScroll();
     beginOwnedFeedScroll();
     quietSmartHeader();
     const top = feedKeyCardTop(el);
     if (top == null) return;
     const from = scrollYNow();
-    const ms = jump || Math.abs(top - from) < 2 ? 0 : FEED_KEY_SCROLL_MS;
-    stopFeedKeyScroll();
-    if (!ms) {
-      armInstantScroll();
-      writeFeedScroll(top);
+    if (!jump && feedKeyScrollRunning && Math.abs(top - from) >= 2) {
+      armFeedKeySmoothScroll(top);
       return;
     }
-    const root = document.documentElement;
-    const gen = ++feedKeyScrollGen;
-    instantScrollGen += 1;
-    feedKeyScrollRunning = true;
-    root.style.scrollBehavior = "auto";
-    root.style.overflowAnchor = "none";
-    const started = performance.now();
-    const dist = top - from;
-    function frame(now) {
-      if (gen !== feedKeyScrollGen) return;
-      const t = Math.min(1, (now - started) / ms);
-      const eased = 1 - (1 - t) * (1 - t);
-      writeFeedScroll(t === 1 ? top : from + dist * eased);
-      if (t < 1) {
-        requestAnimationFrame(frame);
-        return;
+    const interrupted = feedKeyScrollRunning;
+    stopFeedKeyScroll();
+    if (jump || Math.abs(top - from) < 2) {
+      armInstantScroll();
+      writeFeedScroll(top);
+      // The smooth scroll we just replaced still applies one frame.
+      if (interrupted) {
+        const gen = instantScrollGen;
+        requestAnimationFrame(() => {
+          if (gen !== instantScrollGen) return;
+          writeFeedScroll(top);
+        });
       }
-      finishFeedKeySlide(top);
+      return;
     }
-    requestAnimationFrame(frame);
+    armFeedKeySmoothScroll(top);
   }
 
   function feedKeyLocked(items) {
@@ -45728,8 +45769,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!feedKeyOpenCurrent()) return;
     } else if (key === "j" || key === "k") {
       if (openSlider) hideVoteSlider();
-      // Repeats land before a slide can finish. Restarting it leaves the page stuck.
-      feedKeyMove(key === "j" ? 1 : -1, e.repeat || feedKeyScrollRunning);
+      feedKeyMove(key === "j" ? 1 : -1);
     } else if (key === "z") feedKeyZap();
     else feedKeyUpvote();
     e.preventDefault();
