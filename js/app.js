@@ -2765,6 +2765,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function repositionOpenSlider(e) {
+    if (feedKeyScrollRunning) return;
     if (e && e.type === "scroll") {
       const t = e.target;
       if (votersPanelNode && (t === votersPanelNode || (t && t.nodeType === 1 && votersPanelNode.contains(t)))) {
@@ -14418,6 +14419,8 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function queueFeedVideoSync() {
+    // j and k scroll every frame. Measuring players here forces layout on each one.
+    if (feedKeyScrollRunning) return;
     if (feedVideoSyncQueued) return;
     feedVideoSyncQueued = true;
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(syncFeedVideos);
@@ -14574,6 +14577,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeLoadMoreFeed() {
+    if (feedKeyScrollRunning) return;
     if (feedFillBusy || feedState.holdAuto || feedState.loading || feedState.done) return;
     const list = document.getElementById("feedList");
     const moreBtn = document.getElementById("moreBtn");
@@ -15316,6 +15320,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeLoadMoreBrowse() {
+    if (feedKeyScrollRunning) return;
     if (!isCommunityRankPage()) return;
     if (communityDirState.browseLoading || communityDirState.browseDone) return;
     if (!$("#communityBrowseList")) return;
@@ -16866,6 +16871,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeLoadMoreSearch() {
+    if (feedKeyScrollRunning) return;
     maybeLoadMoreSpaceSearch("directory");
     const page = searchPageName();
     if (page === "spaces") {
@@ -26969,6 +26975,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function maybeLoadMoreWallet() {
+    if (feedKeyScrollRunning) return;
     const tx = profileState.walletTx;
     if (!tx || tx.holdAuto || tx.loading || tx.done || !tx.started) return;
     if (!walletTailNearView()) return;
@@ -45065,6 +45072,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function updateSmartHeader() {
+    if (feedKeyScrollRunning) return;
     const header = siteHeaderEl();
     if (!header) return;
     const y = Math.max(0, scrollYNow());
@@ -45111,7 +45119,7 @@ let CS77_FILTER_LOW_REP = 20;
     window.addEventListener(
       "scroll",
       () => {
-        if (smartHeaderTick) return;
+        if (feedKeyScrollRunning || smartHeaderTick) return;
         smartHeaderTick = requestAnimationFrame(() => {
           smartHeaderTick = 0;
           updateSmartHeader();
@@ -45220,7 +45228,7 @@ let CS77_FILTER_LOW_REP = 20;
     });
   }
 
-  // j and k move through the feed. One press eases out over 220ms.
+  // j and k move through the feed. One press eases out over 250ms.
   // A held key, or another press while that slide is still going, jumps.
   // Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
@@ -45232,13 +45240,23 @@ let CS77_FILTER_LOW_REP = 20;
   // A text field or an open dialog keeps those keys. The vote slider does not.
   const FEED_KEY_GAP = 12;
   const FEED_KEY_SLACK = 24;
-  // Same length and cubic ease-out as X's j and k.
-  const FEED_KEY_SCROLL_MS = 220;
+  // 250ms ease-out quadratic. The cubic died early and the last frames crept.
+  const FEED_KEY_SCROLL_MS = 250;
   let feedKeyItem = null;
   let feedKeyNavigating = false;
   let feedKeyNavTimer = 0;
   let feedKeyScrollGen = 0;
   let feedKeyScrollRunning = false;
+
+  function releaseFeedKeyScrollListeners() {
+    queueFeedVideoSync();
+    maybeLoadMoreFeed();
+    maybeLoadMoreBrowse();
+    maybeLoadMoreWallet();
+    maybeLoadMoreSearch();
+    updateSmartHeader();
+    repositionOpenSlider();
+  }
 
   function stopFeedKeyScroll() {
     feedKeyScrollGen += 1;
@@ -45248,16 +45266,11 @@ let CS77_FILTER_LOW_REP = 20;
     const root = document.documentElement;
     root.style.scrollBehavior = "";
     root.style.overflowAnchor = "";
+    releaseFeedKeyScrollListeners();
   }
 
   function writeFeedScroll(y) {
-    const top = Math.max(0, y);
-    try {
-      window.scrollTo({ top: top, left: 0, behavior: "instant" });
-    } catch (err) {
-      window.scrollTo(0, top);
-    }
-    document.documentElement.scrollTop = top;
+    document.documentElement.scrollTop = y > 0 ? y : 0;
   }
 
   function feedKeyTyping(e) {
@@ -45366,10 +45379,7 @@ let CS77_FILTER_LOW_REP = 20;
   }
 
   function onFeedKeyPageScroll() {
-    if (feedKeyScrollRunning) {
-      beginOwnedFeedScroll();
-      return;
-    }
+    if (feedKeyScrollRunning) return;
     if (!feedKeyNavigating) {
       clearFeedKeyCurrent();
       return;
@@ -45381,12 +45391,43 @@ let CS77_FILTER_LOW_REP = 20;
     }, 180);
   }
 
+  function feedKeyCardTop(el) {
+    if (!el || !el.isConnected) return null;
+    return Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
+  }
+
+  // Anchoring and smooth scroll come back after the slide. Either one can
+  // nudge the page once the slide has already stopped. Put the same target
+  // back while those are still instant, then give smooth back on a later frame.
+  function releaseFeedKeyScroll(top) {
+    const root = document.documentElement;
+    const gen = ++instantScrollGen;
+    requestAnimationFrame(() => {
+      if (gen !== instantScrollGen) return;
+      root.style.overflowAnchor = "";
+      void root.offsetHeight;
+      if (Math.abs(top - scrollYNow()) >= 1) writeFeedScroll(top);
+      requestAnimationFrame(() => {
+        if (gen !== instantScrollGen) return;
+        root.style.scrollBehavior = "";
+      });
+    });
+  }
+
+  function finishFeedKeySlide(top) {
+    feedKeyScrollRunning = false;
+    beginOwnedFeedScroll();
+    releaseFeedKeyScroll(top);
+    releaseFeedKeyScrollListeners();
+  }
+
   function scrollFeedItemToAnchor(el, behavior) {
     if (!el) return;
     const jump = behavior === "instant" || prefersReducedMotion();
     beginOwnedFeedScroll();
     quietSmartHeader();
-    const top = Math.max(0, scrollYNow() + el.getBoundingClientRect().top - FEED_KEY_GAP);
+    const top = feedKeyCardTop(el);
+    if (top == null) return;
     const from = scrollYNow();
     const ms = jump || Math.abs(top - from) < 2 ? 0 : FEED_KEY_SCROLL_MS;
     stopFeedKeyScroll();
@@ -45396,25 +45437,23 @@ let CS77_FILTER_LOW_REP = 20;
       return;
     }
     const root = document.documentElement;
-    const dist = top - from;
     const gen = ++feedKeyScrollGen;
     instantScrollGen += 1;
     feedKeyScrollRunning = true;
     root.style.scrollBehavior = "auto";
     root.style.overflowAnchor = "none";
     const started = performance.now();
+    const dist = top - from;
     function frame(now) {
       if (gen !== feedKeyScrollGen) return;
-      beginOwnedFeedScroll();
       const t = Math.min(1, (now - started) / ms);
-      const eased = 1 - (1 - t) * (1 - t) * (1 - t);
+      const eased = 1 - (1 - t) * (1 - t);
       writeFeedScroll(t === 1 ? top : from + dist * eased);
       if (t < 1) {
         requestAnimationFrame(frame);
         return;
       }
-      feedKeyScrollRunning = false;
-      armInstantScroll();
+      finishFeedKeySlide(top);
     }
     requestAnimationFrame(frame);
   }
