@@ -43893,10 +43893,15 @@ let CS77_FILTER_LOW_REP = 20;
     return false;
   }
 
+  function editHistorySpacesText(tags) {
+    if (!tags || !tags.length) return "";
+    return "Spaces: " + tags.join(", ") + "\n\n";
+  }
+
   function editHistorySource(version, reply) {
-    const tags = "Tags: " + version.tags.join(", ") + "\n\n" + version.body;
-    if (reply) return tags;
-    return "Title: " + version.title + "\n\n" + tags;
+    const text = editHistorySpacesText(version.tags) + version.body;
+    if (reply) return text;
+    return version.title + "\n\n" + text;
   }
 
   function editHistoryDiffHtml(version, previous, reply) {
@@ -43907,13 +43912,11 @@ let CS77_FILTER_LOW_REP = 20;
     if (sameTitle && nextTags === prevTags && version.body === previous.body) {
       return HiveMd.escapeHtml("No difference from the previous version.");
     }
-    const tagsAndBody =
-      "Tags: " +
-      editHistoryMarkHtml(prevTags, nextTags) +
-      "\n\n" +
-      editHistoryMarkHtml(previous.body, version.body);
+    const spaces =
+      nextTags || prevTags ? "Spaces: " + editHistoryMarkHtml(prevTags, nextTags) + "\n\n" : "";
+    const tagsAndBody = spaces + editHistoryMarkHtml(previous.body, version.body);
     if (reply) return tagsAndBody;
-    return "Title: " + editHistoryMarkHtml(previous.title, version.title) + "\n\n" + tagsAndBody;
+    return editHistoryMarkHtml(previous.title, version.title) + "\n\n" + tagsAndBody;
   }
 
   function editHistoryVersionButton(version, selectedId, isCurrent) {
