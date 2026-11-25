@@ -45230,6 +45230,8 @@ let CS77_FILTER_LOW_REP = 20;
 
   // j and k move through the feed. One press uses the browser's smooth scroll.
   // Another press while that scroll is still going points it at the next card.
+  // Holding the key jumps one card per repeat. A smooth retarget on each
+  // repeat eases in again, so the page only creeps.
   // Enter opens that card when it is focused.
   // l opens the upvote panel, and l again casts it. Enter still casts while the panel is open.
   // z opens the zap dialog for that same post, the way a click on its bolt does.
@@ -45481,19 +45483,21 @@ let CS77_FILTER_LOW_REP = 20;
       armFeedKeySmoothScroll(top);
       return;
     }
-    const interrupted = feedKeyScrollRunning;
     stopFeedKeyScroll();
     if (jump || Math.abs(top - from) < 2) {
       armInstantScroll();
       writeFeedScroll(top);
-      // The smooth scroll we just replaced still applies one frame.
-      if (interrupted) {
-        const gen = instantScrollGen;
-        requestAnimationFrame(() => {
-          if (gen !== instantScrollGen) return;
-          writeFeedScroll(top);
-        });
-      }
+      // The next repeat in this turn measures the following card. Without a
+      // layout flush, scrollY has moved and the card rect has not.
+      void document.documentElement.offsetHeight;
+      // A smooth scroll we replaced still applies one frame after this turn.
+      // Later repeats bump the generation, so only the last jump pins it.
+      const pinned = top;
+      const gen = instantScrollGen;
+      requestAnimationFrame(() => {
+        if (gen !== instantScrollGen) return;
+        writeFeedScroll(pinned);
+      });
       return;
     }
     armFeedKeySmoothScroll(top);
@@ -45769,7 +45773,7 @@ let CS77_FILTER_LOW_REP = 20;
       if (!feedKeyOpenCurrent()) return;
     } else if (key === "j" || key === "k") {
       if (openSlider) hideVoteSlider();
-      feedKeyMove(key === "j" ? 1 : -1);
+      feedKeyMove(key === "j" ? 1 : -1, e.repeat);
     } else if (key === "z") feedKeyZap();
     else feedKeyUpvote();
     e.preventDefault();
