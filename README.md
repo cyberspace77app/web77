@@ -12,7 +12,7 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 - Lightweight and ultra-fast browser-based SPA
 - Core features supported: posting, upvoting, commenting, feed, profiles, tags, communities
 - Wallet integration: send, delegate, convert hbd, stake/unstake, account creation tools
-- Key management tools (generate keys, QR codes, change password, account recovery)
+- Key management tools: generate keys, QR codes, change password, account recovery
 - Keyboard support (J K L Z P / keys)
 - Block producers (Witness) and Proposals explorer
 - Supports Hive Keychain and login with your Posting key or a QR code on mobile
