@@ -17,8 +17,8 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 - Block producers (Witness) and Proposals explorer
 - Supports Hive Keychain and login with your Posting key or a QR code on mobile
 - Can be run locally on your own PC
-- Open source (MIT license)
 - Powered by the hive blockchain
+- Open source (MIT license)
 
 ## Production
 
