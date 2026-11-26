@@ -8,13 +8,15 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 
 - Decentralized social media app
 - Zap content creators with bitcoin lightning
-- Powered by the hive blockchain
+- QR code support (sharing and scanning usernames, login with a QR code)
 - Lightweight and ultra-fast browser-based SPA
 - Core features supported: posting, upvoting, commenting, feed, profiles, tags, communities
 - Wallet integration: send, delegate, convert hbd, stake/unstake, account creation tools
+- Key management tools (generate keys, QR codes, change password, account recovery)
 - Block producers (Witness) and Proposals explorer
-- Supports Hive Keychain and login with your Posting key on mobile
+- Supports Hive Keychain and login with your Posting key or a QR code on mobile
 - Can be run locally on your own PC
+- Powered by the hive blockchain
 - Open source (MIT license)
 
 ## Production
@@ -37,11 +39,11 @@ Then open 127.0.0.1:8777 in your web browser.
 
 ## Status
 
-**Alpha software:** CyberSpace77 is currently under active alpha development. Moving fast and breaking stuff. Reviewing tx before you sign them recommended, as always. **Use at your own risk.**
+**Alpha software:** CyberSpace77 is currently under active alpha development. Moving fast and breaking stuff. Reviewing transactions before you sign them recommended, as always. **Use at your own risk.**
 
 ## Dependencies
 
-vendored @noble/hashes, @noble/curves, @noble/ciphers, and DOMPurify 3.4.18; marked, cdn.jsdelivr.net, esm.sh/@getalby/sdk, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
+@noble/hashes, @noble/curves, @noble/ciphers, DOMPurify, esm.sh/@getalby/sdk, cdn.jsdelivr.net, maplibre-gl-js, openfreemap, openstreetmap, photon, google fonts
 
 ## Hive
 
