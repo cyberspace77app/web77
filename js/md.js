@@ -3847,7 +3847,7 @@
   // preview inserts them. Until both are ready, renderMarkdown escapes the source.
   // DOMPurify 3.4.18, same lazy load as the markdown parser.
   const PURIFY_SRC = "/js/vendor/purify.min.js?v=3.4.18";
-  const MARKDOWN_SRC = "/js/md-render.js?v=0.22.9";
+  const MARKDOWN_SRC = "/js/md-render.js?v=0.23.0";
   let markdownEnginesPromise = null;
 
   function markdownEnginesReady() {

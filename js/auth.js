@@ -23,7 +23,7 @@
   // Username whose posting key a reload must still delete.
   const AUTH_LOGOUT_KEY = "cs77_auth_logout";
   // Local signer. Absolute so a classic script on /@name still loads it.
-  const HIVE_TX_URL = "/js/tx.js?v=0.22.9";
+  const HIVE_TX_URL = "/js/tx.js?v=0.23.0";
 
   let sessionBytes = null;
   let sessionUser = "";
