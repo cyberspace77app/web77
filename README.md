@@ -8,7 +8,7 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 
 - Decentralized social media app
 - Zap content creators with bitcoin lightning
-- QR code support (sharing and scanning usernames, login with a QR code)
+- QR code support (share and scan usernames, login with a QR code)
 - Lightweight and ultra-fast browser-based SPA
 - Core features supported: posting, upvoting, commenting, feed, profiles, tags, communities
 - Wallet integration: send, delegate, convert hbd, stake/unstake, account creation tools
